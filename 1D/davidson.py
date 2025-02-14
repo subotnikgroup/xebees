@@ -1,0 +1,281 @@
+#!/usr/bin/env python
+
+import numpy as np
+import scipy.sparse as sp
+from sys import stderr
+from scipy.special import factorial
+from scipy.signal import convolve
+from pyscf import lib
+import argparse as ap
+import timeit
+from os import sysconf
+
+
+# Constants
+AMU_TO_AU = 1822.888486209
+ANGSTROM_TO_BOHR = 1.8897259886
+
+from functools import wraps
+from time import perf_counter as time
+
+
+def timer(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        start = time()
+        result = f(*args, **kwargs)
+        end = time()
+        print('Elapsed time: {}'.format(end-start))
+        return result
+    return wrapper
+
+def VO(R, r, g=1):
+    R, r = R / ANGSTROM_TO_BOHR, r / ANGSTROM_TO_BOHR
+    D, d, a, c = 60, 0.95, 2.52, 1
+    A, B, C = 2.32e5, 3.15, 2.31e4  
+
+    D1 = g * D * (np.exp(-2 * a * (R/2 + r - d)) - 2 * np.exp(-a * (R/2 + r - d)) + 1)
+    D2 = D * c**2 * (np.exp(- (2 * a/c) * (R/2 - r - d)) - 2 * np.exp(-a/c * (R/2 - r - d)))
+    
+    return 0.00159362 * (D1 + D2 + A * np.exp(-B * R) - C / R**6)
+
+def get_stencil_coefficients(stencil_size, derivative_order):
+    if stencil_size % 2 == 0:
+        raise ValueError("Stencil size must be odd.")
+    
+    half_size = stencil_size // 2
+    A = np.vander(np.arange(-half_size, half_size + 1), increasing=True).T
+    b = np.zeros(stencil_size)
+    b[derivative_order] = factorial(derivative_order)
+    
+    return np.linalg.solve(A, b)
+
+def KE(N, dx, mass, sparse=False, stencil_size=7):
+    stencil = get_stencil_coefficients(stencil_size, 2) / dx**2
+    I = np.eye(N)
+    T = -1 / (2 * mass) * np.array([convolve(I[i, :], stencil, mode='same') for i in range(N)])
+    
+    return sp.csr_matrix(T) if sparse else T
+
+def KE_FFT(N, P, R, mass): 
+    Tp = np.diag(P**2 / (2 * mass))
+    exp_RP = np.exp(1j * np.outer(P, R))
+    
+    return (exp_RP.T.conj() @ Tp @ exp_RP) / N
+
+def solve_BO_surface(NR, Nr, R, r, m):
+    dr = r[1] - r[0]
+    return np.array([np.linalg.eigvalsh(KE(Nr, dr, m) + np.diag(VO(R[i], r)))[0] for i in range(NR)])
+
+def solve_BOv(NR, Nr, R, r, M, m):
+    dR = R[1] - R[0]
+    return np.linalg.eigvalsh(KE(NR, dR, M) + np.diag(solve_BO_surface(NR, Nr, R, r, m)))
+
+def prms(A,B, label=""):
+    print(label, np.sqrt(np.mean((A-B)**2)))
+
+@timer
+def solve_exact(NR, Nr, R, r, M, m, num_state=10, g=1):
+    dR, dr = R[1] - R[0], r[1] - r[0]
+    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g)
+
+    P = np.fft.fftshift(np.fft.fftfreq(NR, dR)) * 2 * np.pi
+    p = np.fft.fftshift(np.fft.fftfreq(Nr, dr)) * 2 * np.pi
+
+    mu = M/2 
+    Tr = KE(Nr, dr, m)
+    Tmp = KE(Nr, dr, M * 2)
+    TR = np.real(KE_FFT(NR, P, R, mu))
+
+    H = (np.kron(TR, np.eye(Nr)) +
+         np.kron(np.eye(NR), Tmp) +
+         np.kron(np.eye(NR), Tr) +
+         np.diag(Vgrid.ravel())
+    )
+    
+    eigenvalues, eigenvectors = np.linalg.eigh(H)
+    
+    return eigenvalues[:num_state]
+
+@timer
+def build_preconditioner(Tr, Tmp, TR, Vgrid, nstates=5):
+    NR, Nr = Vgrid.shape
+
+    guess = np.zeros((nstates,NR,Nr))
+    
+    U_n    = np.zeros((NR,Nr,Nr))
+    U_v    = np.zeros((Nr,NR,NR))
+    Ad_n   = np.zeros((NR,Nr))
+    Ad_vn  = np.zeros((NR,Nr))
+
+    # diagonalize H electronic: r->n
+    for i in range(NR):
+        Hel = Tr + Tmp + np.diag(Vgrid[i])
+        Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
+        guess[:,i] = U_n[i,:nstates]
+
+    # diagonalize Born-Oppenheimer Hamiltonian: R->v
+    for i in range(Nr):
+        Hbo = TR + np.diag(Ad_n[:,i])
+        Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
+        #guess[:,i] *= U_v[i]
+
+    def precond_diag(dx, e, x0):
+        return dx/(np.diag(Hexarr) - e)
+
+    def precond_Rn(dx, e, x0):
+        dx_Rr = dx.reshape((NR,Nr))
+        #dx_Rn = np.zeros((NR,Nr))
+        #tr_Rr = np.zeros((NR,Nr))
+        
+        #for i in range(NR):
+        #    dx_Rn[i] = U_n[i].T @ dx_Rr[i]
+
+        dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr)
+        tr_Rn = dx_Rn / (Ad_n - e)
+        tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn)
+        
+        #for i in range(NR):
+        #    tr_Rr[i] = U_n[i] @ tr_Rn[i]
+        
+        return tr_Rr.ravel()
+
+    def precond_vn(dx, e, x0):
+        dx_Rr = dx.reshape((NR,Nr))
+        #dx_Rn = np.zeros((NR,Nr))
+        #dx_vn = np.zeros((NR,Nr))
+        #tr_Rn = np.zeros((NR,Nr))
+        #tr_Rr = np.zeros((NR,Nr))
+        
+        #for i in range(NR):
+        #    dx_Rn[i] = U_n[i].T @ dx_Rr[i]
+        #for i in range(Nr):
+        #    dx_vn[:,i] = U_v[i].T @ dx_Rn[:,i]
+
+        dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
+        dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
+                    
+        tr_vn = dx_vn / (Ad_vn - e)
+
+        tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
+        tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
+        
+        #for i in range(Nr):
+        #    tr_Rn[:,i] = U_v[i] @ tr_vn[:,i]
+        #for i in range(NR):
+        #    tr_Rr[i] = U_n[i] @ tr_Rn[i]
+        
+        return tr_Rr.ravel()
+                    
+    return precond_vn, [guess[i].ravel() for i in range(nstates)]
+
+@timer
+def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iterations=1000):
+    dR, dr = R[1] - R[0], r[1] - r[0]
+    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g)
+    
+    P = np.fft.fftshift(np.fft.fftfreq(NR, dR)) * 2 * np.pi
+    p = np.fft.fftshift(np.fft.fftfreq(Nr, dr)) * 2 * np.pi
+
+    mu = M/2 
+    Tr = KE(Nr, dr, m)
+    Tmp = KE(Nr, dr, M * 2)
+    TR = np.real(KE_FFT(NR, P, R, mu))
+
+    # Harr = (np.kron(TR, np.eye(Nr)) +
+    #         np.kron(np.eye(NR), Tmp) +
+    #         np.kron(np.eye(NR), Tr) +
+    #         np.diag(Vgrid.ravel())
+    # )
+    # Hdiag = Harr.diagonal()
+    # pc_diag = lambda dx, e, _: dx/(Hdiag - e)
+
+    # def aop_brute(x):
+    #     return np.dot(Harr,x)
+
+    T_r_mp = Tr + Tmp
+    def aop_fast(x):
+        xa = x.reshape(NR,Nr)
+        r  = TR @ xa
+        r += xa @ (T_r_mp)
+        r += xa * Vgrid
+        return r.ravel()
+
+    aop = lambda xs: [ aop_fast(x) for x in xs ]
+
+    pc_unitary, guess = build_preconditioner(Tr, Tmp, TR, Vgrid, num_state)
+
+    try:
+        system_memory_mb = (sysconf('SC_PAGE_SIZE') * sysconf('SC_PHYS_PAGES')) / 1024**2
+    except ValueError:
+        print("Unable to determine system memory!")
+        system_memory_mb = 8000
+    finally:
+        davidson_mem = 0.75 * system_memory_mb
+        print(f"Davidson will consume up to {int(davidson_mem)}MB of memory.")
+
+    conv, eigenvalues,eigenvectors = lib.davidson1(
+        aop,
+        guess,
+        pc_unitary,
+        nroots=num_state,
+        max_cycle=iterations,
+        verbose=verbosity,
+        follow_state=True,
+        max_space=1000,
+        max_memory=davidson_mem,
+        tol=1e-12,
+    )
+
+    return conv, eigenvalues
+
+
+def parse_args():
+    parser = ap.ArgumentParser(
+        prog='davidson-ps-1d',
+        description="computes the lowest k eigenvalues of phase space model in Xuezhi's paper")
+    
+    parser.add_argument('-k', default=5, type=int)
+    parser.add_argument('-g', required=True, type=float)
+    parser.add_argument('-M', required=True, type=float)
+    parser.add_argument('-R', dest="NR", metavar="NR", default=101, type=int)
+    parser.add_argument('-r', dest="Nr", metavar="Nr", default=400, type=int)
+    parser.add_argument('--exact_diagonalization', action='store_true')
+    parser.add_argument('--verbosity', default=2, type=int)
+    parser.add_argument('--iterations', default=10000, type=int)
+    parser.add_argument('--save', metavar="filename")
+
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    print(args)
+    
+    M = AMU_TO_AU * args.M
+    m = AMU_TO_AU * 1
+    
+    # Grid setup
+    R = np.linspace(2, 4, args.NR) * ANGSTROM_TO_BOHR
+    r = np.linspace(-2, 2, args.Nr) * ANGSTROM_TO_BOHR
+    
+    conv, e_approx = solve_davidson(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g,
+                                    verbosity=args.verbosity,
+                                    iterations=args.iterations)
+    print("Davidson:", e_approx)
+    print(conv)
+    
+    if not all(conv):
+        print("WARNING: Not all eigenvalues converged; results will not be saved!")
+    else:
+        print("All eigenvalues converged")
+
+    if args.save is not None and all(conv):
+        with open(args.save, "a") as f:
+            print(M, " ".join(map(str, e_approx)), file=f)
+        print(f"Computed eigenvalues for M={M} amu and appended to {args.save}")
+    
+    if args.exact_diagonalization:
+        e_exact = solve_exact(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g)
+        print("Exact:", e_exact)
+        prms(e_approx, e_exact, "RMS deviation between Davidson and Exact")
