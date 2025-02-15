@@ -170,7 +170,7 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nstates=5):
     return precond_vn, [guess[i].ravel() for i in range(nstates)]
 
 @timer
-def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iterations=1000):
+def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iterations=1000, threads=16):
     dR, dr = R[1] - R[0], r[1] - r[0]
     Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g)
     
@@ -214,6 +214,7 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iteration
         davidson_mem = 0.75 * system_memory_mb
         print(f"Davidson will consume up to {int(davidson_mem)}MB of memory.")
 
+    lib.num_threads(threads)
     conv, eigenvalues,eigenvectors = lib.davidson1(
         aop,
         guess,
@@ -235,14 +236,15 @@ def parse_args():
         prog='davidson-ps-1d',
         description="computes the lowest k eigenvalues of phase space model in Xuezhi's paper")
     
-    parser.add_argument('-k', default=5, type=int)
-    parser.add_argument('-g', required=True, type=float)
+    parser.add_argument('-k', metavar='num_eigenvalues', default=5, type=int)
+    parser.add_argument('-t', metavar="num_threads", default=16, type=int)
+    parser.add_argument('-g', metavar='g', required=True, type=float)
     parser.add_argument('-M', required=True, type=float)
     parser.add_argument('-R', dest="NR", metavar="NR", default=101, type=int)
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=400, type=int)
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--verbosity', default=2, type=int)
-    parser.add_argument('--iterations', default=10000, type=int)
+    parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
     parser.add_argument('--save', metavar="filename")
 
     return parser.parse_args()
@@ -261,7 +263,8 @@ if __name__ == '__main__':
     
     conv, e_approx = solve_davidson(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g,
                                     verbosity=args.verbosity,
-                                    iterations=args.iterations)
+                                    iterations=args.iterations,
+                                    threads=args.t)
     print("Davidson:", e_approx)
     print(conv)
     
