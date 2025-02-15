@@ -178,7 +178,7 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
                    iterations=1000,
                    max_subspace=1000,
                    threads=16,
-                   guessfile=None):
+                   guessfile=None,):
     dR, dr = R[1] - R[0], r[1] - r[0]
     Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g)
     
@@ -189,17 +189,6 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
     Tr = KE(Nr, dr, m)
     Tmp = KE(Nr, dr, M * 2)
     TR = np.real(KE_FFT(NR, P, R, mu))
-
-    # Harr = (np.kron(TR, np.eye(Nr)) +
-    #         np.kron(np.eye(NR), Tmp) +
-    #         np.kron(np.eye(NR), Tr) +
-    #         np.diag(Vgrid.ravel())
-    # )
-    # Hdiag = Harr.diagonal()
-    # pc_diag = lambda dx, e, _: dx/(Hdiag - e)
-
-    # def aop_brute(x):
-    #     return np.dot(Harr,x)
 
     T_r_mp = Tr + Tmp
     def aop_fast(x):
@@ -218,6 +207,8 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
         if maybe_guess.shape[1] == guess.shape[0]:
             guess=maybe_guess
             print("Loaded guess from", guessfile)
+        else:
+            print("WARNING: loaded guess of improper dimension; discarding!")
 
     try:
         system_memory_mb = (sysconf('SC_PAGE_SIZE') * sysconf('SC_PHYS_PAGES')) / 1024**2
@@ -229,7 +220,7 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
         print(f"Davidson will consume up to {int(davidson_mem)}MB of memory.")
 
     lib.num_threads(threads)
-    conv, eigenvalues,eigenvectors = lib.davidson1(
+    conv, eigenvalues, eigenvectors = lib.davidson1(
         aop,
         guess,
         pc_unitary,
@@ -243,10 +234,7 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
         tol=1e-12,
     )
 
-    if guessfile:
-        np.savez(guessfile, guess=eigenvectors)
-
-    return conv, eigenvalues
+    return conv, eigenvalues, eigenvalues
 
 
 def parse_args():
@@ -265,6 +253,7 @@ def parse_args():
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
+    parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--save', metavar="filename")
 
     return parser.parse_args()
@@ -281,12 +270,13 @@ if __name__ == '__main__':
     R = np.linspace(2, 4, args.NR) * ANGSTROM_TO_BOHR
     r = np.linspace(-2, 2, args.Nr) * ANGSTROM_TO_BOHR
     
-    conv, e_approx = solve_davidson(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g,
-                                    verbosity=args.verbosity,
-                                    iterations=args.iterations,
-                                    max_subspace=args.subspace,
-                                    threads=args.t,
-                                    guessfile=args.guess)
+    conv, e_approx, evecs = solve_davidson(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g,
+                                          verbosity=args.verbosity,
+                                          iterations=args.iterations,
+                                          max_subspace=args.subspace,
+                                          threads=args.t,
+                                          guessfile=args.guess,
+    )
     print("Davidson:", e_approx)
     print(conv)
     
@@ -294,6 +284,10 @@ if __name__ == '__main__':
         print("WARNING: Not all eigenvalues converged; results will not be saved!")
     else:
         print("All eigenvalues converged")
+        if args.evecs:
+            np.savez(args.evecs, guess=eigenvectors)
+            print("Wrote eigenvectors to", args.evecs)
+
 
     if args.save is not None and all(conv):
         with open(args.save, "a") as f:
