@@ -9,6 +9,7 @@ from pyscf import lib
 import argparse as ap
 import timeit
 from os import sysconf
+from pathlib import Path
 
 
 # Constants
@@ -50,7 +51,7 @@ def get_stencil_coefficients(stencil_size, derivative_order):
     
     return np.linalg.solve(A, b)
 
-def KE(N, dx, mass, sparse=False, stencil_size=7):
+def KE(N, dx, mass, sparse=False, stencil_size=11):
     stencil = get_stencil_coefficients(stencil_size, 2) / dx**2
     I = np.eye(N)
     T = -1 / (2 * mass) * np.array([convolve(I[i, :], stencil, mode='same') for i in range(N)])
@@ -173,7 +174,11 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
     return precond_vn, guess.ravel()
 
 @timer
-def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iterations=1000, threads=16):
+def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
+                   iterations=1000,
+                   max_subspace=1000,
+                   threads=16,
+                   guessfile=None):
     dR, dr = R[1] - R[0], r[1] - r[0]
     Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g)
     
@@ -208,6 +213,12 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iteration
 
     pc_unitary, guess = build_preconditioner(Tr, Tmp, TR, Vgrid, num_state)
 
+    if guessfile and guessfile.exists():
+        maybe_guess = np.load(guessfile)['guess']
+        if maybe_guess.shape[1] == guess.shape[0]:
+            guess=maybe_guess
+            print("Loaded guess from", guessfile)
+
     try:
         system_memory_mb = (sysconf('SC_PAGE_SIZE') * sysconf('SC_PHYS_PAGES')) / 1024**2
     except ValueError:
@@ -226,11 +237,14 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iteration
         max_cycle=iterations,
         verbose=verbosity,
         follow_state=False,
-        max_space=1000,
+        max_space=max_subspace,
         #max_space=200, # FIXME: think about tuning this parameter
         max_memory=davidson_mem,
         tol=1e-12,
     )
+
+    if guessfile:
+        np.savez(guessfile, guess=eigenvectors)
 
     return conv, eigenvalues
 
@@ -249,6 +263,8 @@ def parse_args():
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
+    parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
+    parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--save', metavar="filename")
 
     return parser.parse_args()
@@ -268,7 +284,9 @@ if __name__ == '__main__':
     conv, e_approx = solve_davidson(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g,
                                     verbosity=args.verbosity,
                                     iterations=args.iterations,
-                                    threads=args.t)
+                                    max_subspace=args.subspace,
+                                    threads=args.t,
+                                    guessfile=args.guess)
     print("Davidson:", e_approx)
     print(conv)
     
