@@ -221,7 +221,7 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iteration
         nroots=num_state,
         max_cycle=iterations,
         verbose=verbosity,
-        follow_state=True,
+        follow_state=False,
         max_space=1000,
         max_memory=davidson_mem,
         tol=1e-12,
