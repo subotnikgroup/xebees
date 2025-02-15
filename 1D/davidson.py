@@ -98,10 +98,11 @@ def solve_exact(NR, Nr, R, r, M, m, num_state=10, g=1):
     return eigenvalues[:num_state]
 
 @timer
-def build_preconditioner(Tr, Tmp, TR, Vgrid, nstates=5):
+def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
     NR, Nr = Vgrid.shape
 
-    guess = np.zeros((nstates,NR,Nr))
+    #guess = np.zeros((nguess,NR,Nr))
+    guess = np.zeros((NR,Nr))
     
     U_n    = np.zeros((NR,Nr,Nr))
     U_v    = np.zeros((Nr,NR,NR))
@@ -112,16 +113,15 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nstates=5):
     for i in range(NR):
         Hel = Tr + Tmp + np.diag(Vgrid[i])
         Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
-        guess[:,i] = U_n[i,:nstates]
+        guess[i] = U_n[i, 0]
+        #guess[:,i] = U_n[i,:nguess]
 
     # diagonalize Born-Oppenheimer Hamiltonian: R->v
     for i in range(Nr):
         Hbo = TR + np.diag(Ad_n[:,i])
         Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
-        #guess[:,i] *= U_v[i]
-
-    def precond_diag(dx, e, x0):
-        return dx/(np.diag(Hexarr) - e)
+        # FIXME: Why does this make things slightly worse?
+        # guess[:,i] = U_v[i] @ guess[:,i]
 
     def precond_Rn(dx, e, x0):
         dx_Rr = dx.reshape((NR,Nr))
@@ -166,8 +166,11 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nstates=5):
         #    tr_Rr[i] = U_n[i] @ tr_Rn[i]
         
         return tr_Rr.ravel()
-                    
-    return precond_vn, [guess[i].ravel() for i in range(nstates)]
+
+    # N.B.: Don't get cute with the guess, e.g.: [g.ravel() for g in guess]
+    # What happens if there's only 1 and the indexing gets messed up??
+    # [guess[i].ravel() for i in range(nguess)]
+    return precond_vn, guess.ravel()
 
 @timer
 def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iterations=1000, threads=16):
@@ -224,6 +227,7 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2, iteration
         verbose=verbosity,
         follow_state=False,
         max_space=1000,
+        #max_space=200, # FIXME: think about tuning this parameter
         max_memory=davidson_mem,
         tol=1e-12,
     )
