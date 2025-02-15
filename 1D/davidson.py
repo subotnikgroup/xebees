@@ -234,7 +234,7 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
         tol=1e-12,
     )
 
-    return conv, eigenvalues, eigenvalues
+    return conv, eigenvalues, eigenvectors
 
 
 def parse_args():
@@ -285,7 +285,7 @@ if __name__ == '__main__':
     else:
         print("All eigenvalues converged")
         if args.evecs:
-            np.savez(args.evecs, guess=eigenvectors)
+            np.savez(args.evecs, guess=evecs)
             print("Wrote eigenvectors to", args.evecs)
 
 
