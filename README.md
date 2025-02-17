@@ -6,9 +6,9 @@ source env.modules
 
 for g in 4; do
   for M in {2,5,10,20,40}; do
-    qsub -j oe -N davidson-${g}-${M} -V -l ncpus=48 \
+    qsub -j oe -N davidson-${g}-${M} -V -l ncpus=16 \
       -- $(which python) $(readlink -f davidson.py) \
-      -g $g -M $M -r 400 -R 101 --iterations 10000 \
+      -g $g -M $M -r 400 -R 101 --iterations 10000 -t 16\
       --verbosity 5 --save Exact_c${g}m${M}.dat
   done
 done

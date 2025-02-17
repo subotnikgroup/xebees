@@ -85,7 +85,7 @@ def solve_exact(NR, Nr, R, r, M, m, num_state=10, g=1):
 
     mu = M/2 
     Tr = KE(Nr, dr, m)
-    Tmp = KE(Nr, dr, M * 2)
+    Tmp = KE(Nr, dr, M * 4)
     TR = np.real(KE_FFT(NR, P, R, mu))
 
     H = (np.kron(TR, np.eye(Nr)) +
@@ -114,6 +114,12 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
     for i in range(NR):
         Hel = Tr + Tmp + np.diag(Vgrid[i])
         Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
+
+        # align phases
+        if i > 0:
+            if np.sum(U_n[i] * U_n[i-1]) < 0:
+                U_n[i] *= -1.0
+
         guess[i] = U_n[i, 0]
         #guess[:,i] = U_n[i,:nguess]
 
@@ -121,8 +127,16 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
     for i in range(Nr):
         Hbo = TR + np.diag(Ad_n[:,i])
         Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
-        # FIXME: Why does this make things slightly worse?
-        # guess[:,i] = U_v[i] @ guess[:,i]
+
+        # align phases
+        if i > 0:
+            if np.sum(U_v[i] * U_v[i-1]) < 0:
+                U_v[i] *= -1.0
+
+    # stamp down the vib-ground state
+    # FIXME: Why does this make things slightly worse?        
+    # for i in range(Nr):
+    #     guess[:,i] =  U_v[0] @ guess[:,i]
 
     def precond_Rn(dx, e, x0):
         dx_Rr = dx.reshape((NR,Nr))
@@ -177,7 +191,6 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
 def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
                    iterations=1000,
                    max_subspace=1000,
-                   threads=16,
                    guessfile=None,):
     dR, dr = R[1] - R[0], r[1] - r[0]
     Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g)
@@ -187,7 +200,7 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
 
     mu = M/2 
     Tr = KE(Nr, dr, m)
-    Tmp = KE(Nr, dr, M * 2)
+    Tmp = KE(Nr, dr, M * 4)
     TR = np.real(KE_FFT(NR, P, R, mu))
 
     T_r_mp = Tr + Tmp
@@ -219,7 +232,6 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
         davidson_mem = 0.75 * system_memory_mb
         print(f"Davidson will consume up to {int(davidson_mem)}MB of memory.")
 
-    lib.num_threads(threads)
     conv, eigenvalues, eigenvectors = lib.davidson1(
         aop,
         guess,
@@ -269,12 +281,13 @@ if __name__ == '__main__':
     # Grid setup
     R = np.linspace(2, 4, args.NR) * ANGSTROM_TO_BOHR
     r = np.linspace(-2, 2, args.Nr) * ANGSTROM_TO_BOHR
-    
+
+    #FIXME: don't pass in threads of guess-file; just pass in the guess
+    lib.num_threads(args.t)
     conv, e_approx, evecs = solve_davidson(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g,
                                           verbosity=args.verbosity,
                                           iterations=args.iterations,
                                           max_subspace=args.subspace,
-                                          threads=args.t,
                                           guessfile=args.guess,
     )
     print("Davidson:", e_approx)
