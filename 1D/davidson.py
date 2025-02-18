@@ -10,7 +10,7 @@ import argparse as ap
 import timeit
 from os import sysconf
 from pathlib import Path
-
+# import opt_einsum
 
 # Constants
 AMU_TO_AU = 1822.888486209
@@ -120,8 +120,7 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
             if np.sum(U_n[i] * U_n[i-1]) < 0:
                 U_n[i] *= -1.0
 
-        guess[i] = U_n[i, 0]
-        #guess[:,i] = U_n[i,:nguess]
+        guess[i] = U_n[i, 0].T
 
     # diagonalize Born-Oppenheimer Hamiltonian: R->v
     for i in range(Nr):
@@ -135,7 +134,7 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
 
     # stamp down the vib-ground state
     for i in range(Nr):
-        guess[:,i] =  U_v[0] @ guess[:,i]
+        guess[:,i] =  U_v[0].T @ guess[:,i]
 
 
     def precond_Rn(dx, e, x0):
@@ -153,18 +152,28 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
         
         return tr_Rr.ravel()
 
-    # FIXME: should be able to eliminate the temporaries by merging the contractions
+
+    # for our simple case, these contractions were no observable help and harder to read
+    # to_vn = opt_einsum.contract_expression('nji,jqn,jq->in', U_v, U_n, (NR,Nr), constants=[0,1], optimize='optimal')
+    # to_Rr = opt_einsum.contract_expression('Rij,jRq,qj->Ri', U_n, U_v, (NR,Nr), constants=[0,1], optimize='optimal')
+
+    # Elimination of temporaries by merging the contractions powered by opt_einsum_fx.
+    # c.f.: https://opt-einsum-fx.readthedocs.io/en/latest/api.html#opt_einsum_fx.fuse_einsums
     def precond_vn(dx, e, x0):
         dx_Rr = dx.reshape((NR,Nr))
 
-        dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
-        dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
+        #dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
+        #dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
+
+        dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_Rr, optimize=True)
 
         tr_vn = dx_vn / (Ad_vn - e)
 
-        tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
-        tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
-        
+        #tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
+        #tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
+
+        tr_Rr = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
+
         return tr_Rr.ravel()
 
     return precond_vn, guess.ravel()
