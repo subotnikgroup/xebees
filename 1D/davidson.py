@@ -134,9 +134,9 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
                 U_v[i] *= -1.0
 
     # stamp down the vib-ground state
-    # FIXME: Why does this make things slightly worse?        
-    # for i in range(Nr):
-    #     guess[:,i] =  U_v[0] @ guess[:,i]
+    for i in range(Nr):
+        guess[:,i] =  U_v[0] @ guess[:,i]
+
 
     def precond_Rn(dx, e, x0):
         dx_Rr = dx.reshape((NR,Nr))
@@ -153,6 +153,7 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
         
         return tr_Rr.ravel()
 
+    # FIXME: should be able to eliminate the temporaries by merging the contractions
     def precond_vn(dx, e, x0):
         dx_Rr = dx.reshape((NR,Nr))
 
