@@ -169,7 +169,7 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
 
         dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
         dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
-                    
+
         tr_vn = dx_vn / (Ad_vn - e)
 
         tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
@@ -187,11 +187,29 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
     # [guess[i].ravel() for i in range(nguess)]
     return precond_vn, guess.ravel()
 
+
+def get_davidson_mem(fraction):
+    if fraction > 1 or fraction < 0:
+        raise RuntimeError("Fraction of system memory for Davidson must be on [0, 1]")
+
+    try:
+        system_memory_mb = (sysconf('SC_PAGE_SIZE') * sysconf('SC_PHYS_PAGES')) / 1024**2
+    except ValueError:
+        print("Unable to determine system memory!")
+        system_memory_mb = 8000
+    finally:
+        davidson_mem = fraction * system_memory_mb
+        print(f"Davidson will consume up to {int(davidson_mem)}MB of memory.")
+
+    return davidson_mem
+
+
+
 @timer
 def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
                    iterations=1000,
                    max_subspace=1000,
-                   guessfile=None,):
+                   guess=None,):
     dR, dr = R[1] - R[0], r[1] - r[0]
     Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g)
     
@@ -213,24 +231,11 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
 
     aop = lambda xs: [ aop_fast(x) for x in xs ]
 
-    pc_unitary, guess = build_preconditioner(Tr, Tmp, TR, Vgrid, num_state)
+    if guess is None:
+        pc_unitary, guess = build_preconditioner(Tr, Tmp, TR, Vgrid, num_state)
+    else:
+        pc_unitary, _ = build_preconditioner(Tr, Tmp, TR, Vgrid, num_state)
 
-    if guessfile and guessfile.exists():
-        maybe_guess = np.load(guessfile)['guess']
-        if maybe_guess.shape[1] == guess.shape[0]:
-            guess=maybe_guess
-            print("Loaded guess from", guessfile)
-        else:
-            print("WARNING: loaded guess of improper dimension; discarding!")
-
-    try:
-        system_memory_mb = (sysconf('SC_PAGE_SIZE') * sysconf('SC_PHYS_PAGES')) / 1024**2
-    except ValueError:
-        print("Unable to determine system memory!")
-        system_memory_mb = 8000
-    finally:
-        davidson_mem = 0.75 * system_memory_mb
-        print(f"Davidson will consume up to {int(davidson_mem)}MB of memory.")
 
     conv, eigenvalues, eigenvectors = lib.davidson1(
         aop,
@@ -242,12 +247,24 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
         follow_state=False,
         max_space=max_subspace,
         #max_space=200, # FIXME: think about tuning this parameter
-        max_memory=davidson_mem,
+        max_memory=get_davidson_mem(0.75),
         tol=1e-12,
     )
 
     return conv, eigenvalues, eigenvectors
 
+
+def get_davidson_guess(guessfile, grid_dims):
+    guess = None
+    if guessfile and guessfile.exists():
+        guess = np.load(guessfile)['guess']
+        if guess.shape[1] == np.prod(grid_dims):
+            print("Loaded guess from", guessfile)
+        else:
+            guess = None
+            print("WARNING: loaded guess of improper dimension; discarding!")
+
+    return guess
 
 def parse_args():
     parser = ap.ArgumentParser(
@@ -282,13 +299,16 @@ if __name__ == '__main__':
     R = np.linspace(2, 4, args.NR) * ANGSTROM_TO_BOHR
     r = np.linspace(-2, 2, args.Nr) * ANGSTROM_TO_BOHR
 
-    #FIXME: don't pass in threads of guess-file; just pass in the guess
+    # load a guess if there is one
+    davidson_guess = get_davidson_guess(args.guess, (args.NR, args.Nr))
+
+    # set number of threads
     lib.num_threads(args.t)
     conv, e_approx, evecs = solve_davidson(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g,
                                           verbosity=args.verbosity,
                                           iterations=args.iterations,
                                           max_subspace=args.subspace,
-                                          guessfile=args.guess,
+                                          guess=davidson_guess,
     )
     print("Davidson:", e_approx)
     print(conv)
