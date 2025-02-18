@@ -85,7 +85,7 @@ def solve_exact(NR, Nr, R, r, M, m, num_state=10, g=1):
 
     mu = M/2 
     Tr = KE(Nr, dr, m)
-    Tmp = KE(Nr, dr, M * 4)
+    Tmp = KE(Nr, dr, M * 2)
     TR = np.real(KE_FFT(NR, P, R, mu))
 
     H = (np.kron(TR, np.eye(Nr)) +
@@ -199,7 +199,7 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
 
     mu = M/2 
     Tr = KE(Nr, dr, m)
-    Tmp = KE(Nr, dr, M * 4)
+    Tmp = KE(Nr, dr, M * 2)
     TR = np.real(KE_FFT(NR, P, R, mu))
 
     T_r_mp = Tr + Tmp
