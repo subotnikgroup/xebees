@@ -140,8 +140,6 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
 
     def precond_Rn(dx, e, x0):
         dx_Rr = dx.reshape((NR,Nr))
-        #dx_Rn = np.zeros((NR,Nr))
-        #tr_Rr = np.zeros((NR,Nr))
         
         #for i in range(NR):
         #    dx_Rn[i] = U_n[i].T @ dx_Rr[i]
@@ -157,15 +155,6 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
 
     def precond_vn(dx, e, x0):
         dx_Rr = dx.reshape((NR,Nr))
-        #dx_Rn = np.zeros((NR,Nr))
-        #dx_vn = np.zeros((NR,Nr))
-        #tr_Rn = np.zeros((NR,Nr))
-        #tr_Rr = np.zeros((NR,Nr))
-        
-        #for i in range(NR):
-        #    dx_Rn[i] = U_n[i].T @ dx_Rr[i]
-        #for i in range(Nr):
-        #    dx_vn[:,i] = U_v[i].T @ dx_Rn[:,i]
 
         dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
         dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
@@ -175,16 +164,8 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
         tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
         tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
         
-        #for i in range(Nr):
-        #    tr_Rn[:,i] = U_v[i] @ tr_vn[:,i]
-        #for i in range(NR):
-        #    tr_Rr[i] = U_n[i] @ tr_Rn[i]
-        
         return tr_Rr.ravel()
 
-    # N.B.: Don't get cute with the guess, e.g.: [g.ravel() for g in guess]
-    # What happens if there's only 1 and the indexing gets messed up??
-    # [guess[i].ravel() for i in range(nguess)]
     return precond_vn, guess.ravel()
 
 
@@ -255,16 +236,21 @@ def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
 
 
 def get_davidson_guess(guessfile, grid_dims):
-    guess = None
-    if guessfile and guessfile.exists():
-        guess = np.load(guessfile)['guess']
-        if guess.shape[1] == np.prod(grid_dims):
-            print("Loaded guess from", guessfile)
-        else:
-            guess = None
-            print("WARNING: loaded guess of improper dimension; discarding!")
+    if guessfile is None:
+        return
 
-    return guess
+    if not guessfile.exists():
+        print(f"WARNING: requested guess-file, {guessfile}, does not exist!")
+        return
+
+    guess = np.load(guessfile)['guess']
+    if guess.shape[1] == np.prod(grid_dims):
+        print("Loaded guess from", guessfile)
+        return guess
+    else:
+        print("WARNING: Loaded guess of improper dimension; discarding!")
+        return
+
 
 def parse_args():
     parser = ap.ArgumentParser(
@@ -302,7 +288,7 @@ if __name__ == '__main__':
     # load a guess if there is one
     davidson_guess = get_davidson_guess(args.guess, (args.NR, args.Nr))
 
-    # set number of threads
+    # set number of threads for Davidson
     lib.num_threads(args.t)
     conv, e_approx, evecs = solve_davidson(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g,
                                           verbosity=args.verbosity,
