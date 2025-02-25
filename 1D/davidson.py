@@ -19,6 +19,17 @@ ANGSTROM_TO_BOHR = 1.8897259886
 from functools import wraps
 from time import perf_counter as time
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def timer_ctx(label=""):
+   start = time()
+   yield
+   end = time()
+   elapsed = end - start
+   print(f"[{label}] Elapsed time: {1e6*elapsed:0.3}us")
+
 
 def timer(f):
     @wraps(f)
@@ -26,7 +37,8 @@ def timer(f):
         start = time()
         result = f(*args, **kwargs)
         end = time()
-        print('Elapsed time: {}'.format(end-start))
+        elapsed = end - start
+        print(f"Elapsed time: {elapsed}s")
         return result
     return wrapper
 
