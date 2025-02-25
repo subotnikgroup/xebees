@@ -42,15 +42,16 @@ def timer(f):
         return result
     return wrapper
 
-def VO(R, r, g=1):
+def VO(R, r, g_1,g_2):
     R, r = R / ANGSTROM_TO_BOHR, r / ANGSTROM_TO_BOHR
     D, d, a, c = 60, 0.95, 2.52, 1
     A, B, C = 2.32e5, 3.15, 2.31e4  
 
-    D1 = g * D * (np.exp(-2 * a * (R/2 + r - d)) - 2 * np.exp(-a * (R/2 + r - d)) + 1)
-    D2 = D * c**2 * (np.exp(- (2 * a/c) * (R/2 - r - d)) - 2 * np.exp(-a/c * (R/2 - r - d)))
+    D1 = g_1 * D * (np.exp(-2 * a * (R/2 + r - d)) - 2 * np.exp(-a * (R/2 + r - d)) + 1)
+    D2 = g_2 * D * c**2 * (np.exp(- (2 * a/c) * (R/2 - r - d)) - 2 * np.exp(-a/c * (R/2 - r - d)))
     
     return 0.00159362 * (D1 + D2 + A * np.exp(-B * R) - C / R**6)
+
 
 def get_stencil_coefficients(stencil_size, derivative_order):
     if stencil_size % 2 == 0:
@@ -88,16 +89,16 @@ def prms(A,B, label=""):
     print(label, np.sqrt(np.mean((A-B)**2)))
 
 @timer
-def solve_exact(NR, Nr, R, r, M, m, num_state=10, g=1):
+def solve_exact(NR, Nr, R, r, M, m, g_1, g_2, num_state=10):
     dR, dr = R[1] - R[0], r[1] - r[0]
-    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g)
+    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g_1, g_2)
 
     P = np.fft.fftshift(np.fft.fftfreq(NR, dR)) * 2 * np.pi
     p = np.fft.fftshift(np.fft.fftfreq(Nr, dr)) * 2 * np.pi
 
-    mu = M/2 
+    mu = M_1*M_2/(M_1+M_2)
     Tr = KE(Nr, dr, m)
-    Tmp = KE(Nr, dr, M * 2)
+    Tmp = KE(Nr, dr, (M_1+M_2)* 2)
     TR = np.real(KE_FFT(NR, P, R, mu))
 
     H = (np.kron(TR, np.eye(Nr)) +
@@ -209,19 +210,19 @@ def get_davidson_mem(fraction):
 
 
 @timer
-def solve_davidson(NR, Nr, R, r, M, m, num_state=10, g=1, verbosity=2,
+def solve_davidson(NR, Nr, R, r, M_1, M_2, m, num_state=10, g_1=1, g_2=1, verbosity=2,
                    iterations=1000,
                    max_subspace=1000,
                    guess=None,):
     dR, dr = R[1] - R[0], r[1] - r[0]
-    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g)
+    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g_1, g_2)
     
     P = np.fft.fftshift(np.fft.fftfreq(NR, dR)) * 2 * np.pi
     p = np.fft.fftshift(np.fft.fftfreq(Nr, dr)) * 2 * np.pi
 
-    mu = M/2 
+    mu = M_1*M_2/(M_1+M_2)
     Tr = KE(Nr, dr, m)
-    Tmp = KE(Nr, dr, M * 2)
+    Tmp = KE(Nr, dr, (M_1+M_2))
     TR = np.real(KE_FFT(NR, P, R, mu))
 
     T_r_mp = Tr + Tmp
@@ -281,8 +282,10 @@ def parse_args():
     
     parser.add_argument('-k', metavar='num_eigenvalues', default=5, type=int)
     parser.add_argument('-t', metavar="num_threads", default=16, type=int)
-    parser.add_argument('-g', metavar='g', required=True, type=float)
-    parser.add_argument('-M', required=True, type=float)
+    parser.add_argument('-g_1', metavar='g_1', required=True, type=float)
+    parser.add_argument('-g_2', metavar='g_2', required=True, type=float)
+    parser.add_argument('-M_1', required=True, type=float)
+    parser.add_argument('-M_2', required=True, type=float)
     parser.add_argument('-R', dest="NR", metavar="NR", default=101, type=int)
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=400, type=int)
     parser.add_argument('--exact_diagonalization', action='store_true')
@@ -300,9 +303,10 @@ if __name__ == '__main__':
     args = parse_args()
     print(args)
     
-    M = AMU_TO_AU * args.M
+    M_1 = AMU_TO_AU * args.M_1
+    M_2 = AMU_TO_AU * args.M_2
     m = AMU_TO_AU * 1
-    
+
     # Grid setup
     R = np.linspace(2, 4, args.NR) * ANGSTROM_TO_BOHR
     r = np.linspace(-2, 2, args.Nr) * ANGSTROM_TO_BOHR
@@ -312,7 +316,7 @@ if __name__ == '__main__':
 
     # set number of threads for Davidson
     lib.num_threads(args.t)
-    conv, e_approx, evecs = solve_davidson(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g,
+    conv, e_approx, evecs = solve_davidson(args.NR, args.Nr, R, r, M_1, M_2, m, num_state=args.k, g_1=args.g_1, g_2=args.g_2,
                                           verbosity=args.verbosity,
                                           iterations=args.iterations,
                                           max_subspace=args.subspace,
@@ -332,10 +336,10 @@ if __name__ == '__main__':
 
     if args.save is not None and all(conv):
         with open(args.save, "a") as f:
-            print(M, " ".join(map(str, e_approx)), file=f)
+            print(M_1, M_2, " ".join(map(str, e_approx)), file=f)
         print(f"Computed eigenvalues for M={M} amu and appended to {args.save}")
     
     if args.exact_diagonalization:
-        e_exact = solve_exact(args.NR, args.Nr, R, r, M, m, num_state=args.k, g=args.g)
+        e_exact = solve_exact(args.NR, args.Nr, R, r, M_1, M_2, m, num_state=args.k, g_1=args.g_1, g_2=args.g_2)
         print("Exact:", e_exact)
         prms(e_approx, e_exact, "RMS deviation between Davidson and Exact")
