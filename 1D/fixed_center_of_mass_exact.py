@@ -112,12 +112,11 @@ def solve_exact(NR, Nr, R, r, M, m, g_1, g_2, num_state=10):
     return eigenvalues[:num_state]
 
 @timer
-def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
+def build_preconditioner(Tr, TR, Vgrid):
     NR, Nr = Vgrid.shape
 
-    #guess = np.zeros((nguess,NR,Nr))
     guess = np.zeros((NR,Nr))
-    
+
     U_n    = np.zeros((NR,Nr,Nr))
     U_v    = np.zeros((Nr,NR,NR))
     Ad_n   = np.zeros((NR,Nr))
@@ -125,7 +124,7 @@ def build_preconditioner(Tr, Tmp, TR, Vgrid, nguess=1):
 
     # diagonalize H electronic: r->n
     for i in range(NR):
-        Hel = Tr + Tmp + np.diag(Vgrid[i])
+        Hel = Tr + np.diag(Vgrid[i])
         Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
 
         # align phases
@@ -236,9 +235,9 @@ def solve_davidson(NR, Nr, R, r, M_1, M_2, m, num_state=10, g_1=1, g_2=1, verbos
     aop = lambda xs: [ aop_fast(x) for x in xs ]
 
     if guess is None:
-        pc_unitary, guess = build_preconditioner(Tr, Tmp, TR, Vgrid, num_state)
+        pc_unitary, guess = build_preconditioner(T_r_mp, TR, Vgrid)
     else:
-        pc_unitary, _ = build_preconditioner(Tr, Tmp, TR, Vgrid, num_state)
+        pc_unitary, _ = build_preconditioner(T_r_mp, TR, Vgrid)
 
 
     conv, eigenvalues, eigenvectors = lib.davidson1(
