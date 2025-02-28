@@ -22,20 +22,8 @@ def VO(R, r, g_1,g_2):
 
 
 @timer
-def solve_exact(NR, Nr, R, r, M, m, g_1, g_2, num_state=10):
-    dR, dr = R[1] - R[0], r[1] - r[0]
-    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g_1, g_2)
-
-    P = np.fft.fftshift(np.fft.fftfreq(NR, dR)) * 2 * np.pi
-    p = np.fft.fftshift(np.fft.fftfreq(Nr, dr)) * 2 * np.pi
-
-    mu = M_1*M_2/(M_1+M_2)
-    Tr = KE(Nr, dr, m)
-    Tmp = KE(Nr, dr, (M_1+M_2)* 2)
-    TR = np.real(KE_FFT(NR, P, R, mu))
-
+def solve_exact(TR, Tr, Vgrid, num_state=10):
     H = (np.kron(TR, np.eye(Nr)) +
-         np.kron(np.eye(NR), Tmp) +
          np.kron(np.eye(NR), Tr) +
          np.diag(Vgrid.ravel())
     )
@@ -45,37 +33,25 @@ def solve_exact(NR, Nr, R, r, M, m, g_1, g_2, num_state=10):
 
 
 @timer
-def solve_davidson(NR, Nr, R, r, M_1, M_2, m, num_state=10, g_1=1, g_2=1,
+def solve_davidson(TR, Tr, Vgrid,
+                   num_state=10,
                    verbosity=2,
                    iterations=1000,
                    max_subspace=1000,
                    guess=None,):
-
-    dR, dr = R[1] - R[0], r[1] - r[0]
-    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), g_1, g_2)
-    
-    P = np.fft.fftshift(np.fft.fftfreq(NR, dR)) * 2 * np.pi
-    p = np.fft.fftshift(np.fft.fftfreq(Nr, dr)) * 2 * np.pi
-
-    mu = M_1*M_2/(M_1+M_2)
-    Tr = KE(Nr, dr, m)
-    Tmp = KE(Nr, dr, (M_1+M_2))
-    TR = np.real(KE_FFT(NR, P, R, mu))
-
-    T_r_mp = Tr + Tmp
     def aop_fast(x):
-        xa = x.reshape(NR,Nr)
+        xa = x.reshape(Vgrid.shape)
         r  = TR @ xa
-        r += xa @ (T_r_mp)
+        r += xa @ (Tr)
         r += xa * Vgrid
         return r.ravel()
 
     aop = lambda xs: [ aop_fast(x) for x in xs ]
 
     if guess is None:
-        pc_unitary, guess = build_preconditioner(T_r_mp, TR, Vgrid)
+        pc_unitary, guess = build_preconditioner(TR, Tr, Vgrid)
     else:
-        pc_unitary, _ = build_preconditioner(T_r_mp, TR, Vgrid)
+        pc_unitary, _ = build_preconditioner(TR, Tr, Vgrid)
 
 
     conv, eigenvalues, eigenvectors = lib.davidson1(
@@ -118,29 +94,48 @@ def parse_args():
     return parser.parse_args()
 
 
-if __name__ == '__main__':
-    args = parse_args()
-    print(args)
-
-    M_1 = AMU_TO_AU * args.M_1
-    M_2 = AMU_TO_AU * args.M_2
+def build_terms(args):
     m = AMU_TO_AU * 1
-
+    M_1 = args.M_1
+    M_2 = args.M_2
     # Grid setup
     R = np.linspace(2, 4, args.NR) * ANGSTROM_TO_BOHR
     r = np.linspace(-2, 2, args.Nr) * ANGSTROM_TO_BOHR
 
-    # load a guess if there is one
-    davidson_guess = get_davidson_guess(args.guess, (args.NR, args.Nr))
+    dR, dr = R[1] - R[0], r[1] - r[0]
+    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), args.g_1, args.g_2)
+
+    P = np.fft.fftshift(np.fft.fftfreq(args.NR, dR)) * 2 * np.pi
+    p = np.fft.fftshift(np.fft.fftfreq(args.Nr, dr)) * 2 * np.pi
+
+    mu = M_1*M_2/(M_1+M_2)
+    Tr = KE(args.Nr, dr, m)
+    Tmp = KE(args.Nr, dr, (M_1+M_2))
+    TR = np.real(KE_FFT(args.NR, P, R, mu))
+
+    return TR, Tr, Tmp, Vgrid, (R,P), (r,p)
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    print(args)
 
     # set number of threads for Davidson
     lib.num_threads(args.t)
 
-    conv, e_approx, evecs = solve_davidson(args.NR, args.Nr, R, r, M_1, M_2, m, num_state=args.k, g_1=args.g_1, g_2=args.g_2,
-                                          verbosity=args.verbosity,
-                                          iterations=args.iterations,
-                                          max_subspace=args.subspace,
-                                          guess=davidson_guess,
+    args.M_1 *= AMU_TO_AU
+    args.M_2 *= AMU_TO_AU
+
+    TR, Tr, Tmp, Vgrid, *_ = build_terms(args)
+
+    # load a guess if there is one
+    davidson_guess = get_davidson_guess(args.guess, (args.NR, args.Nr))
+    conv, e_approx, evecs = solve_davidson(TR, Tr + Tmp, Vgrid,
+                                           num_state=args.k,
+                                           verbosity=args.verbosity,
+                                           iterations=args.iterations,
+                                           max_subspace=args.subspace,
+                                           guess=davidson_guess,
     )
     print("Davidson:", e_approx)
     print(conv)
@@ -156,10 +151,10 @@ if __name__ == '__main__':
 
     if args.save is not None and all(conv):
         with open(args.save, "a") as f:
-            print(M_1, M_2, " ".join(map(str, e_approx)), file=f)
-        print(f"Computed eigenvalues for M={M} amu and appended to {args.save}")
+            print(args.M_1, args.M_2, " ".join(map(str, e_approx)), file=f)
+        print(f"Computed eigenvalues for M_1={args.M_1}, M_2={args.M_2}  amu and appended to {args.save}")
     
     if args.exact_diagonalization:
-        e_exact = solve_exact(args.NR, args.Nr, R, r, M_1, M_2, m, num_state=args.k, g_1=args.g_1, g_2=args.g_2)
+        e_exact = solve_exact(TR, Tr + Tmp, Vgrid, num_state=args.k)
         print("Exact:", e_exact)
         prms(e_approx, e_exact, "RMS deviation between Davidson and Exact")

@@ -37,7 +37,7 @@ def get_davidson_guess(guessfile, grid_dims):
 
 
 @timer
-def build_preconditioner(Tr, TR, Vgrid):
+def build_preconditioner(TR, Tr, Vgrid):
     NR, Nr = Vgrid.shape
 
     guess = np.zeros((NR,Nr))
