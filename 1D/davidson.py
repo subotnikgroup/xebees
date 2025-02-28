@@ -1,6 +1,8 @@
 import numpy as np
 from os import sysconf
 from debug import timer
+from pyscf import lib
+
 # import opt_einsum
 
 def get_davidson_mem(fraction):
@@ -115,3 +117,50 @@ def build_preconditioner(TR, Tr, Vgrid):
 
     return precond_vn, guess.ravel()
 
+@timer
+def solve_exact(TR, Tr, Vgrid, num_state=10):
+    H = (np.kron(TR, np.eye(Nr)) +
+         np.kron(np.eye(NR), Tr) +
+         np.diag(Vgrid.ravel())
+    )
+
+    eigenvalues, eigenvectors = np.linalg.eigh(H)
+    return eigenvalues[:num_state]
+
+
+@timer
+def solve_davidson(TR, Tr, Vgrid,
+                   num_state=10,
+                   verbosity=2,
+                   iterations=1000,
+                   max_subspace=1000,
+                   guess=None,):
+    def aop_fast(x):
+        xa = x.reshape(Vgrid.shape)
+        r  = TR @ xa
+        r += xa @ (Tr)
+        r += xa * Vgrid
+        return r.ravel()
+
+    aop = lambda xs: [ aop_fast(x) for x in xs ]
+
+    if guess is None:
+        pc_unitary, guess = build_preconditioner(TR, Tr, Vgrid)
+    else:
+        pc_unitary, _ = build_preconditioner(TR, Tr, Vgrid)
+
+
+    conv, eigenvalues, eigenvectors = lib.davidson1(
+        aop,
+        guess,
+        pc_unitary,
+        nroots=num_state,
+        max_cycle=iterations,
+        verbose=verbosity,
+        follow_state=False,
+        max_space=max_subspace,
+        max_memory=get_davidson_mem(0.75),
+        tol=1e-12,
+    )
+
+    return conv, eigenvalues, eigenvectors

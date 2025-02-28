@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 import numpy as np
 from sys import stderr
-from pyscf import lib
 import argparse as ap
 from pathlib import Path
+from pyscf import lib
 
 from constants import *
 from hamiltonian import  KE, KE_FFT
-from davidson import build_preconditioner, get_davidson_guess, get_davidson_mem
+from davidson import solve_davidson, solve_exact, get_davidson_guess
 from debug import prms, timer
 
 def VO(R, r, g_1,g_2):
@@ -19,55 +19,6 @@ def VO(R, r, g_1,g_2):
     D2 = g_2 * D * c**2 * (np.exp(- (2 * a/c) * (R/2 - r - d)) - 2 * np.exp(-a/c * (R/2 - r - d)))
     
     return 0.00159362 * (D1 + D2 + A * np.exp(-B * R) - C / R**6)
-
-
-@timer
-def solve_exact(TR, Tr, Vgrid, num_state=10):
-    H = (np.kron(TR, np.eye(Nr)) +
-         np.kron(np.eye(NR), Tr) +
-         np.diag(Vgrid.ravel())
-    )
-
-    eigenvalues, eigenvectors = np.linalg.eigh(H)
-    return eigenvalues[:num_state]
-
-
-@timer
-def solve_davidson(TR, Tr, Vgrid,
-                   num_state=10,
-                   verbosity=2,
-                   iterations=1000,
-                   max_subspace=1000,
-                   guess=None,):
-    def aop_fast(x):
-        xa = x.reshape(Vgrid.shape)
-        r  = TR @ xa
-        r += xa @ (Tr)
-        r += xa * Vgrid
-        return r.ravel()
-
-    aop = lambda xs: [ aop_fast(x) for x in xs ]
-
-    if guess is None:
-        pc_unitary, guess = build_preconditioner(TR, Tr, Vgrid)
-    else:
-        pc_unitary, _ = build_preconditioner(TR, Tr, Vgrid)
-
-
-    conv, eigenvalues, eigenvectors = lib.davidson1(
-        aop,
-        guess,
-        pc_unitary,
-        nroots=num_state,
-        max_cycle=iterations,
-        verbose=verbosity,
-        follow_state=False,
-        max_space=max_subspace,
-        max_memory=get_davidson_mem(0.75),
-        tol=1e-12,
-    )
-
-    return conv, eigenvalues, eigenvectors
 
 
 def parse_args():
