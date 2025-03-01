@@ -47,8 +47,8 @@ def parse_args():
 
 def build_terms(args):
     m = AMU_TO_AU * 1
-    M_1 = args.M_1
-    M_2 = args.M_2
+    M_1 = AMU_TO_AU * args.M_1
+    M_2 = AMU_TO_AU * args.M_2
     # Grid setup
     R = np.linspace(2, 4, args.NR) * ANGSTROM_TO_BOHR
     r = np.linspace(-2, 2, args.Nr) * ANGSTROM_TO_BOHR
@@ -74,9 +74,6 @@ if __name__ == '__main__':
     # set number of threads for Davidson
     lib.num_threads(args.t)
 
-    args.M_1 *= AMU_TO_AU
-    args.M_2 *= AMU_TO_AU
-
     TR, Tr, Tmp, Vgrid, *_ = build_terms(args)
 
     # load a guess if there is one
@@ -95,9 +92,10 @@ if __name__ == '__main__':
         print("WARNING: Not all eigenvalues converged; results will not be saved!")
     else:
         print("All eigenvalues converged")
-        if args.evecs:
-            np.savez(args.evecs, guess=evecs)
-            print("Wrote eigenvectors to", args.evecs)
+
+    if args.evecs:
+        np.savez(args.evecs, guess=evecs)
+        print("Wrote eigenvectors to", args.evecs)
 
 
     if args.save is not None and all(conv):
@@ -109,3 +107,6 @@ if __name__ == '__main__':
         e_exact = solve_exact(TR, Tr + Tmp, Vgrid, num_state=args.k)
         print("Exact:", e_exact)
         prms(e_approx, e_exact, "RMS deviation between Davidson and Exact")
+
+    if not all(conv):
+        exit(1)
