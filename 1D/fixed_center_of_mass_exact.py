@@ -87,21 +87,22 @@ if __name__ == '__main__':
     )
     print("Davidson:", e_approx)
     print(conv)
-    
-    if not all(conv):
-        print("WARNING: Not all eigenvalues converged; results will not be saved!")
-    else:
-        print("All eigenvalues converged")
 
     if args.evecs:
         np.savez(args.evecs, guess=evecs, V=Vgrid)
         print("Wrote eigenvectors to", args.evecs)
 
 
-    if args.save is not None and all(conv):
-        with open(args.save, "a") as f:
-            print(args.M_1, args.M_2, " ".join(map(str, e_approx)), file=f)
-        print(f"Computed eigenvalues for M_1={args.M_1}, M_2={args.M_2}  amu and appended to {args.save}")
+    if args.save is not None:
+        if all(conv):
+            with open(args.save, "a") as f:
+                print(args.M_1, args.M_2, " ".join(map(str, e_approx)), file=f)
+            print(f"Computed fixed center-of-mass eigenvalues",
+                  f"for M_1={args.M_1}, M_2={args.M_2} amu",
+                  f"with charges g_1={args.g_1}, g_1={args.g_1}",
+                  f"and appended to {args.save}")
+        else:
+            print("Skipping saving unconverged results.")
     
     if args.exact_diagonalization:
         e_exact = solve_exact(TR, Tr + Tmp, Vgrid, num_state=args.k)
@@ -109,4 +110,7 @@ if __name__ == '__main__':
         prms(e_approx, e_exact, "RMS deviation between Davidson and Exact")
 
     if not all(conv):
+        print("WARNING: Not all eigenvalues converged")
         exit(1)
+    else:
+        print("All eigenvalues converged")

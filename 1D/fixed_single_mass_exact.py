@@ -94,8 +94,11 @@ if __name__ == '__main__':
     if args.save is not None:
         if all(conv):
             with open(args.save, "a") as f:
-                print(args.M_1, args.M_2, " ".join(map(str, e_approx)), file=f)
-            print(f"Computed eigenvalues for M_1={args.M_1}, M_2={args.M_2}  amu and appended to {args.save}")
+                print(args.M, " ".join(map(str, e_approx)), file=f)
+            print(f"Computed fixed single-mass eigenvalues",
+                  f"for M={args.M} amu",
+                  f"with charges g_1={args.g_1}, g_1={args.g_1}",
+                  f"and appended to {args.save}")
         else:
             print("Skipping saving unconverged results.")
     
