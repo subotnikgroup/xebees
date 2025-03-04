@@ -10,14 +10,18 @@ from hamiltonian import  KE, KE_FFT
 from davidson import solve_davidson, solve_exact, get_davidson_guess
 from debug import prms, timer
 
-def VO(R, r, g_1,g_2):
-    R, r = R / ANGSTROM_TO_BOHR, r / ANGSTROM_TO_BOHR
+def VO(R_amu, r_amu, g_1, g_2, M_1, M_2):
+    R, r = R_amu / ANGSTROM_TO_BOHR, r_amu / ANGSTROM_TO_BOHR
     D, d, a, c = 60, 0.95, 2.52, 1
-    A, B, C = 2.32e5, 3.15, 2.31e4  
+    A, B, C = 2.32e5, 3.15, 2.31e4
+    mu = M_1*M_2/(M_1+M_2)
 
-    D1 = g_1 * D * (np.exp(-2 * a * (R/2 + r - d)) - 2 * np.exp(-a * (R/2 + r - d)) + 1)
-    D2 = g_2 * D * c**2 * (np.exp(- (2 * a/c) * (R/2 - r - d)) - 2 * np.exp(-a/c * (R/2 - r - d)))
-    
+    D1 = g_2 * D * (    np.exp(-2*a * (r + mu/M_2*R - d))
+                    - 2*np.exp(  -a * (r + mu/M_2*R - d))
+                    + 1)
+    D2 = g_1 * D * c**2 * (    np.exp(-(2*a / c) * (mu/M_1*R - r - d))
+                           - 2*np.exp(-(  a / c) * (mu/M_1*R - r - d)))
+
     return KCALMOLE_TO_HARTREE * (D1 + D2 + A * np.exp(-B * R) - C / R**6)
 
 
@@ -54,7 +58,7 @@ def build_terms(args):
     r = np.linspace(-2, 2, args.Nr) * ANGSTROM_TO_BOHR
 
     dR, dr = R[1] - R[0], r[1] - r[0]
-    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), args.g_1, args.g_2)
+    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), args.g_1, args.g_2, M_1, M_2)
 
     P = np.fft.fftshift(np.fft.fftfreq(args.NR, dR)) * 2 * np.pi
     p = np.fft.fftshift(np.fft.fftfreq(args.Nr, dr)) * 2 * np.pi

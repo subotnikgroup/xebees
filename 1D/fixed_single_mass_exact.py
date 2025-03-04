@@ -11,8 +11,8 @@ from davidson import solve_davidson, solve_exact, get_davidson_guess
 from debug import prms, timer
 
 
-def VO(R, r, g_1,g_2):
-    R, r = R /ANGSTROM_TO_BOHR , r /ANGSTROM_TO_BOHR
+def VO(R_amu, r_amu, g_1, g_2):
+    R, r = R_amu / ANGSTROM_TO_BOHR , r_amu / ANGSTROM_TO_BOHR
     D, d, a, c = 60, 0.95, 2.52, 1
     A, B, C = 2.32e5, 3.15, 2.31e4
 
