@@ -3,7 +3,7 @@ import numpy as np
 from sys import stderr
 import argparse as ap
 from pathlib import Path
-from pyscf import lib
+from pyscf import lib as pyscflib
 
 from constants import *
 from hamiltonian import  KE, KE_FFT
@@ -18,7 +18,7 @@ def VO(R, r, g_1,g_2):
     D1 = g_1 * D * (np.exp(-2 * a * (R/2 + r - d)) - 2 * np.exp(-a * (R/2 + r - d)) + 1)
     D2 = g_2 * D * c**2 * (np.exp(- (2 * a/c) * (R/2 - r - d)) - 2 * np.exp(-a/c * (R/2 - r - d)))
     
-    return 0.00159362 * (D1 + D2 + A * np.exp(-B * R) - C / R**6)
+    return KCALMOLE_TO_HARTREE * (D1 + D2 + A * np.exp(-B * R) - C / R**6)
 
 
 def parse_args():
@@ -71,8 +71,8 @@ if __name__ == '__main__':
     args = parse_args()
     print(args)
 
-    # set number of threads for Davidson
-    lib.num_threads(args.t)
+    # set number of threads for Davidson etc.
+    pyscflib.num_threads(args.t)
 
     TR, Tr, Tmp, Vgrid, *_ = build_terms(args)
 
@@ -94,7 +94,7 @@ if __name__ == '__main__':
         print("All eigenvalues converged")
 
     if args.evecs:
-        np.savez(args.evecs, guess=evecs)
+        np.savez(args.evecs, guess=evecs, V=Vgrid)
         print("Wrote eigenvectors to", args.evecs)
 
 
