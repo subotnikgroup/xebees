@@ -56,7 +56,7 @@ def build_terms(args):
 
     # Grid setup
     range_R = (2, 4)
-    range_r = (-2, 2)
+    range_r = (-4, 4)
 
     # as for imshow, (left, right, bottom, top)
     if hasattr(args, "extent") and args.extent is not None:
