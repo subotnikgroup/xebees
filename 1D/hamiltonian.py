@@ -31,6 +31,11 @@ def solve_BO_surface(Tr, V):
     return np.array(
        [np.linalg.eigvalsh(Tr + np.diag(v))[0] for v in V])
 
+def solve_BO_surfaces(Tr, V):
+    return np.array(
+       [np.linalg.eigvalsh(Tr + np.diag(v)) for v in V]).T
+
+
 # print(
 #     solve_BOv(
 #         KE(NR, dR, M),
