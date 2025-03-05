@@ -53,9 +53,18 @@ def build_terms(args):
     m = AMU_TO_AU * 1
     M_1 = AMU_TO_AU * args.M_1
     M_2 = AMU_TO_AU * args.M_2
+
     # Grid setup
-    R = np.linspace(2, 4, args.NR) * ANGSTROM_TO_BOHR
-    r = np.linspace(-2, 2, args.Nr) * ANGSTROM_TO_BOHR
+    range_R = (2, 4)
+    range_r = (-2, 2)
+
+    # as for imshow, (left, right, bottom, top)
+    if hasattr(args, "extent") and args.extent is not None:
+        range_R = args.extent[:2]
+        range_r = args.extent[-2:]
+
+    R = np.linspace(*range_R, args.NR) * ANGSTROM_TO_BOHR
+    r = np.linspace(*range_r, args.Nr) * ANGSTROM_TO_BOHR
 
     dR, dr = R[1] - R[0], r[1] - r[0]
     Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), args.g_1, args.g_2, M_1, M_2)
