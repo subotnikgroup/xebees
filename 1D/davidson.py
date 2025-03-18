@@ -40,7 +40,7 @@ def get_davidson_guess(guessfile, grid_dims):
 
 
 @timer
-def build_preconditioner(TR, Tr, Vgrid):
+def build_preconditioner(TR, Tr, Vgrid, min_guess=4):
     NR, Nr = Vgrid.shape
 
     guess = np.zeros((NR,Nr))
@@ -76,8 +76,9 @@ def build_preconditioner(TR, Tr, Vgrid):
     # vib states are like: U_v[n,:,v]
     # our first guess was the ground state BO wavefuction dressed by the first vibrational state
     # guess = U_n[:,:,0] * U_v[0,:,0,np.newaxis]
-    # Now we take the first 4
-    guesses = [(U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel() for n in [0,1] for v in [0,1,2]]
+    # Now we take something like the first num_guess states
+    s = int(np.ceil(np.sqrt(min_guess)))
+    guesses = [(U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel() for n in range(s) for v in range(s)]
 
     def precond_Rn(dx, e, x0):
         dx_Rr = dx.reshape((NR,Nr))
@@ -148,7 +149,7 @@ def solve_davidson(TR, Tr, Vgrid,
     aop = lambda xs: [ aop_fast(x) for x in xs ]
 
     if guess is None:
-        pc_unitary, guess = build_preconditioner(TR, Tr, Vgrid)
+        pc_unitary, guess = build_preconditioner(TR, Tr, Vgrid, num_state)
     else:
         pc_unitary, _ = build_preconditioner(TR, Tr, Vgrid)
 
