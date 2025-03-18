@@ -57,10 +57,9 @@ def build_preconditioner(TR, Tr, Vgrid):
 
         # align phases
         if i > 0:
-            if np.sum(U_n[i] * U_n[i-1]) < 0:
-                U_n[i] *= -1.0
-
-        guess[i] = U_n[i, 0].T
+            for j in range(Nr):
+                if np.sum(U_n[i,:,j] * U_n[i-1,:,j]) < 0:
+                    U_n[i,:,j] *= -1.0
 
     # diagonalize Born-Oppenheimer Hamiltonian: R->v
     for i in range(Nr):
@@ -69,13 +68,16 @@ def build_preconditioner(TR, Tr, Vgrid):
 
         # align phases
         if i > 0:
-            if np.sum(U_v[i] * U_v[i-1]) < 0:
-                U_v[i] *= -1.0
+            for j in range(NR):
+                if np.sum(U_v[i,:,j] * U_v[i-1,:,j]) < 0:
+                    U_v[i,:,j] *= -1.0
 
-    # stamp down the vib-ground state
-    for i in range(Nr):
-        guess[:,i] =  U_v[0].T @ guess[:,i]
-
+    # BO states are like: U_n[:,:,n]
+    # vib states are like: U_v[n,:,v]
+    # our first guess was the ground state BO wavefuction dressed by the first vibrational state
+    # guess = U_n[:,:,0] * U_v[0,:,0,np.newaxis]
+    # Now we take the first 4
+    guesses = [(U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel() for n in [0,1] for v in [0,1,2]]
 
     def precond_Rn(dx, e, x0):
         dx_Rr = dx.reshape((NR,Nr))
@@ -116,7 +118,7 @@ def build_preconditioner(TR, Tr, Vgrid):
 
         return tr_Rr.ravel()
 
-    return precond_vn, guess.ravel()
+    return precond_vn, guesses
 
 @timer
 def solve_exact(TR, Tr, Vgrid, num_state=10):
