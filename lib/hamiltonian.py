@@ -13,10 +13,11 @@ def get_stencil_coefficients(stencil_size, derivative_order):
     
     return np.linalg.solve(A, b)
 
-def KE(N, dx, mass, stencil_size=11):
-    stencil = get_stencil_coefficients(stencil_size, 2) / dx**2
-    I = np.eye(N)
-    T = -1 / (2 * mass) * np.array([convolve(I[i, :], stencil, mode='same') for i in range(N)])
+def KE(N, dx, mass, stencil_size=11, order=2):
+    stencil = get_stencil_coefficients(stencil_size, order) / dx**order
+    T = -1 / (2 * mass) * np.array(
+        [convolve(e, stencil, mode='same') for e in np.eye(N)]
+    )
     
     return T
 
