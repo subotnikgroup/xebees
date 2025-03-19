@@ -1,6 +1,6 @@
 import numpy as np
 from os import sysconf
-from debug import timer
+from debug import timer, timer_ctx
 from pyscf import lib
 #import linalg_helper as lib
 
@@ -130,6 +130,17 @@ def solve_exact(TR, Tr, Vgrid, num_state=10):
 
     eigenvalues, eigenvectors = np.linalg.eigh(H)
     return eigenvalues[:num_state]
+
+@timer
+def solve_exact_gen(Hx, N, num_state=10):
+    with timer_ctx(f"Build H of size {N}"):
+        H = np.array([
+            Hx(e) for e in np.eye(N)
+        ])
+
+    eigenvalues, eigenvectors = np.linalg.eigh(H)
+    return eigenvalues[:num_state]
+
 
 
 @timer
