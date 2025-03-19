@@ -7,10 +7,10 @@ from pyscf import lib as pyscflib
 
 from constants import *
 from hamiltonian import  KE, KE_FFT
-from davidson import solve_davidson, solve_exact, get_davidson_guess
+from davidson import get_davidson_guess, get_davidson_mem solve_exact_gen
 from debug import prms, timer
 
-# FIXME: this is busted!
+
 def V2D_fcm(R_amu, r_amu, g, g_1, g_2, M_1, M_2, m_e):
     R = R_amu / ANGSTROM_TO_BOHR
     r = r_amu / ANGSTROM_TO_BOHR
@@ -20,7 +20,7 @@ def V2D_fcm(R_amu, r_amu, g, g_1, g_2, M_1, M_2, m_e):
     
     mu12 = M_1*M_2/(M_1+M_2)
     mu = np.sqrt(M_1*M_2*m_e/(M_1+M_2+m_e))
-    aa = np.sqrt(mu/mu12) # factor of a for lab and scaled coordinates
+    aa = np.sqrt(mu/mu12) # factor of 'a' for lab and scaled coordinates
     
     kappa2 = r*R*np.cos(g)
     r1e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1)
@@ -67,10 +67,10 @@ def build_terms(args):
     M_2 = AMU_TO_AU * args.M_2
 
     # Grid setup
-    # FIXME: need to pick ranges based on masses
-    range_R = (1e-5, 4.0)
-    range_r = (0, 4)
-    range_g = (0, np.pi/2)
+    # FIXME: need to pick ranges based on masses, charges
+    range_R = (2, 4.0) # FIXME: why does V get weird when we take R->1 ?
+    range_r = (0, 5)
+    range_g = (0, 2*np.pi)
     
     # as for imshow, (left, right, bottom, top)
     if hasattr(args, "extent") and args.extent is not None:
@@ -85,38 +85,63 @@ def build_terms(args):
     Vgrid = V2D_fcm(*np.meshgrid(R, r, g, indexing='ij'), args.g_1, args.g_2, M_1, M_2, m_e)
 
     #FIXME: nothing below here is correct
-    
     P  = np.fft.fftshift(np.fft.fftfreq(args.NR, dR)) * 2 * np.pi
     p  = np.fft.fftshift(np.fft.fftfreq(args.Nr, dr)) * 2 * np.pi
     pg = np.fft.fftshift(np.fft.fftfreq(args.Ng, dg)) * 2 * np.pi
 
-    mu = M_1*M_2/(M_1+M_2)
-    Tr = KE(args.Nr, dr, m_e)
+    J = args.J
+    mu = np.sqrt(M_1*M_2*m_e/(M_1+M_2+m_e))
+
+    # FIXME: I don't really understand the import of the difference between KE and KE_FFT
+
+    #TR = np.real(KE_FFT(args.NR, P, R, mu))
+    TR = KE(args.NR, dR, mu)
+    Tr = KE(args.Nr, dr, mu)
+
     Tmp = KE(args.Nr, dr, (M_1+M_2))
-    TR = np.real(KE_FFT(args.NR, P, R, mu))
+
     Tg=Tmp
+
+    #FIXME: likely will want to @jax.jit this
+    def Hx(x):
+        #FIXME: may also want to dress these functions up as something nicer
+        xa = x.reshape(Vgrid.shape)
+        r  = np.einsum('Rrg,RS->Srg', xa, TR)
+        r += np.einsum('Rrg,rs->Rsg', xa, Tr)
+        r += np.einsum('Rrg,gh->Rrh', xa, Tg)
+        r += xa * Vgrid
+        return r.ravel()
+
     
-    return TR, Tr, Tg, Vgrid, (R,P), (r,p), (g, pg)
+    return TR, Tr, Tg, Vgrid, Hx, (R,P), (r,p), (g, pg)
 
 
 if __name__ == '__main__':
     args = parse_args()
-    print(args)
 
     # set number of threads for Davidson etc.
     pyscflib.num_threads(args.t)
 
-    TR, Tr, Tg, Vgrid, *_ = build_terms(args)
+    TR, Tr, Tg, Vgrid, Hx, *_ = build_terms(args)
 
-    # load a guess if there is one
-    davidson_guess = get_davidson_guess(args.guess, (args.NR, args.Nr))
-    conv, e_approx, evecs = solve_davidson2d(TR, Tr, Tg, Vgrid,
-                                             num_state=args.k,
-                                             verbosity=args.verbosity,
-                                             iterations=args.iterations,
-                                             max_subspace=args.subspace,
-                                             guess=davidson_guess,
+    if (guess:=get_davidson_guess(args.guess, (args.NR, args.Nr, args.Ng))) is None:
+        precond, guess = build_preconditioner2D(TR, Tr, Vgrid, num_state)
+    else:
+        precond, _ = build_preconditioner2D(TR, Tr, Vgrid, 0)
+
+    conv, e_approx, evecs = pyscflib.davidson1(
+        lambda xs: [ Hx(x) for x in xs ],
+        guess,
+        precond,
+        nroots=args.k,
+        max_cycle=args.iterations,
+        verbose=args.verbosity,
+        follow_state=False,
+        max_space=args.subspace,
+        max_memory=get_davidson_mem(0.75),
+        tol=1e-12,
     )
+
     print("Davidson:", e_approx)
     print(conv)
 
@@ -124,20 +149,21 @@ if __name__ == '__main__':
         np.savez(args.evecs, guess=evecs, V=Vgrid)
         print("Wrote eigenvectors to", args.evecs)
 
-
     if args.save is not None:
         if all(conv):
             with open(args.save, "a") as f:
-                print(args.M_1, args.M_2, " ".join(map(str, e_approx)), file=f)
+                print(args.M_1, args.M_2, args.g_1, args.g_2, args.J,
+                      " ".join(map(str, e_approx)), file=f)
             print(f"Computed fixed center-of-mass eigenvalues",
                   f"for M_1={args.M_1}, M_2={args.M_2} amu",
-                  f"with charges g_1={args.g_1}, g_1={args.g_1}",
+                  f"with charges g_1={args.g_1}, g_2={args.g_2}",
+                  f"and total J={args.J}",
                   f"and appended to {args.save}")
         else:
             print("Skipping saving unconverged results.")
     
     if args.exact_diagonalization:
-        e_exact = solve_exact(TR, Tr, Vgrid, num_state=args.k)
+        e_exact = solve_exact_gen(Hx, np.prod(Vgrid.shape), num_state=args.k)
         print("Exact:", e_exact)
         prms(e_approx, e_exact, "RMS deviation between Davidson and Exact")
 
