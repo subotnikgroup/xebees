@@ -10,15 +10,15 @@ module purge
 module load gcc/11.3 cmake/3.24.0 openblas/0.3.10-mp 
 
 uv venv
+source .venv/bin/activate
 MAKEFLAGS="-j48" CC=$(which gcc) CXX=$(which g++) FC=$(which gfortran) uv \
   pip install --editable . --no-binary numpy --no-binary scipy --no-binary pyscf --no-binary jax
 ```
 
-Now, you can activate it like so (every time):
+Each time you want to run the codes, you'll activate it like so (you'll also need openblas loaded):
 ```
 source .venv/bin/activate
 ```
-N.B. you will also always need to have the openblas module loaded.
 
 Now you can run any of the included programs, e.g.:
 ```
