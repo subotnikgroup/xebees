@@ -1,45 +1,19 @@
-Compute the lowest k eigenvalues of phase space model in Xuezhi's paper using the Davidson method with preconditioner.
+Compute the lowest k eigenvalues of the exact Hamiltonian for a 3-body system
 
+To set up your environment do the following:
 ```
-# set up the environment
-source env.modules
-
-for g in 4; do
-  for M in {2,5,10,20,40}; do
-    qsub -j oe -N davidson-${g}-${M} -V -l ncpus=16 \
-      -- $(which python) $(readlink -f davidson.py) \
-      -g $g -M $M -r 400 -R 101 --iterations 10000 -t 16\
-      --verbosity 5 --save Exact_c${g}m${M}.dat
-  done
-done
+uv venv
+uv pip install --editable .
 ```
-
-To setup on jupiter:
-
+Now, you can activate it like so (every time):
 ```
-# set up the environment
-source env.modules
-
-# first install openssl
-
-git clone "git@github.com:openssl/openssl.git"
-cd openssl
-./Configure --prefix=$HOME/.local
-make -j 48
-make install
-
-# Now setup python
-## First pyenv
-
-git clone https://github.com/pyenv/pyenv.git ~/.pyenv
-eval "$(pyenv init - zsh)"
-
-CONFIGURE_OPTS="--with-openssl=$HOME/.local" pyenv install 3.12.9
-pyenv local 3.12.9
-
-## install other packages
-
-MAKEFLAGS="-j48" pip install numpy --no-binary numpy
-MAKEFLAGS="-j48" pip install scipy --no-binary scipy
-MAKEFLAGS="-j48" pip install pyscf --no-binary pyscf
+source .venv/bin/activate
+```
+And run any of the included programs, e.g.:
+```
+1D/fixed_center_of_mass_exact.py -k 10 -g_1 1.1 -g_2 1.0 -M_1 2 -M_2 4 -r 400 -R 101 --verbosity 5
+```
+Or access the jupyter notebooks:
+```
+jupyter lab
 ```
