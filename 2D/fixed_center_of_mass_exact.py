@@ -88,10 +88,12 @@ class Hamiltonian:
 
         return KCALMOLE_TO_HARTREE * (D1 + D2 + A*np.exp(-B*R/aa) - C/(R/aa)**6)
 
+    # allows H @ x
+    def __matmul__(self, other):
+        return self.Hx(other.ravel())
 
     # FIXME: likely will want to @jax.jit this, c.f.:
     # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
-    # FIXME: provide @ operartor
     def Hx(self, x):
         xa = x.reshape(self.shape)
         ke = np.zeros(self.shape)
@@ -230,7 +232,7 @@ if __name__ == '__main__':
         precond, _ = H.build_preconditioner2D(0)
 
     conv, e_approx, evecs = pyscflib.davidson1(
-        lambda xs: [ H.Hx(x) for x in xs ],
+        lambda xs: [ H @ x for x in xs ],
         guess,
         precond,
         nroots=args.k,
