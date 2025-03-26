@@ -4,6 +4,9 @@ from sys import stderr
 import argparse as ap
 from pathlib import Path
 from pyscf import lib as pyscflib
+import jax
+import jax.numpy as jnp
+from functools import partial
 
 from constants import *
 from hamiltonian import  KE, KE_FFT
@@ -11,6 +14,23 @@ from davidson import get_davidson_guess, get_davidson_mem, solve_exact_gen
 from debug import prms, timer
 
 class Hamiltonian:
+    __slots__ = ( # any new members must be added here
+        'm_e', 'M_1', 'M_2', 'mu', 'g_1', 'g_2', 'J',
+        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
+        'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
+        'Rinv2', 'rinv2', '_preconditioner_data',
+        'shape', 'size',
+        '_locked'
+    )
+
+    # prevent data from being modified
+    def __setattr__(self, key, value):
+        if getattr(self, '_locked', False) and key not in (
+                '_preconditioner_data',
+        ):
+            raise AttributeError(f"Cannot modify '{key}'")
+        super().__setattr__(key, value)
+    
     def __init__(self, args):
         self.m_e = AMU_TO_AU * 1
         self.M_1 = AMU_TO_AU * args.M_1
@@ -40,6 +60,7 @@ class Hamiltonian:
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V_2Dfcm(self.R_grid, self.r_grid, self.g_grid)
         self.shape = self.Vgrid.shape
+        self.size = args.NR * args.Nr * args.Ng
 
         dR = self.R[1] - self.R[0]
         dr = self.r[1] - self.r[0]
@@ -64,6 +85,8 @@ class Hamiltonian:
         # since we need these in Hx; maybe fine to compute on the fly?
         self.Rinv2 = 1.0/(self.R_grid)**2
         self.rinv2 = 1.0/(self.r_grid)**2
+
+        self._locked = True
 
 
     def V_2Dfcm(self, R_amu, r_amu, gamma):
@@ -94,6 +117,7 @@ class Hamiltonian:
 
     # FIXME: likely will want to @jax.jit this, c.f.:
     # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
+    #@partial(jax.jit, static_argnums=0)
     def Hx(self, x):
         xa = x.reshape(self.shape)
         ke = np.zeros(self.shape)
@@ -104,15 +128,15 @@ class Hamiltonian:
 
         #  ∂²/∂γ² + 1/4 terms
         keg  = np.einsum('Rrg,gh->Rrh', xa, self.ddg2)  # ∂²/∂γ²
-        keg += xa / 4.0                                 # ∂²/∂γ² + 1/4
-        ke += (self.Rinv2 + self.rinv2)*keg             # (1/R^2 + 1/r^2) (∂²/∂γ² + 1/4)
+        keg += xa / 4.0                                  # ∂²/∂γ² + 1/4
+        ke += (self.Rinv2 + self.rinv2)*keg              # (1/R^2 + 1/r^2) (∂²/∂γ² + 1/4)
 
         # Angular Kinetic Energy J terms
         # FIXME: deal with complex wf; will break at present for J != 0
         if self.J != 0:
             keg = 2*J*(1j)*np.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # 2iJ ∂/∂γ
-            keg += xa*J**2                                          # 2iJ ∂/∂γ + J^2
-            ke -= self.Rinv2*keg                                    # (1/R^2)*(2iJ ∂/∂γ + J^2)
+            keg += xa*J**2                                           # 2iJ ∂/∂γ + J^2
+            ke -= self.Rinv2*keg                                     # (1/R^2)*(2iJ ∂/∂γ + J^2)
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
@@ -122,14 +146,22 @@ class Hamiltonian:
         return res.ravel()
 
 
-    # FIXME: need conditioners to be available before being built
-    def build_preconditioner2D(self, min_guess=4):
-        # build the whole H and then extract its diagonal
-        Hd = np.diag(np.array([self.Hx(e) for e in np.eye(np.prod(self.shape))]))
-        def precond_stupid(dx, e, x0):
-            return dx/(Hd-e)
+    def preconditioner(self, dx, e, x0):
+        if not hasattr(self, "_preconditioner_data"):
+            print("building stupid preconditioner")
+            self.build_preconditioner()
+        return self._preconditioner_kernel(dx, e, x0)
 
-        return precond_stupid, np.random.random(np.prod(self.shape))
+    # FIXME: will want to @jax.jit this too
+    def _preconditioner_kernel(self, dx, e, x0):
+        Hd = self._preconditioner_data
+        return dx/(Hd-e)
+    
+    def build_preconditioner(self, min_guess=4):
+        # build the whole H and then extract its diagonal
+        self._preconditioner_data = np.diag(np.array([self.Hx(e) for e in np.eye(self.size)]))
+
+        return np.random.random(self.size)
         
         NR, Nr, Ng = self.shape
     
@@ -227,14 +259,14 @@ if __name__ == '__main__':
     H = Hamiltonian(args)
 
     if (guess:=get_davidson_guess(args.guess, H.shape)) is None:
-        precond, guess = H.build_preconditioner2D(args.k)
+        guess = H.build_preconditioner(args.k)
     else:
-        precond, _ = H.build_preconditioner2D(0)
+        H.build_preconditioner(0)
 
     conv, e_approx, evecs = pyscflib.davidson1(
         lambda xs: [ H @ x for x in xs ],
         guess,
-        precond,
+        H.preconditioner,
         nroots=args.k,
         max_cycle=args.iterations,
         verbose=args.verbosity,
@@ -265,7 +297,7 @@ if __name__ == '__main__':
             print("Skipping saving unconverged results.")
     
     if args.exact_diagonalization:
-        e_exact = solve_exact_gen(H.Hx, np.prod(H.shape), num_state=args.k)
+        e_exact = solve_exact_gen(H.Hx, H.size, num_state=args.k)
         print("Exact:", e_exact)
         prms(e_approx, e_exact, "RMS deviation between Davidson and Exact")
 
