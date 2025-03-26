@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.special import factorial
-from scipy.signal import convolve
+import scipy.signal as ssg
+import scipy.ndimage as snd
 
 def get_stencil_coefficients(stencil_size, derivative_order):
     if stencil_size % 2 == 0:
@@ -13,12 +14,21 @@ def get_stencil_coefficients(stencil_size, derivative_order):
     
     return np.linalg.solve(A, b)
 
-def KE(N, dx, mass, stencil_size=11, order=2):
+def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
     stencil = get_stencil_coefficients(stencil_size, order) / dx**order
-    T = -1 / (2 * mass) * np.array(
-        [convolve(e, stencil, mode='same') for e in np.eye(N)]
-    )
-    
+    if cyclic:
+        T = np.array(
+            [snd.convolve(e, stencil, mode='wrap') for e in np.eye(N)]
+        )
+
+    else:
+        T = np.array(
+            [ssg.convolve(e, stencil, mode='same') for e in np.eye(N)]
+        )
+
+    if not bare:
+        T *= -1 / (2 * mass)
+
     return T
 
 def KE_FFT(N, P, R, mass): 
