@@ -11,23 +11,23 @@ from functools import partial
 from constants import *
 from hamiltonian import  KE, KE_FFT
 from davidson import get_davidson_guess, get_davidson_mem, solve_exact_gen
-from debug import prms, timer
+from debug import prms, timer, timer_ctx
 
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
-        'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
-        'Rinv2', 'rinv2', '_preconditioner_data',
+        'Vgrid', 'ddR2', 'ddR1', 'ddr2', 'ddr1', 'ddg2', 'ddg1',
+        'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked'
     )
 
+    _mutable_keys = ('_preconditioner_data',)
+
     # prevent data from being modified
     def __setattr__(self, key, value):
-        if getattr(self, '_locked', False) and key not in (
-                '_preconditioner_data',
-        ):
+        if getattr(self, '_locked', False) and key not in self._mutable_keys:
             raise AttributeError(f"Cannot modify '{key}'")
         super().__setattr__(key, value)
     
@@ -44,18 +44,25 @@ class Hamiltonian:
 
         # Grid setup
         # FIXME: need to pick ranges based on masses, charges
-        range_R = (2, 4.0)  # FIXME: why does V get weird when we take R->1 ?
-        range_r = (1e-5, 5)
-        range_g = (0, 2*np.pi)
+        R_range = (2, 4.0)  # FIXME: why does V get weird when we take R->1 ?
+        r_max = 5
 
-        # as for imshow, (left, right, bottom, top)
+        # (R_min, R_max, r_max)
         if hasattr(args, "extent") and args.extent is not None:
-            range_R = args.extent[:2]
-            range_r = args.extent[2:4]
+            R_range = args.extent[:2]
+            r_max = args.extent[-1]
 
-        self.R = np.linspace(*range_R, args.NR) * ANGSTROM_TO_BOHR
-        self.r = np.linspace(*range_r, args.Nr) * ANGSTROM_TO_BOHR
-        self.g = np.linspace(*range_g, args.Ng)
+        self.R = np.linspace(*R_range, args.NR) * ANGSTROM_TO_BOHR
+
+        # N.B.: We are careful not to include 0 in the range of r by
+        # starting 1 "step" away from 0. It might be more consistent
+        # to have Nr-1 points, but the confusion this would cause
+        # would be intolerable.
+        self.r = np.linspace(r_max/args.Nr, r_max, args.Nr) * ANGSTROM_TO_BOHR
+        
+        # N.B.: It is essential that we not include the endpoint in
+        # gamma lest our cyclic grid be ill-formed
+        self.g = np.linspace(0, 2*np.pi, args.Ng, endpoint=False)
 
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V_2Dfcm(self.R_grid, self.r_grid, self.g_grid)
@@ -74,7 +81,9 @@ class Hamiltonian:
         # N.B.: These all lack the factor of -1/(2 * mu)
         # N.B.: The default stencil degree is 11
         self.ddR2 = KE(args.NR, dR, bare=True)
+        self.ddR1 = KE(args.NR, dR, bare=True, order=1)
         self.ddr2 = KE(args.Nr, dr, bare=True)
+        self.ddr1 = KE(args.Nr, dr, bare=True, order=1)
 
         # Part of the reason for using a cyclic *stencil* for gamma rather
         # than KE_FFT is that it wasn't immediately obvious how I would
@@ -86,7 +95,18 @@ class Hamiltonian:
         self.Rinv2 = 1.0/(self.R_grid)**2
         self.rinv2 = 1.0/(self.r_grid)**2
 
+        self.diag = self.buildDiag()
+        
+        self._lock()
+
+
+    # ensure that arrays cannot be written to
+    def _lock(self):
         self._locked = True
+        for key in self.__slots__:
+            if (key not in self._mutable_keys and
+                isinstance(member := super().__getattribute__(key), np.ndarray)):
+                member.flags.writeable = False
 
 
     def V_2Dfcm(self, R_amu, r_amu, gamma):
@@ -113,28 +133,34 @@ class Hamiltonian:
 
     # allows H @ x
     def __matmul__(self, other):
-        return self.Hx(other.ravel())
+        # FIXME: consider performance implications of reshape
+        return self.Hx(other.ravel()).reshape(other.shape)
 
     # FIXME: likely will want to @jax.jit this, c.f.:
+    # FIXME: can likely speed these up using opt_einsum for constant arguments
     # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
-    #@partial(jax.jit, static_argnums=0)
+    @partial(jax.jit, static_argnums=0)
     def Hx(self, x):
         xa = x.reshape(self.shape)
         ke = np.zeros(self.shape)
 
         # Radial Kinetic Energy terms, easy
-        ke += np.einsum('Rrg,RS->Srg', xa, self.ddR2)  # ∂²/∂R²
-        ke += np.einsum('Rrg,rs->Rsg', xa, self.ddr2)  # ∂²/∂r²
+        ke += jnp.einsum('Rrg,RS->Srg', xa, self.ddR2)  # ∂²/∂R²
+        ke += jnp.einsum('Rrg,rs->Rsg', xa, self.ddr2)  # ∂²/∂r²
+
+        # FIXME: should these terms be here?
+        ke += jnp.einsum('Rrg,RS->Srg', xa, self.ddR1)/self.R_grid  # (1/R)∂/∂R
+        ke += jnp.einsum('Rrg,rs->Rsg', xa, self.ddr1)/self.r_grid  # (1/r)∂/∂r
 
         #  ∂²/∂γ² + 1/4 terms
-        keg  = np.einsum('Rrg,gh->Rrh', xa, self.ddg2)  # ∂²/∂γ²
+        keg  = jnp.einsum('Rrg,gh->Rrh', xa, self.ddg2)  # ∂²/∂γ²
         keg += xa / 4.0                                  # ∂²/∂γ² + 1/4
         ke += (self.Rinv2 + self.rinv2)*keg              # (1/R^2 + 1/r^2) (∂²/∂γ² + 1/4)
 
         # Angular Kinetic Energy J terms
         # FIXME: deal with complex wf; will break at present for J != 0
         if self.J != 0:
-            keg = 2*J*(1j)*np.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # 2iJ ∂/∂γ
+            keg = 2*J*(1j)*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # 2iJ ∂/∂γ
             keg += xa*J**2                                           # 2iJ ∂/∂γ + J^2
             ke -= self.Rinv2*keg                                     # (1/R^2)*(2iJ ∂/∂γ + J^2)
 
@@ -145,6 +171,10 @@ class Hamiltonian:
         res = ke + xa * self.Vgrid
         return res.ravel()
 
+    def buildDiag(self):
+        diag = np.zeros(self.shape)
+        diag += self.Vgrid
+        return diag.ravel()
 
     def preconditioner(self, dx, e, x0):
         if not hasattr(self, "_preconditioner_data"):
@@ -154,14 +184,18 @@ class Hamiltonian:
 
     # FIXME: will want to @jax.jit this too
     def _preconditioner_kernel(self, dx, e, x0):
-        Hd = self._preconditioner_data
+        Hd = np.diag(self._preconditioner_data)
         return dx/(Hd-e)
-    
+
+    @timer
     def build_preconditioner(self, min_guess=4):
         # build the whole H and then extract its diagonal
-        self._preconditioner_data = np.diag(np.array([self.Hx(e) for e in np.eye(self.size)]))
+        with timer_ctx(f"build H diag {self.size}"):
+            self._preconditioner_data = np.array([self.Hx(e) for e in np.eye(self.size)])
+        # likely overkill
+        # self._preconditioner_data.flags.writeable = False
 
-        return np.random.random(self.size)
+        return np.exp(-(self.Vgrid - np.min(self.Vgrid))*27.211*2).ravel()
         
         NR, Nr, Ng = self.shape
     
@@ -263,18 +297,22 @@ if __name__ == '__main__':
     else:
         H.build_preconditioner(0)
 
-    conv, e_approx, evecs = pyscflib.davidson1(
-        lambda xs: [ H @ x for x in xs ],
-        guess,
-        H.preconditioner,
-        nroots=args.k,
-        max_cycle=args.iterations,
-        verbose=args.verbosity,
-        follow_state=False,
-        max_space=args.subspace,
-        max_memory=get_davidson_mem(0.75),
-        tol=1e-12,
-    )
+    #prms(np.diag(H._preconditioner_data), H.diag, "RMS deviation between full and diag")
+    #exit()
+        
+    with timer_ctx("Davidson"):
+        conv, e_approx, evecs = pyscflib.davidson1(
+            lambda xs: [ H @ x for x in xs ],
+            guess,
+            H.preconditioner,
+            nroots=args.k,
+            max_cycle=args.iterations,
+            verbose=args.verbosity,
+            follow_state=False,
+            max_space=args.subspace,
+            max_memory=get_davidson_mem(0.75),
+            tol=1e-12,
+        )
 
     print("Davidson:", e_approx)
     print(conv)
