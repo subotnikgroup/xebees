@@ -9,9 +9,10 @@ import jax.numpy as jnp
 from functools import partial
 
 from constants import *
-from hamiltonian import  KE, KE_FFT
+from hamiltonian import  KE, KE_FFT, KE_ColbertMiller_zero_inf
 from davidson import get_davidson_guess, get_davidson_mem, solve_exact_gen
 from debug import prms, timer, timer_ctx
+
 
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
@@ -28,7 +29,7 @@ class Hamiltonian:
     # prevent data from being modified
     def __setattr__(self, key, value):
         if getattr(self, '_locked', False) and key not in self._mutable_keys:
-            raise AttributeError(f"Cannot modify '{key}'")
+            raise AttributeError(f"Cannot modify '{key}'; all members are frozen on creation")
         super().__setattr__(key, value)
     
     def __init__(self, args):
@@ -57,11 +58,13 @@ class Hamiltonian:
         # N.B.: We are careful not to include 0 in the range of r by
         # starting 1 "step" away from 0. It might be more consistent
         # to have Nr-1 points, but the confusion this would cause
-        # would be intolerable.
+        # would be intolerable. This behavior is required because we
+        # have terms that go like 1/r.
         self.r = np.linspace(r_max/args.Nr, r_max, args.Nr) * ANGSTROM_TO_BOHR
         
         # N.B.: It is essential that we not include the endpoint in
-        # gamma lest our cyclic grid be ill-formed
+        # gamma lest our cyclic grid be ill-formed and 2nd derivatives
+        # all over the place
         self.g = np.linspace(0, 2*np.pi, args.Ng, endpoint=False)
 
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
@@ -82,7 +85,8 @@ class Hamiltonian:
         # N.B.: The default stencil degree is 11
         self.ddR2 = KE(args.NR, dR, bare=True)
         self.ddR1 = KE(args.NR, dR, bare=True, order=1)
-        self.ddr2 = KE(args.Nr, dr, bare=True)
+        #self.ddr2 = KE(args.Nr, dr, bare=True)
+        self.ddr2 = KE_ColbertMiller_zero_inf(args.Nr, dr, bare=True)
         self.ddr1 = KE(args.Nr, dr, bare=True, order=1)
 
         # Part of the reason for using a cyclic *stencil* for gamma rather
@@ -149,8 +153,8 @@ class Hamiltonian:
         ke += jnp.einsum('Rrg,rs->Rsg', xa, self.ddr2)  # ∂²/∂r²
 
         # FIXME: should these terms be here?
-        ke += jnp.einsum('Rrg,RS->Srg', xa, self.ddR1)/self.R_grid  # (1/R)∂/∂R
-        ke += jnp.einsum('Rrg,rs->Rsg', xa, self.ddr1)/self.r_grid  # (1/r)∂/∂r
+        #ke += jnp.einsum('Rrg,RS->Srg', xa, self.ddR1)/self.R_grid  # (1/R)∂/∂R
+        #ke += jnp.einsum('Rrg,rs->Rsg', xa, self.ddr1)/self.r_grid  # (1/r)∂/∂r
 
         #  ∂²/∂γ² + 1/4 terms
         keg  = jnp.einsum('Rrg,gh->Rrh', xa, self.ddg2)  # ∂²/∂γ²
@@ -297,8 +301,8 @@ if __name__ == '__main__':
     else:
         H.build_preconditioner(0)
 
-    #prms(np.diag(H._preconditioner_data), H.diag, "RMS deviation between full and diag")
-    #exit()
+    prms(np.diag(H._preconditioner_data), H.diag, "RMS deviation between full and diag")
+    exit()
         
     with timer_ctx("Davidson"):
         conv, e_approx, evecs = pyscflib.davidson1(
