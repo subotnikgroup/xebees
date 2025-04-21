@@ -38,6 +38,47 @@ def KE_FFT(N, P, R, mass):
     return (exp_RP.T.conj() @ Tp @ exp_RP) / N
 
 
+# for equally spaced points; if unequal, pass J.
+# tol specifies maximum mean Hermitian deviation
+def KE_Borisov(x, J=1, tol=1e-5):
+    # A. G. Borisov, J. Chem. Phys. 114, 7770–7777 (2001)
+    # https://doi.org/10.1063/1.1358867
+
+    N = len(x)
+
+    bound = lambda a, b: np.arange(a,b+1)
+    al = lambda k: np.where((k == 0) | (k == N), 1/np.sqrt(2), 1)
+
+    # Helper function to pre-compute sine and cosine matrices (Asin & Acos above)
+    def DTT(N, func):
+        k = bound(0, N)
+        m = bound(1, N)
+        return func(np.outer(2*m-1,k) * np.pi/N/2)
+
+    COS = DTT(N, np.cos)
+    SIN = DTT(N, np.sin)
+
+    Ac = COS.T * al(bound(0,N))[:,np.newaxis]
+    As = (SIN * al(bound(0,N))).T
+    Acv = COS * al(bound(0,N))[np.newaxis, :] * (2/N)
+    Asv = SIN * al(bound(0,N))[np.newaxis, :] * (2/N)
+
+    F = np.copy(x)
+
+    b = 1/np.sqrt(F * J)
+    R = F / J
+    k = np.arange(N+1) * np.pi / x[-1]
+
+    L = - b[:,None] * Acv * k @ As * R @ Asv * k @ Ac * b
+
+    deviation = np.mean(np.abs(L-L.T))
+    if deviation < tol:
+        L = (L + L.T)/2
+    else:
+        raise RuntimeError("Deviation from Hermitian too large:", deviation)
+
+    return L
+
 def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False):
     T = np.zeros((N, N))
 
