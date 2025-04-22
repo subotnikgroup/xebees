@@ -9,8 +9,8 @@ import jax.numpy as jnp
 from functools import partial
 
 from constants import *
-from hamiltonian import  KE, KE_FFT, KE_ColbertMiller_zero_inf
-from davidson import get_davidson_guess, get_davidson_mem, solve_exact_gen
+from hamiltonian import  KE, KE_FFT, KE_Borisov
+from davidson import get_davidson_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 
 
@@ -18,12 +18,14 @@ class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
-        'Vgrid', 'ddR2', 'ddR1', 'ddr2', 'ddr1', 'ddg2', 'ddg1',
+        'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked'
     )
 
+    # FIXME: this is useful for debugging, but ultimately we would
+    # like to freeze this on creaton too.
     _mutable_keys = ('_preconditioner_data',)
 
     # prevent data from being modified
@@ -31,7 +33,7 @@ class Hamiltonian:
         if getattr(self, '_locked', False) and key not in self._mutable_keys:
             raise AttributeError(f"Cannot modify '{key}'; all members are frozen on creation")
         super().__setattr__(key, value)
-    
+
     def __init__(self, args):
         self.m_e = AMU_TO_AU * 1
         self.M_1 = AMU_TO_AU * args.M_1
@@ -82,16 +84,14 @@ class Hamiltonian:
 
 
         # N.B.: These all lack the factor of -1/(2 * mu)
-        # N.B.: The default stencil degree is 11
-        self.ddR2 = KE(args.NR, dR, bare=True)
-        self.ddR1 = KE(args.NR, dR, bare=True, order=1)
-        #self.ddr2 = KE(args.Nr, dr, bare=True)
-        self.ddr2 = KE_ColbertMiller_zero_inf(args.Nr, dr, bare=True)
-        self.ddr1 = KE(args.Nr, dr, bare=True, order=1)
+        # We also are throwing away the returned jacobian of R/r
+        self.ddR2, _ = KE_Borisov(self.R, bare=True)
+        self.ddr2, _ = KE_Borisov(self.r, bare=True)
 
-        # Part of the reason for using a cyclic *stencil* for gamma rather
-        # than KE_FFT is that it wasn't immediately obvious how I would
-        # represent ∂/∂γ. (∂²/∂γ² was clear.)
+        # Part of the reason for using a cyclic *stencil* for gamma
+        # rather than KE_FFT is that it wasn't immediately obvious how
+        # I would represent ∂/∂γ. (∂²/∂γ² was clear.)  N.B.: The
+        # default stencil degree is 11
         self.ddg2 = KE(args.Ng, dg, bare=True, cyclic=True)
         self.ddg1 = KE(args.Ng, dg, bare=True, cyclic=True, order=1)
 
@@ -128,10 +128,10 @@ class Hamiltonian:
         re2 = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/self.M_2)**2 + 2*kappa2*mu12/self.M_2)
 
         D2 = self.g_2 * D * (    np.exp(-2*a * (re2-d))
-                             - 2*np.exp(  -a * (re2-d))
-                             + 1)
+                                 - 2*np.exp(  -a * (re2-d))
+                                 + 1)
         D1 = self.g_1 * D * c**2 * (    np.exp(-(2*a/c) * (r1e-d))
-                                     - 2*np.exp(-(  a/c) * (r1e-d)))
+                                        - 2*np.exp(-(  a/c) * (r1e-d)))
 
         return KCALMOLE_TO_HARTREE * (D1 + D2 + A*np.exp(-B*R/aa) - C/(R/aa)**6)
 
@@ -152,21 +152,15 @@ class Hamiltonian:
         ke += jnp.einsum('Rrg,RS->Srg', xa, self.ddR2)  # ∂²/∂R²
         ke += jnp.einsum('Rrg,rs->Rsg', xa, self.ddr2)  # ∂²/∂r²
 
-        # FIXME: should these terms be here?
-        #ke += jnp.einsum('Rrg,RS->Srg', xa, self.ddR1)/self.R_grid  # (1/R)∂/∂R
-        #ke += jnp.einsum('Rrg,rs->Rsg', xa, self.ddr1)/self.r_grid  # (1/r)∂/∂r
-
         #  ∂²/∂γ² + 1/4 terms
         keg  = jnp.einsum('Rrg,gh->Rrh', xa, self.ddg2)  # ∂²/∂γ²
-        keg += xa / 4.0                                  # ∂²/∂γ² + 1/4
-        ke += (self.Rinv2 + self.rinv2)*keg              # (1/R^2 + 1/r^2) (∂²/∂γ² + 1/4)
+        ke += (self.Rinv2 + self.rinv2)*keg              # (1/R^2 + 1/r^2) (∂²/∂γ²)
 
         # Angular Kinetic Energy J terms
-        # FIXME: deal with complex wf; will break at present for J != 0
         if self.J != 0:
-            keg = 2*J*(1j)*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # 2iJ ∂/∂γ
-            keg += xa*J**2                                           # 2iJ ∂/∂γ + J^2
-            ke -= self.Rinv2*keg                                     # (1/R^2)*(2iJ ∂/∂γ + J^2)
+            keg = 2*J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # 2J ∂/∂γ
+            keg += xa*J**2                                      # 2J ∂/∂γ + J^2
+            ke = self.Rinv2*keg                                 # (1/R^2)*(2J ∂/∂γ + J^2)
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
@@ -175,6 +169,7 @@ class Hamiltonian:
         res = ke + xa * self.Vgrid
         return res.ravel()
 
+    # FIXME: use the 6-tensor notation and extract block-wise
     def buildDiag(self):
         diag = np.zeros(self.shape)
         diag += self.Vgrid
@@ -188,50 +183,50 @@ class Hamiltonian:
 
     # FIXME: will want to @jax.jit this too
     def _preconditioner_kernel(self, dx, e, x0):
-        Hd = np.diag(self._preconditioner_data)
+        Hd = self._preconditioner_data
         return dx/(Hd-e)
 
     @timer
     def build_preconditioner(self, min_guess=4):
-        # build the whole H and then extract its diagonal
+        # FIXME: use buildDiag. (should be super fast).
         with timer_ctx(f"build H diag {self.size}"):
-            self._preconditioner_data = np.array([self.Hx(e) for e in np.eye(self.size)])
-        # likely overkill
-        # self._preconditioner_data.flags.writeable = False
+            self._preconditioner_data = np.array([e @ (self @ e) for e in eye_lazy(self.size)])
+            # likely overkill
+            self._preconditioner_data.flags.writeable = False
 
         return np.exp(-(self.Vgrid - np.min(self.Vgrid))*27.211*2).ravel()
-        
+
         NR, Nr, Ng = self.shape
-    
+
         guess = np.zeros(self.shape)
-    
+
         U_n    = np.zeros((NR,Nr,Nr))
         U_v    = np.zeros((Nr,NR,NR))
         Ad_n   = np.zeros((NR,Nr))
         Ad_vn  = np.zeros((NR,Nr))
-    
+
         # diagonalize H electronic: r->n
         for i in range(NR):
             Hel = Tr + np.diag(self.Vgrid[i])
             Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
-    
+
             # align phases
             if i > 0:
                 for j in range(Nr):
                     if np.sum(U_n[i,:,j] * U_n[i-1,:,j]) < 0:
                         U_n[i,:,j] *= -1.0
-    
+
         # diagonalize Born-Oppenheimer Hamiltonian: R->v
         for i in range(Nr):
             Hbo = TR + np.diag(Ad_n[:,i])
             Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
-    
+
             # align phases
             if i > 0:
                 for j in range(NR):
                     if np.sum(U_v[i,:,j] * U_v[i-1,:,j]) < 0:
                         U_v[i,:,j] *= -1.0
-    
+
         # BO states are like: U_n[:,:,n]
         # vib states are like: U_v[n,:,v]
         # our first guess was the ground state BO wavefuction dressed by the first vibrational state
@@ -239,23 +234,23 @@ class Hamiltonian:
         # Now we take something like the first num_guess states
         s = int(np.ceil(np.sqrt(min_guess)))
         guesses = [(U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel() for n in range(s) for v in range(s)]
-    
-    
+
+
         def precond_vn(dx, e, x0):
             dx_Rr = dx.reshape((NR,Nr))
-    
+
             #dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
             #dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
-    
+
             dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_Rr, optimize=True)
-    
+
             tr_vn = dx_vn / (Ad_vn - e)
-    
+
             #tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
             #tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
-    
+
             tr_Rr = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
-    
+
             return tr_Rr.ravel()
 
         return precond_vn, guesses
@@ -301,9 +296,7 @@ if __name__ == '__main__':
     else:
         H.build_preconditioner(0)
 
-    prms(np.diag(H._preconditioner_data), H.diag, "RMS deviation between full and diag")
-    exit()
-        
+
     with timer_ctx("Davidson"):
         conv, e_approx, evecs = pyscflib.davidson1(
             lambda xs: [ H @ x for x in xs ],
