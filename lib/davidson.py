@@ -38,6 +38,12 @@ def get_davidson_guess(guessfile, grid_dims):
         print("WARNING: Loaded guess of improper dimension; discarding!")
         return
 
+def eye_lazy(N):
+    for i in range(N):
+        col = np.zeros(N)
+        col[i] = 1.0
+        yield col
+
 
 @timer
 def build_preconditioner(TR, Tr, Vgrid, min_guess=4):
