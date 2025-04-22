@@ -40,11 +40,14 @@ def KE_FFT(N, P, R, mass):
 
 # for equally spaced points; if unequal, pass J.
 # tol specifies maximum mean Hermitian deviation
-def KE_Borisov(x, J=1, tol=1e-5):
+def KE_Borisov(x, tol=1e-6, mass=None, bare=False):
     # A. G. Borisov, J. Chem. Phys. 114, 7770–7777 (2001)
     # https://doi.org/10.1063/1.1358867
 
     N = len(x)
+    x_max = x[-1]
+    J = np.gradient(x) * N / x_max
+
 
     bound = lambda a, b: np.arange(a,b+1)
     al = lambda k: np.where((k == 0) | (k == N), 1/np.sqrt(2), 1)
@@ -69,7 +72,7 @@ def KE_Borisov(x, J=1, tol=1e-5):
     R = F / J
     k = np.arange(N+1) * np.pi / x[-1]
 
-    L = - b[:,None] * Acv * k @ As * R @ Asv * k @ Ac * b
+    L = -b[:,None] * Acv * k @ As * R @ Asv * k @ Ac * b
 
     deviation = np.mean(np.abs(L-L.T))
     if deviation < tol:
@@ -77,7 +80,10 @@ def KE_Borisov(x, J=1, tol=1e-5):
     else:
         raise RuntimeError("Deviation from Hermitian too large:", deviation)
 
-    return L
+    if not bare:
+        L *= -1 / (2 * mass)
+
+    return L, J
 
 def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False):
     T = np.zeros((N, N))
