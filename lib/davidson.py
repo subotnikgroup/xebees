@@ -40,6 +40,9 @@ def get_davidson_guess(guessfile, grid_dims):
         return
 
 
+# FIXME: There's probably a way to do some kind of interpolation on
+# the parameters (given the way that, e.g. r/R, are changed with
+# changing masses
 def get_interpolated_guess(guessfile, axes, method='cubic'):
     if guessfile is None:
         return

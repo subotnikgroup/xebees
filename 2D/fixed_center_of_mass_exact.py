@@ -94,7 +94,9 @@ class Hamiltonian:
         # be nicer if we could encode it in the operators themselves.
         # Then we could do something like self.ddR2 @ x and get the
         # correct behavior for free. We also wouldn't have to
-        # duplicate it in H.build_diag() jupyter notebooks.
+        # duplicate it in H.build_diag() jupyter notebooks. Fixing
+        # this would also let us make the Hamiltonian class more
+        # generic: simply defining the axes and the operators.
 
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
@@ -139,7 +141,7 @@ class Hamiltonian:
         kappa2 = r*R*np.cos(gamma)
         r1e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/self.M_1)**2 - 2*kappa2*mu12/self.M_1)
         re2 = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/self.M_2)**2 + 2*kappa2*mu12/self.M_2)
-
+        
         D2 = self.g_2 * D * (    np.exp(-2*a * (re2-d))
                                  - 2*np.exp(  -a * (re2-d))
                                  + 1)
@@ -333,7 +335,9 @@ if __name__ == '__main__':
         else:
             H.build_preconditioner(0)
 
-        
+
+    # FIXME: would like to use a callback to save intermediate
+    # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
         conv, e_approx, evecs = pyscflib.davidson1(
         #conv, e_approx, evecs = lib.davidson1(
