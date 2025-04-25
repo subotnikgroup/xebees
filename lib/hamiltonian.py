@@ -40,7 +40,7 @@ def KE_FFT(N, P, R, mass):
 
 # for equally spaced points; if unequal, pass J.
 # tol specifies maximum mean Hermitian deviation
-def KE_Borisov(x, tol=1e-6, mass=None, bare=False):
+def KE_Borisov(x, tol=1e-6, mass=None, bare=False, order=2):
     # A. G. Borisov, J. Chem. Phys. 114, 7770–7777 (2001)
     # https://doi.org/10.1063/1.1358867
 
@@ -72,12 +72,19 @@ def KE_Borisov(x, tol=1e-6, mass=None, bare=False):
     R = F / J
     k = np.arange(N+1) * np.pi / x[-1]
 
-    L = -b[:,None] * Acv * k @ As * R @ Asv * k @ Ac * b
-
-    deviation = np.mean(np.abs(L-L.T))
-    if deviation < tol:
+    if order == 2:  # L should be symmetric
+        L = -b[:,None] * Acv * k @ As * R @ Asv * k @ Ac * b
+        deviation = np.mean(np.abs(L-L.T))
         L = (L + L.T)/2
+    elif order == 1:  # iL is Hermitian
+        L = b[:,None] * (Acv * k @ As - Asv * k @ Ac) * b
+        deviation = np.mean(np.abs(L+L.T))
+        L = (L - L.T)/2
     else:
+        raise RuntimeError(f"Borisov derivatives of order {order} not implemented!")
+
+
+    if deviation > tol:
         raise RuntimeError("Deviation from Hermitian too large:", deviation)
 
     if not bare:
