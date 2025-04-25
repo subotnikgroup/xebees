@@ -44,24 +44,22 @@ def get_interpolated_guess(guessfile, axes, method='cubic'):
     if guessfile is None:
         return
 
-    if not guessfile.exists():
-        print(f"WARNING: requested guess-file, {guessfile}, does not exist!")
+    try:
+        with np.load(guessfile, allow_pickle=True) as npz:
+            guess = npz['guess']
+            H = npz['H'].item()
+    except Exception as e:
+        print(f"WARNING: Unable to load {guessfile}; the error was:", e, sep='\n')
         return
-
-    guess = np.load(guessfile)['guess']
-    shape = [len(ax) for ax in axes]
-    if guess.shape[1] == np.prod(shape):
+    
+    if H.shape == [len(ax) for ax in axes]:
         print("Loaded guess from", guessfile)
         return guess
     else:
-        print("Attempting to interpolate guess to new grid!")
-        old_shape = np.load(guessfile)['V'].shape
-        guess_axes = [
-            np.linspace(ax[0], ax[-1], N)
-            for ax, N in zip(axes, old_shape)]
+        print("Attempting to interpolate guess on new grid!")
         return list(map(
-            lambda g: interpolate_guess(g.reshape(old_shape),
-                                        guess_axes,
+            lambda g: interpolate_guess(g.reshape(H.shape),
+                                        H.axes,
                                         axes,
                                         method=method).ravel(),
             guess))
@@ -69,7 +67,9 @@ def get_interpolated_guess(guessfile, axes, method='cubic'):
 
 def interpolate_guess(psi, axes, axes_target, method='cubic'):
      # Create interpolator
-    interpolator = RegularGridInterpolator(axes, psi, method=method)
+    interpolator = RegularGridInterpolator(axes, psi, method=method,
+                                           bounds_error=False,
+                                           fill_value=None)  # extrapolate
 
     # Mesh for new grid
     mesh = np.meshgrid(*axes_target, indexing='ij')

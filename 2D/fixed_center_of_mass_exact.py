@@ -4,6 +4,7 @@ from sys import stderr
 import argparse as ap
 from pathlib import Path
 from pyscf import lib as pyscflib
+import linalg_helper as lib
 import jax
 import jax.numpy as jnp
 from functools import partial
@@ -18,6 +19,7 @@ class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
+        'axes',
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
@@ -69,6 +71,8 @@ class Hamiltonian:
         # all over the place
         self.g = np.linspace(0, 2*np.pi, args.Ng, endpoint=False)
 
+        self.axes = (self.R, self.r, self.g)
+        
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V_2Dfcm(self.R_grid, self.r_grid, self.g_grid)
         self.shape = self.Vgrid.shape
@@ -210,7 +214,8 @@ class Hamiltonian:
             self.build_preconditioner()
         return self._preconditioner_kernel(dx, e, x0)
 
-    # FIXME: will want to @jax.jit this too
+    # FIXME: See concerns about jit-ing Hx
+    @partial(jax.jit, static_argnums=0)
     def _preconditioner_kernel(self, dx, e, x0):
         Hd = self._preconditioner_data
         return dx/(Hd-e)
@@ -319,18 +324,23 @@ if __name__ == '__main__':
     with timer_ctx("Build H"):
         H = Hamiltonian(args)
 
-    guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
-    if guess is None:
-        guess = H.build_preconditioner(args.k)
-    else:
-        H.build_preconditioner(0)
+    with timer_ctx("Load guesses"):
+        guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
 
+    with timer_ctx("Build preconditioner"):
+        if guess is None:
+            guess = H.build_preconditioner(args.k)
+        else:
+            H.build_preconditioner(0)
 
+        
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
         conv, e_approx, evecs = pyscflib.davidson1(
+        #conv, e_approx, evecs = lib.davidson1(
             lambda xs: [ H @ x for x in xs ],
             guess,
-            H.diag, # H.preconditioner,
+             H.diag,
+            #H.preconditioner,
             nroots=args.k,
             max_cycle=args.iterations,
             verbose=args.verbosity,
@@ -340,11 +350,15 @@ if __name__ == '__main__':
             tol=1e-12,
         )
 
+    #guess quality
+    #for i, (e,g) in enumerate(zip(evecs, guess)):
+    #    print(i, np.abs(np.vdot(e, g))**2 / (np.vdot(e, e) * np.vdot(g, g)))
+    
     print("Davidson:", e_approx)
     print(conv)
 
     if args.evecs:
-        np.savez(args.evecs, guess=evecs, V=H.Vgrid)
+        np.savez_compressed(args.evecs, guess=evecs, H=H)
         print("Wrote eigenvectors to", args.evecs)
 
     if args.save is not None:
