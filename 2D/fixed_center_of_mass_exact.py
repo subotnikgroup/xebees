@@ -10,7 +10,7 @@ from functools import partial
 
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
-from davidson import get_davidson_guess, get_davidson_mem, solve_exact_gen, eye_lazy
+from davidson import get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 
 
@@ -82,6 +82,15 @@ class Hamiltonian:
         self.p  = np.fft.fftshift(np.fft.fftfreq(args.Nr, dr)) * 2 * np.pi
         self.pg = np.fft.fftshift(np.fft.fftfreq(args.Ng, dg)) * 2 * np.pi
 
+
+        # FIXME: the representations of the operators we build are
+        # 'dumb' in the sense that they do not know how to apply
+        # themselves to vectors in our |Rrɣ> space. Rather, that logic
+        # is encoded in Hx() and duplicated wherever needed. It would
+        # be nicer if we could encode it in the operators themselves.
+        # Then we could do something like self.ddR2 @ x and get the
+        # correct behavior for free. We also wouldn't have to
+        # duplicate it in H.build_diag() jupyter notebooks.
 
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
@@ -158,9 +167,9 @@ class Hamiltonian:
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
-            keg = 2*J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # 2J ∂/∂γ
-            keg += xa*J**2                                      # 2J ∂/∂γ + J^2
-            ke = self.Rinv2*keg                                 # (1/R^2)*(2J ∂/∂γ + J^2)
+            keg  = xa*self.J**2                                       # J^2
+            keg -= 2*self.J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # J^2 - 2J ∂/∂γ
+            ke += self.Rinv2*keg                                 # (1/R^2)*(J^2 - 2J ∂/∂γ)
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
@@ -169,10 +178,30 @@ class Hamiltonian:
         res = ke + xa * self.Vgrid
         return res.ravel()
 
-    # FIXME: use the 6-tensor notation and extract block-wise
+    # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
-        diag = np.zeros(self.shape)
-        diag += self.Vgrid
+        # ke = sum(np.diag(op).reshape(
+        #         [self.shape[i] if i == axis else 1 for i in range(3)]
+        #     )
+        #     for axis, op in [(0, self.ddR2), (1, self.ddr2)])
+        ke  = np.zeros(self.shape)
+        ke += np.diag(self.ddR2)[:, None, None]
+        ke += np.diag(self.ddr2)[None, :, None]
+        ke += (self.Rinv2 + self.rinv2) * np.diag(self.ddg2)[None, None, :]
+        
+        # Angular Kinetic Energy J terms
+        if self.J != 0:
+            ke += self.Rinv2 * (
+                self.J**2 -
+                2*self.J*np.ones(self.shape) * np.diag(self.ddg1)[None, None, :]
+            )
+
+        # mass portion of KE
+        ke *= -1 / (2*self.mu)
+
+        # Potential terms
+        diag = self.Vgrid + ke
+
         return diag.ravel()
 
     def preconditioner(self, dx, e, x0):
@@ -186,15 +215,13 @@ class Hamiltonian:
         Hd = self._preconditioner_data
         return dx/(Hd-e)
 
-    @timer
     def build_preconditioner(self, min_guess=4):
-        # FIXME: use buildDiag. (should be super fast).
-        with timer_ctx(f"build H diag {self.size}"):
-            self._preconditioner_data = np.array([e @ (self @ e) for e in eye_lazy(self.size)])
-            # likely overkill
-            self._preconditioner_data.flags.writeable = False
+        self._preconditioner_data = np.copy(H.diag)
+        #self._preconditioner_data = np.array([e @ (self @ e) for e in eye_lazy(self.size)])
+        # likely overkill
+        self._preconditioner_data.flags.writeable = False
 
-        return np.exp(-(self.Vgrid - np.min(self.Vgrid))*27.211*2).ravel()
+        return np.exp(-(self.Vgrid - np.min(self.Vgrid))**2/27.211**2).ravel()
 
         NR, Nr, Ng = self.shape
 
@@ -289,19 +316,21 @@ if __name__ == '__main__':
     # set number of threads for Davidson etc.
     pyscflib.num_threads(args.t)
 
-    H = Hamiltonian(args)
+    with timer_ctx("Build H"):
+        H = Hamiltonian(args)
 
-    if (guess:=get_davidson_guess(args.guess, H.shape)) is None:
+    guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
+    if guess is None:
         guess = H.build_preconditioner(args.k)
     else:
         H.build_preconditioner(0)
 
 
-    with timer_ctx("Davidson"):
+    with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
         conv, e_approx, evecs = pyscflib.davidson1(
             lambda xs: [ H @ x for x in xs ],
             guess,
-            H.preconditioner,
+            H.diag, # H.preconditioner,
             nroots=args.k,
             max_cycle=args.iterations,
             verbose=args.verbosity,
