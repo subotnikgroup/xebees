@@ -2,6 +2,7 @@ import numpy as np
 from os import sysconf
 from debug import timer, timer_ctx
 from pyscf import lib
+from scipy.interpolate import RegularGridInterpolator
 #import linalg_helper as lib
 
 # import opt_einsum
@@ -37,6 +38,48 @@ def get_davidson_guess(guessfile, grid_dims):
     else:
         print("WARNING: Loaded guess of improper dimension; discarding!")
         return
+
+
+def get_interpolated_guess(guessfile, axes, method='cubic'):
+    if guessfile is None:
+        return
+
+    if not guessfile.exists():
+        print(f"WARNING: requested guess-file, {guessfile}, does not exist!")
+        return
+
+    guess = np.load(guessfile)['guess']
+    shape = [len(ax) for ax in axes]
+    if guess.shape[1] == np.prod(shape):
+        print("Loaded guess from", guessfile)
+        return guess
+    else:
+        print("Attempting to interpolate guess to new grid!")
+        old_shape = np.load(guessfile)['V'].shape
+        guess_axes = [
+            np.linspace(ax[0], ax[-1], N)
+            for ax, N in zip(axes, old_shape)]
+        return list(map(
+            lambda g: interpolate_guess(g.reshape(old_shape),
+                                        guess_axes,
+                                        axes,
+                                        method=method).ravel(),
+            guess))
+
+
+def interpolate_guess(psi, axes, axes_target, method='cubic'):
+     # Create interpolator
+    interpolator = RegularGridInterpolator(axes, psi, method=method)
+
+    # Mesh for new grid
+    mesh = np.meshgrid(*axes_target, indexing='ij')
+    points = np.stack([m.ravel() for m in mesh], axis=-1)
+    shape = [len(ax) for ax in axes_target]
+
+    # Interpolate
+    psi_target = interpolator(points).reshape(shape)
+    return psi_target
+
 
 def eye_lazy(N):
     for i in range(N):
