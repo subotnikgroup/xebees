@@ -6,8 +6,10 @@ dependencies = [
     "pyscf",
     "numpy",
     "jax",
-    "matplotlib",
-    "notebook"  # For running Jupyter notebooks
+    "matplotlib", # For running Jupyter notebooks
+    "notebook",
+    "tqdm>=4.67.1",
+    "threadpoolctl>=3.6.0",
 ]
 
 [tool.setuptools.packages.find]

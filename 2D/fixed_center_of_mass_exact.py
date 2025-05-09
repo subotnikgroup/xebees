@@ -1,18 +1,26 @@
 #!/usr/bin/env python
+from threadpoolctl import ThreadpoolController
 import numpy as np
+from scipy.integrate import simpson
 from sys import stderr
 import argparse as ap
 from pathlib import Path
 from pyscf import lib as pyscflib
+from itertools import product
+from tqdm import tqdm
 import linalg_helper as lib
 import jax
 import jax.numpy as jnp
+#jax.config.update('jax_enable_x64', True)
+
 from functools import partial
 
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
 from davidson import get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
+
+
 
 
 class Hamiltonian:
@@ -27,7 +35,8 @@ class Hamiltonian:
     )
 
     # FIXME: this is useful for debugging, but ultimately we would
-    # like to freeze this on creaton too.
+    # like to freeze everything on creation too; we can't jax.jit the
+    # preconditioner until we do!
     _mutable_keys = ('_preconditioner_data',)
 
     # prevent data from being modified
@@ -65,6 +74,10 @@ class Hamiltonian:
         # would be intolerable. This behavior is required because we
         # have terms that go like 1/r.
         self.r = np.linspace(r_max/args.Nr, r_max, args.Nr) * ANGSTROM_TO_BOHR
+
+        # require Ng to be even
+        if args.Ng % 2 != 0:
+            raise RuntimeError(f"Ng must be even!")
         
         # N.B.: It is essential that we not include the endpoint in
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
@@ -76,7 +89,7 @@ class Hamiltonian:
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V_2Dfcm(self.R_grid, self.r_grid, self.g_grid)
         self.shape = self.Vgrid.shape
-        self.size = args.NR * args.Nr * args.Ng
+        self.size = np.prod(self.shape)
 
         dR = self.R[1] - self.R[0]
         dr = self.r[1] - self.r[0]
@@ -212,82 +225,109 @@ class Hamiltonian:
 
     def preconditioner(self, dx, e, x0):
         if not hasattr(self, "_preconditioner_data"):
-            print("building stupid preconditioner")
+            print("building preconditioner")
             self.build_preconditioner()
         return self._preconditioner_kernel(dx, e, x0)
 
-    # FIXME: See concerns about jit-ing Hx
-    @partial(jax.jit, static_argnums=0)
+    # FIXME: See concerns about jit-ing Hx. Currently jitting in the
+    # @partial(jax.jit, static_argnums=0) fashion will break; not sure why.
+
     def _preconditioner_kernel(self, dx, e, x0):
-        Hd = self._preconditioner_data
-        return dx/(Hd-e)
+        eps = 1e-5
+        diagd = self.diag - (e - eps)
+
+        #diagd[abs(diagd)<1e-8] = 1e-8
+        #diagd = jnp.where(abs(diagd) > 1e-8, diagd, 1e-8)
+        #diagd = np.where(abs(diagd) > 1e-8, diagd, 1e-8)
+
+        return dx/diagd
+
+        dx_ = dx.reshape(self.shape)
+        Ad, U = self._preconditioner_data
+        diagd = Ad - (e - eps)
+
+        dx_t = np.einsum("Rrgi,Rrg->Rig", U, dx_)
+        tr_t = dx_t / diagd
+        tr_ = np.einsum('Rigr,Rig->Rrg', U, tr_t)
+
+        return tr_.ravel()
 
     def build_preconditioner(self, min_guess=4):
-        self._preconditioner_data = np.copy(H.diag)
-        #self._preconditioner_data = np.array([e @ (self @ e) for e in eye_lazy(self.size)])
-        # likely overkill
-        self._preconditioner_data.flags.writeable = False
-
-        return np.exp(-(self.Vgrid - np.min(self.Vgrid))**2/27.211**2).ravel()
+        self._preconditioner_data = (self.diag,)
+        guesses = np.exp(-(self.Vgrid - np.min(self.Vgrid))**2/27.211).ravel()
 
         NR, Nr, Ng = self.shape
 
-        guess = np.zeros(self.shape)
+        dg = self.g[1] - self.g[0]
 
-        U_n    = np.zeros((NR,Nr,Nr))
-        U_v    = np.zeros((Nr,NR,NR))
-        Ad_n   = np.zeros((NR,Nr))
-        Ad_vn  = np.zeros((NR,Nr))
+        j_full = np.arange(Ng)-Ng//2
+        COS = np.cos(2*j_full[:,None] * self.g)
+        V1 = simpson(self.Vgrid[:,:,:], dx=dg, axis=-1)/np.pi/2
 
-        # diagonalize H electronic: r->n
-        for i in range(NR):
-            Hel = Tr + np.diag(self.Vgrid[i])
-            Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
+        # V1 is V2(j==0)
+        # IF debugging
+        #V2 = simpson(self.Vgrid[:,:,None,:] * COS[None,None,:,:], dx=dg, axis=-1)/np.pi/2
+        #assert(np.allclose(V1, V2[:,:,np.squeeze(np.where(j_full == 0)).item()]))
 
-            # align phases
-            if i > 0:
-                for j in range(Nr):
-                    if np.sum(U_n[i,:,j] * U_n[i-1,:,j]) < 0:
-                        U_n[i,:,j] *= -1.0
+        Ad = np.zeros((NR, Nr, Ng))
+        U  = np.zeros((NR, Nr, Ng, Nr))
+        for Ri, (ji, j) in tqdm(product(range(NR),
+                                        enumerate(j_full)),
+                                total=NR*Ng,
+                                desc="Building Preconditioner",
+                                delay=3, # only display if longer than 3 seconds
+                                ):
+            H_el = -(
+                self.ddr2 + np.diag(j**2/self.r**2 + (self.J-j)**2/self.R[Ri]**2)
+            )/2/self.mu + np.diag(V1[Ri])
+            Ad[Ri, :, ji], U[Ri, :, ji, :] = np.linalg.eigh(H_el)
 
-        # diagonalize Born-Oppenheimer Hamiltonian: R->v
-        for i in range(Nr):
-            Hbo = TR + np.diag(Ad_n[:,i])
-            Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
+            # Align phases by iterating over Nr eigen vectors at each Ri, ji
+            for n in range(Nr):
+                current = (Ri, slice(None), ji, n)
 
-            # align phases
-            if i > 0:
-                for j in range(NR):
-                    if np.sum(U_v[i,:,j] * U_v[i-1,:,j]) < 0:
-                        U_v[i,:,j] *= -1.0
+                if Ri == 0 and ji == 0:   # consistent, arbitrary reference phase
+                    reference = (0, 0, 0, 0)
+                elif ji > 0:              # line up with previous j
+                    reference = (Ri, slice(None), ji-1, n)
+                elif ji == 0 and Ri > 0:  # line up with previous R
+                    reference = (Ri-1, slice(None), ji, n)
+                else:
+                    raise RuntimeError("We should always have a reference!")
 
-        # BO states are like: U_n[:,:,n]
-        # vib states are like: U_v[n,:,v]
-        # our first guess was the ground state BO wavefuction dressed by the first vibrational state
-        # guess = U_n[:,:,0] * U_v[0,:,0,np.newaxis]
-        # Now we take something like the first num_guess states
+                # be careful not to undo your work!! (Ri=0)-1=-1
+                # indexes the last one and breaks things!
+
+                # if any(map(lambda x: x < 0 if type(x) is not slice else False,
+                #             current + reference
+                #             )):
+                #     raise RuntimeError(f"invalid reference: {current(0)}, {reference(0)}")
+
+                # actually match the phase
+                if np.sum(U[current] * U[reference]) < 0:
+                    U[current] *= -1
+
+        if np.sum(U) < 0:
+            U *= -1
+
+        Ad.flags.writeable = False
+        U.flags.writeable  = False
+        self._preconditioner_data = (Ad, U)
+
+        #U = fft(U, axis=2)
+        #assert(np.mean(np.abs(U.imag)) < 1e-12)
+        #U = U.real
+
+        # States are U[R, :, Ng//2 + j, n]
+
         s = int(np.ceil(np.sqrt(min_guess)))
-        guesses = [(U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel() for n in range(s) for v in range(s)]
+        guesses = [
+            np.copy(np.broadcast_to(
+                U[:, :, Ng//2 + j, i][:, :, np.newaxis],
+                self.shape
+            )).ravel() for i in range(s) for j in range(s)]
 
-
-        def precond_vn(dx, e, x0):
-            dx_Rr = dx.reshape((NR,Nr))
-
-            #dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
-            #dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
-
-            dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_Rr, optimize=True)
-
-            tr_vn = dx_vn / (Ad_vn - e)
-
-            #tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
-            #tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
-
-            tr_Rr = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
-
-            return tr_Rr.ravel()
-
-        return precond_vn, guesses
+        return guesses
 
 
 def parse_args():
@@ -321,20 +361,24 @@ if __name__ == '__main__':
     print(args)
 
     # set number of threads for Davidson etc.
-    pyscflib.num_threads(args.t)
+    threadpool = ThreadpoolController()
+    threadpool.limit(limits=args.t)
 
     with timer_ctx("Build H"):
         H = Hamiltonian(args)
 
-    with timer_ctx("Load guesses"):
-        guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
+    if args.guess:
+        with timer_ctx("Load guesses"):
+            guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
+    else:
+        guess = None
 
     with timer_ctx("Build preconditioner"):
-        if guess is None:
-            guess = H.build_preconditioner(args.k)
-        else:
-            H.build_preconditioner(0)
-
+        with threadpool.limit(limits=1): # nearly always better single threaded
+            if guess is None:
+                guess = H.build_preconditioner(args.k)
+            else:
+                H.build_preconditioner(0)
 
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
@@ -343,8 +387,8 @@ if __name__ == '__main__':
         #conv, e_approx, evecs = lib.davidson1(
             lambda xs: [ H @ x for x in xs ],
             guess,
-             H.diag,
-            #H.preconditioner,
+            #H.diag,
+            H.preconditioner,
             nroots=args.k,
             max_cycle=args.iterations,
             verbose=args.verbosity,
