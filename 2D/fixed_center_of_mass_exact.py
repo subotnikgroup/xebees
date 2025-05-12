@@ -1,13 +1,22 @@
 #!/usr/bin/env python
-from threadpoolctl import ThreadpoolController
+
+if __name__ == '__main__':
+    from threadpoolctl import ThreadpoolController
+    from tqdm import tqdm
+else:
+    # need to mock these up for usage in jupiter notebooks
+    pass
+
+import concurrent.futures as cf
+
 import numpy as np
+from numpy.fft import fft, fftshift
 from scipy.integrate import simpson
 from sys import stderr
 import argparse as ap
 from pathlib import Path
 from pyscf import lib as pyscflib
 from itertools import product
-from tqdm import tqdm
 import linalg_helper as lib
 import jax
 import jax.numpy as jnp
@@ -21,13 +30,11 @@ from davidson import get_interpolated_guess, get_davidson_mem, solve_exact_gen, 
 from debug import prms, timer, timer_ctx
 
 
-
-
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
-        'axes',
+        'axes', 'max_threads',
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
@@ -46,6 +53,9 @@ class Hamiltonian:
         super().__setattr__(key, value)
 
     def __init__(self, args):
+        # save number of threads for preconditioner
+        self.max_threads = args.t
+
         self.m_e = AMU_TO_AU * 1
         self.M_1 = AMU_TO_AU * args.M_1
         self.M_2 = AMU_TO_AU * args.M_2
@@ -98,7 +108,6 @@ class Hamiltonian:
         self.P  = np.fft.fftshift(np.fft.fftfreq(args.NR, dR)) * 2 * np.pi
         self.p  = np.fft.fftshift(np.fft.fftfreq(args.Nr, dr)) * 2 * np.pi
         self.pg = np.fft.fftshift(np.fft.fftfreq(args.Ng, dg)) * 2 * np.pi
-
 
         # FIXME: the representations of the operators we build are
         # 'dumb' in the sense that they do not know how to apply
@@ -246,9 +255,9 @@ class Hamiltonian:
         Ad, U = self._preconditioner_data
         diagd = Ad - (e - eps)
 
-        dx_t = np.einsum("Rrgi,Rrg->Rig", U, dx_)
+        dx_t = np.einsum("Rrgi,Rrg->Rig", U, dx_, optimize=True)
         tr_t = dx_t / diagd
-        tr_ = np.einsum('Rigr,Rig->Rrg', U, tr_t)
+        tr_ = np.einsum('Rigr,Rig->Rrg', U, tr_t, optimize=True)
 
         return tr_.ravel()
 
@@ -260,7 +269,7 @@ class Hamiltonian:
 
         dg = self.g[1] - self.g[0]
 
-        j_full = np.arange(Ng)-Ng//2
+        j_full = fftshift(np.arange(Ng)-Ng//2)
         COS = np.cos(2*j_full[:,None] * self.g)
         V1 = simpson(self.Vgrid[:,:,:], dx=dg, axis=-1)/np.pi/2
 
@@ -268,21 +277,31 @@ class Hamiltonian:
         # IF debugging
         #V2 = simpson(self.Vgrid[:,:,None,:] * COS[None,None,:,:], dx=dg, axis=-1)/np.pi/2
         #assert(np.allclose(V1, V2[:,:,np.squeeze(np.where(j_full == 0)).item()]))
-
+        
         Ad = np.zeros((NR, Nr, Ng))
         U  = np.zeros((NR, Nr, Ng, Nr))
-        for Ri, (ji, j) in tqdm(product(range(NR),
-                                        enumerate(j_full)),
-                                total=NR*Ng,
-                                desc="Building Preconditioner",
-                                delay=3, # only display if longer than 3 seconds
-                                ):
+
+        def diag_H0(args, Ad=Ad, U=U):
+            Ri, (ji, j) = args
             H_el = -(
                 self.ddr2 + np.diag(j**2/self.r**2 + (self.J-j)**2/self.R[Ri]**2)
             )/2/self.mu + np.diag(V1[Ri])
             Ad[Ri, :, ji], U[Ri, :, ji, :] = np.linalg.eigh(H_el)
 
-            # Align phases by iterating over Nr eigen vectors at each Ri, ji
+
+        # Presumably because of gated access, this tops out pretty fast at ~ 
+        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+            list(tqdm(
+                ex.map(diag_H0, product(range(NR),enumerate(j_full))),
+                total=NR*Ng, desc="Building Preconditioner", delay=3))
+
+        # Align phases by iterating over Nr eigen vectors at each Ri, ji
+        for Ri, ji in tqdm(product(range(NR),
+                                   range(Ng)),
+                           total=NR*Ng,
+                           desc="Phase Matching",
+                           delay=3, # only display if longer than 3 seconds
+                           ):
             for n in range(Nr):
                 current = (Ri, slice(None), ji, n)
 
@@ -306,9 +325,6 @@ class Hamiltonian:
                 # actually match the phase
                 if np.sum(U[current] * U[reference]) < 0:
                     U[current] *= -1
-
-        if np.sum(U) < 0:
-            U *= -1
 
         Ad.flags.writeable = False
         U.flags.writeable  = False
@@ -360,31 +376,26 @@ if __name__ == '__main__':
     args = parse_args()
     print(args)
 
-    # set number of threads for Davidson etc.
-    threadpool = ThreadpoolController()
-    threadpool.limit(limits=args.t)
+    threadctl = ThreadpoolController()
+    threadctl.limit(limits=args.t)
 
     with timer_ctx("Build H"):
         H = Hamiltonian(args)
 
-    if args.guess:
-        with timer_ctx("Load guesses"):
-            guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
-    else:
-        guess = None
+    with timer_ctx("Load guesses(?)"):
+        guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
 
-    with timer_ctx("Build preconditioner"):
-        with threadpool.limit(limits=1): # nearly always better single threaded
-            if guess is None:
-                guess = H.build_preconditioner(args.k)
-            else:
-                H.build_preconditioner(0)
-
+    with timer_ctx("Build preconditioner"), threadctl.limit(limits=1):
+        if guess is None:
+            guess = H.build_preconditioner(args.k)
+        else:
+            H.build_preconditioner(0)
+    
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
-        conv, e_approx, evecs = pyscflib.davidson1(
-        #conv, e_approx, evecs = lib.davidson1(
+        #conv, e_approx, evecs = pyscflib.davidson1(
+        conv, e_approx, evecs = lib.davidson1(
             lambda xs: [ H @ x for x in xs ],
             guess,
             #H.diag,
