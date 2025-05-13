@@ -23,6 +23,7 @@ import jax.numpy as jnp
 #jax.config.update('jax_enable_x64', True)
 
 from functools import partial
+from time import perf_counter
 
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
@@ -53,9 +54,6 @@ class Hamiltonian:
         super().__setattr__(key, value)
 
     def __init__(self, args):
-        # save number of threads for preconditioner
-        self.max_threads = args.t
-
         self.m_e = AMU_TO_AU * 1
         self.M_1 = AMU_TO_AU * args.M_1
         self.M_2 = AMU_TO_AU * args.M_2
@@ -76,6 +74,11 @@ class Hamiltonian:
             R_range = args.extent[:2]
             r_max = args.extent[-1]
 
+        # save number of threads for preconditioner
+        self.max_threads = 1
+        if hasattr(args, "t") and args.extent is not None:
+            self.max_threads = args.t
+            
         self.R = np.linspace(*R_range, args.NR) * ANGSTROM_TO_BOHR
 
         # N.B.: We are careful not to include 0 in the range of r by
@@ -330,9 +333,9 @@ class Hamiltonian:
         U.flags.writeable  = False
         self._preconditioner_data = (Ad, U)
 
-        #U = fft(U, axis=2)
-        #assert(np.mean(np.abs(U.imag)) < 1e-12)
-        #U = U.real
+        U = fft(U, axis=2)
+        assert(np.mean(np.abs(U.imag)) < 1e-12)
+        U = U.real
 
         # States are U[R, :, Ng//2 + j, n]
 
@@ -390,7 +393,7 @@ if __name__ == '__main__':
             guess = H.build_preconditioner(args.k)
         else:
             H.build_preconditioner(0)
-    
+
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
@@ -403,7 +406,6 @@ if __name__ == '__main__':
             nroots=args.k,
             max_cycle=args.iterations,
             verbose=args.verbosity,
-            follow_state=False,
             max_space=args.subspace,
             max_memory=get_davidson_mem(0.75),
             tol=1e-12,
