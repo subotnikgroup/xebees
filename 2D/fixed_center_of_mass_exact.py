@@ -76,7 +76,7 @@ class Hamiltonian:
 
         # save number of threads for preconditioner
         self.max_threads = 1
-        if hasattr(args, "t") and args.extent is not None:
+        if hasattr(args, "t") and args.t is not None:
             self.max_threads = args.t
             
         self.R = np.linspace(*R_range, args.NR) * ANGSTROM_TO_BOHR
