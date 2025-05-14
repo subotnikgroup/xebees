@@ -4,8 +4,13 @@ if __name__ == '__main__':
     from threadpoolctl import ThreadpoolController
     from tqdm import tqdm
 else:
-    # need to mock these up for usage in jupiter notebooks
-    pass
+    class ThreadpoolController:
+        def limit(_, limits):
+            print(f"Mock call to ThreadpoolController.limit(limits={limits})")
+
+    def tqdm(iterator, **kwargs):
+        print(f"Mock call to tqdm({kwargs})")
+        return iterator
 
 import concurrent.futures as cf
 
@@ -199,7 +204,7 @@ class Hamiltonian:
         # Angular Kinetic Energy J terms
         if self.J != 0:
             keg  = xa*self.J**2                                       # J^2
-            keg -= 2*self.J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # J^2 - 2J ∂/∂γ
+            keg -= 2j*self.J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # J^2 - 2J ∂/∂γ
             ke += self.Rinv2*keg                                 # (1/R^2)*(J^2 - 2J ∂/∂γ)
 
         # mass portion of KE
@@ -244,9 +249,8 @@ class Hamiltonian:
     # FIXME: See concerns about jit-ing Hx. Currently jitting in the
     # @partial(jax.jit, static_argnums=0) fashion will break; not sure why.
 
-    def _preconditioner_kernel(self, dx, e, x0):
-        eps = 1e-5
-        diagd = self.diag - (e - eps)
+    def _preconditioner_kernel_naive(self, dx, e, x0):
+        diagd = self.diag - (e - 1e-5)
 
         #diagd[abs(diagd)<1e-8] = 1e-8
         #diagd = jnp.where(abs(diagd) > 1e-8, diagd, 1e-8)
@@ -254,17 +258,97 @@ class Hamiltonian:
 
         return dx/diagd
 
+    def _preconditioner_kernel_V1(self, dx, e, x0):
+        #dx_ = np.fft.fft(dx.reshape(self.shape), axis=2)
         dx_ = dx.reshape(self.shape)
-        Ad, U = self._preconditioner_data
-        diagd = Ad - (e - eps)
+        Ad, U, *_ = self._preconditioner_data
+        diagd = Ad - (e - 1e-5)
 
         dx_t = np.einsum("Rrgi,Rrg->Rig", U, dx_, optimize=True)
         tr_t = dx_t / diagd
         tr_ = np.einsum('Rigr,Rig->Rrg', U, tr_t, optimize=True)
 
+        #return np.fft.ifft(tr_, axis=2).ravel()
         return tr_.ravel()
 
-    def build_preconditioner(self, min_guess=4):
+    # FIXME: this must have a bug b/c it converges in 15% more iterations than naive
+    def _preconditioner_kernel_BO(self, dx, e, x0):
+        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
+        diagd = Ad_vn - (e - 1e-5)
+        
+        NR, Nr, Ng = self.shape
+        Nelec = Nr*Ng
+
+        dx_ = dx.reshape((NR, Nelec))
+
+        #dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
+        #dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
+
+        dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
+
+        tr_vn = dx_vn / diagd
+
+        #tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
+        #tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
+
+        tr_ = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
+
+        return tr_.ravel()
+
+    def _build_preconditioner_BO(self, min_guess=4):
+        NR, Nr, Ng = self.shape
+        Nelec = Nr*Ng
+
+        U_n   = np.zeros((NR, Nelec, Nelec))
+        U_v   = np.zeros((Nelec, NR, NR))
+        Ad_n  = np.zeros((NR, Nelec))
+        Ad_vn = np.zeros((NR, Nelec))
+
+        # diagonalize H_electronic (r,g) -> n
+        for i, R in enumerate(H.R):
+            Hel = (
+                -1/(2*H.mu)*(
+                    np.kron(H.ddr2, np.eye(Ng)) +
+                    np.kron((1/R**2 + np.diag(1/H.r**2)), H.ddg2) +
+                    0 # FIXME: need J terms
+                ) + np.diag(H.Vgrid[i].ravel())
+            )
+            Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
+
+            # match phases
+            if i > 0:
+                for n in range(Nelec):
+                    if np.sum(U_n[i,:,n] * U_n[i-1,:,n]) < 0:
+                        U_n[i,:,n] *= -1.0
+
+        # diagonalize H_BO R->v
+        for i in range(Nelec):
+            Hbo = -1/(2*H.mu)*H.ddR2 + np.diag(Ad_n[:,i])
+            Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
+
+            # match phases
+            if i > 0:
+                for v in range(NR):
+                    if np.sum(U_v[i,:,v] * U_v[i-1,:,v]) < 0:
+                        U_v[i,:,v] *= -1.0
+
+
+        # BO states are like: U_n[:,:,n]
+        # vib states are like: U_v[n,:,v]
+        s = int(np.ceil(np.sqrt(min_guess)))
+        guesses = [
+            (U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel()
+            for n in range(s) for v in range(s)
+        ]
+
+        Ad_vn.flags.writeable = False
+        U_n.flags.writeable   = False
+        U_v.flags.writeable   = False
+        self._preconditioner_data = (Ad_vn, U_n, U_v)
+        
+        return guesses
+
+    def _build_preconditioner_V1(self, min_guess=4):
         self._preconditioner_data = (self.diag,)
         guesses = np.exp(-(self.Vgrid - np.min(self.Vgrid))**2/27.211).ravel()
 
@@ -329,13 +413,20 @@ class Hamiltonian:
                 if np.sum(U[current] * U[reference]) < 0:
                     U[current] *= -1
 
+        # yolo
+        oddjs = j_full%2 == 1
+        U[:, :, oddjs, :] = 0
+        #U = fft(U, axis=2)
+        #assert(np.mean(np.abs(U.imag)) < 1e-12)
+        #U = U.real
+
         Ad.flags.writeable = False
         U.flags.writeable  = False
         self._preconditioner_data = (Ad, U)
 
-        U = fft(U, axis=2)
-        assert(np.mean(np.abs(U.imag)) < 1e-12)
-        U = U.real
+        #U = np.fft.ifft(U, axis=2)
+        #assert(np.mean(np.abs(U.imag)) < 1e-12)
+        #U = U.real
 
         # States are U[R, :, Ng//2 + j, n]
 
@@ -348,7 +439,13 @@ class Hamiltonian:
 
         return guesses
 
+    build_preconditioner   =  _build_preconditioner_BO
+    _preconditioner_kernel = _preconditioner_kernel_BO
 
+    #build_preconditioner   = _build_preconditioner_V1
+    #_preconditioner_kernel = _preconditioner_kernel_naive
+
+    
 def parse_args():
     parser = ap.ArgumentParser(
         prog='3body-2D',
