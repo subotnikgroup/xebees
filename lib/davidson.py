@@ -60,6 +60,7 @@ def get_interpolated_guess(guessfile, axes, method='cubic'):
         return guess
     else:
         print("Attempting to interpolate guess on new grid!")
+        #FIXME don't build interpolator for each guess!!
         return list(map(
             lambda g: interpolate_guess(g.reshape(H.shape),
                                         H.axes,
@@ -80,6 +81,7 @@ def interpolate_guess(psi, axes, axes_target, method='cubic'):
     shape = [len(ax) for ax in axes_target]
 
     # Interpolate
+    # FIXME: need to parallelize for large numbers of points
     psi_target = interpolator(points).reshape(shape)
     return psi_target
 
