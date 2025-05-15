@@ -25,6 +25,7 @@ import inspect
 import warnings
 from functools import reduce
 import numpy
+import numpy as np
 import scipy.linalg
 from pyscf.lib import logger
 from pyscf.lib import numpy_helper
@@ -32,42 +33,75 @@ from pyscf.lib import misc
 from pyscf.lib.exceptions import LinearDependencyError
 from pyscf import __config__
 
+from debug import timer, timer_ctx
+
+from time import perf_counter
+
 DAVIDSON_LINDEP = getattr(__config__, 'lib_linalg_helper_davidson_lindep', 1e-14)
 DSOLVE_LINDEP = getattr(__config__, 'lib_linalg_helper_dsolve_lindep', 1e-13)
 MAX_MEMORY = getattr(__config__, 'lib_linalg_helper_davidson_max_memory', 4000)  # 4GB
 
-# Projecting out converged eigenvectors has problems when conv_tol is loose.
-# In this situation, the converged eigenvectors may be updated in the
-# following iterations.  Projecting out the converged eigenvectors may lead to
-# large errors to the yet converged eigenvectors.
-PROJECT_OUT_CONV_EIGS = \
-        getattr(__config__, 'lib_linalg_helper_davidson_project_out_eigs', False)
+# def _fill_heff_hermitian(heff, xs, ax, xt, axt, dot):
+#     nrow = len(axt)
+#     row1 = len(ax)
+#     row0 = row1 - nrow
+#     for ip, i in enumerate(range(row0, row1)):
+#         for jp, j in enumerate(range(row0, i)):
+#             heff[i,j] = dot(xt[ip].conj(), axt[jp])
+#             heff[j,i] = heff[i,j].conj()
+#         heff[i,i] = dot(xt[ip].conj(), axt[ip]).real
 
-def _fill_heff_hermitian(heff, xs, ax, xt, axt, dot):
+#     for i in range(row0):
+#         axi = numpy.asarray(ax[i])
+#         for jp, j in enumerate(range(row0, row1)):
+#             heff[j,i] = dot(xt[jp].conj(), axi)
+#             heff[i,j] = heff[j,i].conj()
+#         axi = None
+#     return heff
+
+
+
+def _fill_heff_hermitian(heff, xs, ax, xt, axt, _):
     nrow = len(axt)
     row1 = len(ax)
     row0 = row1 - nrow
-    for ip, i in enumerate(range(row0, row1)):
-        for jp, j in enumerate(range(row0, i)):
-            heff[i,j] = dot(xt[ip].conj(), axt[jp])
-            heff[j,i] = heff[i,j].conj()
-        heff[i,i] = dot(xt[ip].conj(), axt[ip]).real
+    #print("fill_heff", nrow, row1, row0)
 
-    for i in range(row0):
-        axi = numpy.asarray(ax[i])
-        for jp, j in enumerate(range(row0, row1)):
-            heff[j,i] = dot(xt[jp].conj(), axi)
-            heff[i,j] = heff[j,i].conj()
-        axi = None
+    # Stack active blocks
+    XT = np.stack(xt)         # shape (nrow, dim)
+    AXT = np.stack(axt)       # shape (nrow, dim)
+
+    # === Block A: lower-right (nrow x nrow), symmetric ===
+    block_A = XT @ AXT.T.conj()  # shape (nrow, nrow)
+    heff[row0:row1, row0:row1] = (block_A + block_A.T.conj()) / 2
+
+    # === Block B: off-diagonal (row0 x nrow), symmetric ===
+    if row0 > 0:
+        AX = np.stack(ax[:row0])  # shape (row0, dim)
+        block_B = XT @ AX.T.conj()  # shape (nrow, row0)
+        heff[row0:row1, :row0] = block_B
+        heff[:row0, row0:row1] = block_B.T.conj()
+
     return heff
+
+
+__lasttime = None
+
+def tic(label):
+    global __lasttime
+    printing = False
+    if printing and __lasttime:
+        print(f"EEElapsed {label}", perf_counter() - __lasttime)
+    __lasttime = perf_counter()
 
 
 def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
               lindep=DAVIDSON_LINDEP, max_memory=MAX_MEMORY,
               dot=numpy.dot, callback=None,
-              nroots=1, lessio=False, verbose=logger.WARN,
-              follow_state=False, tol_residual=None,
-              fill_heff=_fill_heff_hermitian):
+              nroots=1, verbose=logger.WARN,
+              tol_residual=None,
+              fill_heff=_fill_heff_hermitian
+              ):
     r'''Davidson diagonalization method to solve  a c = e c.  Ref
     [1] E.R. Davidson, J. Comput. Phys. 17 (1), 87-94 (1975).
     [2] http://people.inf.ethz.ch/arbenz/ewp/Lnotes/chapter11.pdf
@@ -112,16 +146,6 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         nroots : int
             Number of eigenvalues to be computed.  When nroots > 1, it affects
             the shape of the return value
-        lessio : bool
-            How to compute a*x0 for current eigenvector x0.  There are two
-            ways to compute a*x0.  One is to assemble the existed a*x.  The
-            other is to call aop(x0).  The default is the first method which
-            needs more IO and less computational cost.  When IO is slow, the
-            second method can be considered.
-        follow_state : bool
-            If the solution dramatically changes in two iterations, clean the
-            subspace and restart the iteration with the old solution.  It can
-            help to improve numerical stability.  Default is False.
 
     Returns:
         conv : bool
@@ -143,6 +167,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
     >>> len(e)
     2
     '''
+    tic("start")
     if isinstance(verbose, logger.Logger):
         log = verbose
     else:
@@ -164,10 +189,8 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
     #max_cycle = min(max_cycle, x0[0].size)
     max_space = max_space + (nroots-1) * 4
     # max_space*2 for holding ax and xs, nroots*2 for holding axt and xt
-    _incore = max_memory*1e6/x0[0].nbytes > max_space*2+nroots*3
-    lessio = lessio and not _incore
-    log.debug1('max_cycle %d  max_space %d  max_memory %d  incore %s',
-               max_cycle, max_space, max_memory, _incore)
+    log.debug1('max_cycle %d  max_space %d  max_memory %d',
+               max_cycle, max_space, max_memory)
     dtype = None
     heff = None
     fresh_start = True
@@ -176,14 +199,15 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
     conv = numpy.zeros(nroots, dtype=bool)
     emin = None
 
+    tic("init")
     for icyc in range(max_cycle):
+        tic("cycle start")
         if fresh_start:
-            if _incore:
-                xs = []
-                ax = []
-            else:
-                xs = _Xlist()
-                ax = _Xlist()
+            # FIXME: need to convert all of this memory to arrays and
+            # keep a counter of their length so I can pass views of
+            # them around; e.g.: ax[:space] or what-have-you.
+            xs = []
+            ax = []
             space = 0
 # Orthogonalize xt space because the basis of subspace xs must be orthogonal
 # but the eigenvectors x0 might not be strictly orthogonal
@@ -203,17 +227,23 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
                     raise LinearDependenceError(msg)
             x0 = None
             max_dx_last = 1e9
+            tic("fresh start")
         elif len(xt) > 1:
             xt = _qr(xt, dot, lindep)[0]
             xt = xt[:40]  # 40 trial vectors at most
+            tic("QR")
 
         axt = aop(xt)
+        tic("aop(xt)")
         for k, xi in enumerate(xt):
             xs.append(xt[k])
             ax.append(axt[k])
         rnow = len(xt)
         head, space = space, space+rnow
 
+
+        tic("build xs,ax")
+        
         if dtype is None:
             try:
                 dtype = numpy.result_type(axt[0], xt[0])
@@ -230,15 +260,19 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         conv_last = conv
 
         fill_heff(heff, xs, ax, xt, axt, dot)
+        tic("fill_heff")
         xt = axt = None
         w, v = scipy.linalg.eigh(heff[:space,:space])
-
+        tic("eigh(subspace)")
+        
         e = w[:nroots]
         v = v[:,:nroots]
         conv = numpy.zeros(e.size, dtype=bool)
         if not fresh_start:
             elast, conv_last = _sort_elast(elast, conv_last, vlast, v, log)
 
+        tic("sort_elast")
+            
         if elast is None:
             de = e
         elif elast.size != e.size:
@@ -248,60 +282,51 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         else:
             de = e - elast
 
+        tic("de")
+        
         x0 = None
         x0 = _gen_x0(v, xs)
-        if lessio:
-            ax0 = aop(x0)
-        else:
-            ax0 = _gen_x0(v, ax)
+        ax0 = _gen_x0(v, ax)
+        tic("_gen_x0(v,)")
 
-        dx_norm = numpy.zeros(e.size)
-        xt = [None] * nroots
+        xt = ax0 - e[:,None]*x0
+        dx_norm = scipy.linalg.norm(xt, axis=1)
+        conv = (np.abs(de) < tol) & (dx_norm < toloose)
+        
         for k, ek in enumerate(e):
-            xt[k] = ax0[k] - ek * x0[k]
-            dx_norm[k] = numpy.sqrt(dot(xt[k].conj(), xt[k]).real)
-            conv[k] = abs(de[k]) < tol and dx_norm[k] < toloose
             if conv[k] and not conv_last[k]:
                 log.debug('root %d converged  |r|= %4.3g  e= %s  max|de|= %4.3g',
                           k, dx_norm[k], ek, de[k])
         ax0 = None
         max_dx_norm = max(dx_norm)
         ide = numpy.argmax(abs(de))
+        
         if all(conv):
             log.debug('converged %d %d  |r|= %4.3g  e= %s  max|de|= %4.3g',
                       icyc, space, max_dx_norm, e, de[ide])
             break
-        elif (follow_state and max_dx_norm > 1 and
-              max_dx_norm/max_dx_last > 3 and space > nroots+2):
-            log.debug('davidson %d %d  |r|= %4.3g  e= %s  max|de|= %4.3g',
-                      icyc, space, max_dx_norm, e, de[ide])
-            log.debug('Large |r| detected, restore to previous x0')
-            x0 = _gen_x0(vlast, xs)
-            fresh_start = True
-            continue
 
+        tic("covergence")
 
-        # remove subspace linear dependency
-        for k, ek in enumerate(e):
-            if (not conv[k]) and dx_norm[k]**2 > lindep:
-                xt[k] = precond(xt[k], e[0], x0[k])
-                xt[k] *= dot(xt[k].conj(), xt[k]).real ** -.5
-            elif not conv[k]:
-                # Remove linearly dependent vector
-                xt[k] = None
-                log.debug1('Drop eigenvector %d, norm=%4.3g', k, dx_norm[k])
-            else:
-                xt[k] = None
-
-        xt, norm_min = _normalize_xt_(xt, xs, lindep, dot)
+        # remove subspace linear dependencies
+        keep = ~conv & (dx_norm > np.sqrt(lindep))
+        xt = xt[keep]
+        xt = np.stack([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
+        
+        norms = scipy.linalg.norm(xt, axis=1)
+        xt /= norms[:, None]
+                
+        tic("lindep")
+        xt, norm_min = _normalize_xt_(xt, xs, lindep)
+        tic("normalize")
         log.debug('davidson %d %d  |r|= %4.3g  e= %s  max|de|= %4.3g  lindep= %4.3g',
                   icyc, space, max_dx_norm, e, de[ide], norm_min)
 
         if icyc > 3:
             mydiff = e[0] - mylast
-            print(f"Last delta: {mydiff}")
+            #print(f"Last delta: {mydiff}")
             if abs(mydiff) > 1e-12 and mydiff > 0:
-                print("Hold up! Why isn't e0 monotonic???")
+                print(f"Hold up! Why isn't e0 monotonic??? {mydiff}")
                 #raise RuntimeError("Hold up! Why isn't e0 monotonic???")
         mylast = e[0]
         
@@ -314,9 +339,12 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         max_dx_last = max_dx_norm
         fresh_start = space+nroots > max_space
 
+        tic("end")
         # useful, e.g.: for restarts
         if callable(callback):
             callback(locals())
+
+        tic("callback")
 
     x0 = list(x0)  # nparray -> list
 
@@ -368,16 +396,17 @@ def _qr(xs, dot, lindep=1e-14):
             nv += 1
     return qs[:nv], numpy.linalg.inv(rmat[:nv,:nv])
 
+
 def _outprod_to_subspace(v, xs):
+    v = numpy.asarray(v)
     ndim = v.ndim
     if ndim == 1:
-        v = v[:,None]
-    space, nroots = v.shape
-    x0 = numpy.einsum('c,x->cx', v[space-1], numpy.asarray(xs[space-1]))
-    for i in reversed(range(space-1)):
-        xsi = numpy.asarray(xs[i])
-        for k in range(nroots):
-            x0[k] += v[i,k] * xsi
+        v = v[:, None]  # shape: (space, 1)
+    # FIXME: the majority of the time is spent building xs; move to
+    # everything as arrays for big speedup
+    xs = numpy.asarray(xs)  # shape: (space, n)
+    x0 = numpy.einsum('ik,ij->kj', v, xs, optimize=True)
+
     if ndim == 1:
         x0 = x0[0]
     return x0
@@ -409,63 +438,29 @@ def _sort_elast(elast, conv_last, vlast, v, log):
     e[~found] = 0.
     return e, conv
 
-def _normalize_xt_(xt, xs, threshold, dot):
+
+def _normalize_xt_(xt, xs, threshold):
     '''Projects out existing basis vectors xs. Also checks whether the precond
     function is ill-conditioned'''
-    xt = [x for x in xt if x is not None]
-    for xsi in xs:
-        xsi = numpy.asarray(xsi)
-        for xi in xt:
-            xi -= xsi * dot(xsi.conj(), xi)
 
-    norm_min = 1
-    out = []
-    for xi in xt:
-        norm = dot(xi.conj(), xi).real**.5
-        if norm**2 > threshold:
-            xi *= 1/norm
-            out.append(xi)
-            norm_min = min(norm_min, norm)
-    return out, norm_min
+    # Project: xt_mat -= xs.T @ (xs @ xt_mat.T)
+    # In detail: subtract each xi's projection onto the span of xs
+    proj = xs @ xt.T     # shape: (nbasis, nvecs)
+    xt -= (proj.T @ xs)  # shape: (nvecs, ndim)
+
+    # Compute norms
+    norms = scipy.linalg.norm(xt, axis=1)
+    keep = norms**2 > threshold
+
+    # Normalize and select
+    xt = xt[keep]
+    norms = norms[keep]
+    if xt.size == 0:
+        return [], 1
+    xt /= norms[:, None]
+
+    # FIXME: I have no idea why, but list() doubles our performance
+    return list(xt), norms.min()
 
 
 LinearDependenceError = LinearDependencyError
-
-class _Xlist(list):
-    def __init__(self):
-        self.scr_h5 = misc.H5TmpFile()
-        self.index = []
-
-    def __getitem__(self, n):
-        key = self.index[n]
-        return self.scr_h5[str(key)]
-
-    def __iter__(self):
-        return (self[i] for i in range(len(self)))
-
-    def append(self, x):
-        length = len(self.index)
-        key = length + 1
-        index_set = set(self.index)
-        if key in index_set:
-            key = set(range(length)).difference(index_set).pop()
-        self.index.append(key)
-
-        self.scr_h5[str(key)] = x
-        self.scr_h5.flush()
-
-    def extend(self, x):
-        for xi in x:
-            self.append(xi)
-
-    def __setitem__(self, n, x):
-        key = self.index[n]
-        self.scr_h5[str(key)][:] = x
-        self.scr_h5.flush()
-
-    def __len__(self):
-        return len(self.index)
-
-    def pop(self, index):
-        key = self.index.pop(index)
-        del (self.scr_h5[str(key)])

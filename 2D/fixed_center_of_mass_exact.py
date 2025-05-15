@@ -32,7 +32,7 @@ from time import perf_counter
 
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
-from davidson import get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
+from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 
 
@@ -277,7 +277,7 @@ class Hamiltonian:
         #return np.fft.ifft(tr_, axis=2).ravel()
         return tr_.ravel()
 
-    # FIXME: this must have a bug b/c it converges in 15% more iterations than naive
+    #@partial(jax.jit, static_argnums=0)
     def _preconditioner_kernel_BO(self, dx, e, x0):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         diagd = Ad_vn - (e - 1e-5)
@@ -286,17 +286,8 @@ class Hamiltonian:
         Nelec = Nr*Ng
 
         dx_ = dx.reshape((NR, Nelec))
-
-        #dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
-        #dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
-
         dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
-
         tr_vn = dx_vn / diagd
-
-        #tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
-        #tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
-
         tr_ = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
 
         return tr_.ravel()
@@ -305,13 +296,30 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        U_n   = np.zeros((NR, Nelec, Nelec))
+        U_n   = np.zeros((NR, Nr*Ng, Nelec))
         U_v   = np.zeros((Nelec, NR, NR))
         Ad_n  = np.zeros((NR, Nelec))
         Ad_vn = np.zeros((NR, Nelec))
 
-        # diagonalize H_electronic (r,g) -> n
-        for i, R in enumerate(H.R):
+        # # diagonalize H_electronic (r,g) -> n
+        # for i, R in enumerate(H.R):
+        #     Hel = (
+        #         -1/(2*H.mu)*(
+        #             np.kron(H.ddr2, np.eye(Ng)) +
+        #             np.kron((1/R**2 + np.diag(1/H.r**2)), H.ddg2) +
+        #             0 # FIXME: need J terms
+        #         ) + np.diag(H.Vgrid[i].ravel())
+        #     )
+        #     Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
+
+        #     # match phases
+        #     if i > 0:
+        #         for n in range(Nelec):
+        #             if np.sum(U_n[i,:,n] * U_n[i-1,:,n]) < 0:
+        #                 U_n[i,:,n] *= -1.0
+
+        def diag_Hel(i, Ad_n=Ad_n, U_n=U_n):
+            R = H.R[i]
             Hel = (
                 -1/(2*H.mu)*(
                     np.kron(H.ddr2, np.eye(Ng)) +
@@ -321,23 +329,35 @@ class Hamiltonian:
             )
             Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
 
-            # match phases
-            if i > 0:
-                for n in range(Nelec):
-                    if np.sum(U_n[i,:,n] * U_n[i-1,:,n]) < 0:
-                        U_n[i,:,n] *= -1.0
+        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+            list(tqdm(
+                ex.map(diag_Hel, range(NR)),
+                total=NR, desc="Building U_n"))#, delay=3))
+            
+        phase_match(U_n)
+                        
+        # # diagonalize H_BO R->v
+        # for i in range(Nelec):
+        #     Hbo = -1/(2*H.mu)*H.ddR2 + np.diag(Ad_n[:,i])
+        #     Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
 
-        # diagonalize H_BO R->v
-        for i in range(Nelec):
+        #     # match phases
+        #     if i > 0:
+        #         for v in range(NR):
+        #             if np.sum(U_v[i,:,v] * U_v[i-1,:,v]) < 0:
+        #                 U_v[i,:,v] *= -1.0
+
+        def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn, U_v=U_v):
             Hbo = -1/(2*H.mu)*H.ddR2 + np.diag(Ad_n[:,i])
             Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
 
-            # match phases
-            if i > 0:
-                for v in range(NR):
-                    if np.sum(U_v[i,:,v] * U_v[i-1,:,v]) < 0:
-                        U_v[i,:,v] *= -1.0
+        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+            list(tqdm(
+                ex.map(diag_Hbo, range(Nelec)),
+                total=Nelec, desc="Building U_v"))#, delay=3))
 
+            
+        phase_match(U_v)
 
         # BO states are like: U_n[:,:,n]
         # vib states are like: U_v[n,:,v]
@@ -502,8 +522,8 @@ if __name__ == '__main__':
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
-        conv, e_approx, evecs = pyscflib.davidson1(
-        #conv, e_approx, evecs = lib.davidson1(
+        #conv, e_approx, evecs = pyscflib.davidson1(
+        conv, e_approx, evecs = lib.davidson1(
             lambda xs: [ H @ x for x in xs ],
             guess,
             #H.diag,

@@ -93,6 +93,14 @@ def eye_lazy(N):
         yield col
 
 
+def phase_match(U):
+    N, _, M = U.shape
+    for i in range(1,N):
+        for n in range(M):
+            if np.sum(U[i,:,n] * U[i-1,:,n]) < 0:
+                U[i,:,n] *= -1.0
+
+        
 @timer
 def build_preconditioner(TR, Tr, Vgrid, min_guess=4):
     NR, Nr = Vgrid.shape
