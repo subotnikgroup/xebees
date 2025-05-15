@@ -38,7 +38,7 @@ from debug import prms, timer, timer_ctx
 
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
-        'm_e', 'M_1', 'M_2', 'mu', 'g_1', 'g_2', 'J',
+        'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'aa', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
         'axes', 'max_threads',
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
@@ -62,7 +62,10 @@ class Hamiltonian:
         self.m_e = AMU_TO_AU * 1
         self.M_1 = AMU_TO_AU * args.M_1
         self.M_2 = AMU_TO_AU * args.M_2
+
         self.mu  = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
+        self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
+        self.aa = np.sqrt(self.mu/self.mu12) # factor of 'a' for lab and scaled coordinates
 
         self.g_1 = args.g_1
         self.g_2 = args.g_2
@@ -70,9 +73,10 @@ class Hamiltonian:
         self.J   = args.J
 
         # Grid setup
-        # FIXME: need to pick ranges based on masses, charges
-        R_range = (2, 4.0)  # FIXME: why does V get weird when we take R->1 ?
-        r_max = 5
+        # Scale coords so we see R \on [2,4] and r \on (0, 5] for M1=M2=1
+        # FIXME: may need to pick ranges based on charges too
+        R_range = np.array([1.861,3.722]) * self.aa
+        r_max   = 5.373 / self.aa
 
         # (R_min, R_max, r_max)
         if hasattr(args, "extent") and args.extent is not None:
@@ -165,12 +169,14 @@ class Hamiltonian:
         D, d, a, c = 60, 0.95, 2.52, 1
         A, B, C = 2.32e5, 3.15, 2.31e4
 
-        mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
-        aa = np.sqrt(self.mu/mu12) # factor of 'a' for lab and scaled coordinates
-
+        mu12 = self.mu12
+        aa = self.aa
+        M_1 = self.M_1
+        M_2 = self.M_2
+        
         kappa2 = r*R*np.cos(gamma)
-        r1e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/self.M_1)**2 - 2*kappa2*mu12/self.M_1)
-        re2 = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/self.M_2)**2 + 2*kappa2*mu12/self.M_2)
+        r1e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1)
+        re2 = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2)
         
         D2 = self.g_2 * D * (    np.exp(-2*a * (re2-d))
                                  - 2*np.exp(  -a * (re2-d))
@@ -461,6 +467,8 @@ def parse_args():
     parser.add_argument('-R', dest="NR", metavar="NR", default=101, type=int)
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=400, type=int)
     parser.add_argument('-g', dest="Ng", metavar="Ng", default=250, type=int)
+    parser.add_argument('--extent', metavar="X", default=None,
+                        type=float, nargs=3, help="Rmin Rmax rmax, but set automatically")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
@@ -494,8 +502,8 @@ if __name__ == '__main__':
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
-        #conv, e_approx, evecs = pyscflib.davidson1(
-        conv, e_approx, evecs = lib.davidson1(
+        conv, e_approx, evecs = pyscflib.davidson1(
+        #conv, e_approx, evecs = lib.davidson1(
             lambda xs: [ H @ x for x in xs ],
             guess,
             #H.diag,
