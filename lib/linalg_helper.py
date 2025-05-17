@@ -89,7 +89,7 @@ __lasttime = None
 
 def tic(label):
     global __lasttime
-    printing = False
+    printing = True
     if printing and __lasttime:
         print(f"EEElapsed {label}", perf_counter() - __lasttime)
     __lasttime = perf_counter()
@@ -311,8 +311,9 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         # remove subspace linear dependencies
         keep = ~conv & (dx_norm > np.sqrt(lindep))
         xt = xt[keep]
+        tic("norms")
         xt = np.stack([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
-        
+        tic("preconditioner")
         norms = scipy.linalg.norm(xt, axis=1)
         xt /= norms[:, None]
                 

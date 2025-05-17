@@ -1,9 +1,33 @@
 #!/usr/bin/env python
+import jax
+import jax.numpy as jnp
+jax.config.update('jax_enable_x64', True)
+
+import numpy as np
+from numpy.fft import fft, fftshift
+from scipy.integrate import simpson
+
+from sys import stderr
+import argparse as ap
+from pathlib import Path
+
+import concurrent.futures as cf
+from itertools import product
+from functools import reduce, partial
+import operator
+
+from pyscf import lib as pyscflib
+import linalg_helper as lib
+
+from constants import *
+from hamiltonian import  KE, KE_FFT, KE_Borisov
+from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
+from debug import prms, timer, timer_ctx
 
 if __name__ == '__main__':
     from threadpoolctl import ThreadpoolController
     from tqdm import tqdm
-else:
+else:  # mock these out for use in Jupyter Notebooks etc
     class ThreadpoolController:
         def limit(_, limits):
             print(f"Mock call to ThreadpoolController.limit(limits={limits})")
@@ -12,51 +36,18 @@ else:
         print(f"Mock call to tqdm({kwargs})")
         return iterator
 
-import concurrent.futures as cf
-
-import numpy as np
-from numpy.fft import fft, fftshift
-from scipy.integrate import simpson
-from sys import stderr
-import argparse as ap
-from pathlib import Path
-from pyscf import lib as pyscflib
-from itertools import product
-import linalg_helper as lib
-import jax
-import jax.numpy as jnp
-#jax.config.update('jax_enable_x64', True)
-
-from functools import partial
-from time import perf_counter
-
-from constants import *
-from hamiltonian import  KE, KE_FFT, KE_Borisov
-from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
-from debug import prms, timer, timer_ctx
-
 
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'aa', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
-        'axes', 'max_threads',
+        'max_threads',
+        'preconditioner', 'make_guess',
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
-        '_locked'
+        '_locked', '_hash'
     )
-
-    # FIXME: this is useful for debugging, but ultimately we would
-    # like to freeze everything on creation too; we can't jax.jit the
-    # preconditioner until we do!
-    _mutable_keys = ('_preconditioner_data',)
-
-    # prevent data from being modified
-    def __setattr__(self, key, value):
-        if getattr(self, '_locked', False) and key not in self._mutable_keys:
-            raise AttributeError(f"Cannot modify '{key}'; all members are frozen on creation")
-        super().__setattr__(key, value)
 
     def __init__(self, args):
         self.m_e = AMU_TO_AU * 1
@@ -106,7 +97,7 @@ class Hamiltonian:
         # all over the place
         self.g = np.linspace(0, 2*np.pi, args.Ng, endpoint=False)
 
-        self.axes = (self.R, self.r, self.g)
+        #self.axes = (self.R, self.r, self.g)
         
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V_2Dfcm(self.R_grid, self.r_grid, self.g_grid)
@@ -149,17 +140,30 @@ class Hamiltonian:
         self.rinv2 = 1.0/(self.r_grid)**2
 
         self.diag = self.buildDiag()
+
+        preconditioner = 'naive'
+        if hasattr(args, "preconditioner"):
+            preconditioner = args.preconditioner
         
-        self._lock()
+        builder, self.preconditioner, self.make_guess = {
+            'BO':     (self._build_preconditioner_BO, self._preconditioner_BO,    self._make_guess_BO),
+            'V1':     (self._build_preconditioner_V1, self._preconditioner_V1,    self._make_guess_V1),
+            'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
+            'diagbo': (self._build_preconditioner_BO, self._preconditioner_naive, self._make_guess_BO),
+            None:     (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
+            }[preconditioner]
 
+        with timer_ctx(f"Build preconditioner {preconditioner}"):
+            self._preconditioner_data = builder()
 
-    # ensure that arrays cannot be written to
-    def _lock(self):
-        self._locked = True
+        # Lock the object and protect arrays from writing
         for key in self.__slots__:
-            if (key not in self._mutable_keys and
+            if (hasattr(self, key) and 
                 isinstance(member := super().__getattribute__(key), np.ndarray)):
                 member.flags.writeable = False
+
+        self._hash = self._make_hash()
+        self._locked = True
 
 
     def V_2Dfcm(self, R_amu, r_amu, gamma):
@@ -191,9 +195,7 @@ class Hamiltonian:
         # FIXME: consider performance implications of reshape
         return self.Hx(other.ravel()).reshape(other.shape)
 
-    # FIXME: likely will want to @jax.jit this, c.f.:
     # FIXME: can likely speed these up using opt_einsum for constant arguments
-    # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
     @partial(jax.jit, static_argnums=0)
     def Hx(self, x):
         xa = x.reshape(self.shape)
@@ -246,16 +248,15 @@ class Hamiltonian:
 
         return diag.ravel()
 
-    def preconditioner(self, dx, e, x0):
-        if not hasattr(self, "_preconditioner_data"):
-            print("building preconditioner")
-            self.build_preconditioner()
-        return self._preconditioner_kernel(dx, e, x0)
-
     # FIXME: See concerns about jit-ing Hx. Currently jitting in the
     # @partial(jax.jit, static_argnums=0) fashion will break; not sure why.
 
-    def _preconditioner_kernel_naive(self, dx, e, x0):
+    def _make_guess_naive(self, min_guess):
+        guesses = np.exp(-(self.Vgrid - np.min(self.Vgrid))**2/27.211).ravel()
+        return guesses
+
+    @partial(jax.jit, static_argnums=0)
+    def _preconditioner_naive(self, dx, e, x0):
         diagd = self.diag - (e - 1e-5)
 
         #diagd[abs(diagd)<1e-8] = 1e-8
@@ -263,34 +264,6 @@ class Hamiltonian:
         #diagd = np.where(abs(diagd) > 1e-8, diagd, 1e-8)
 
         return dx/diagd
-
-    def _preconditioner_kernel_V1(self, dx, e, x0):
-        #dx_ = np.fft.fft(dx.reshape(self.shape), axis=2)
-        dx_ = dx.reshape(self.shape)
-        Ad, U, *_ = self._preconditioner_data
-        diagd = Ad - (e - 1e-5)
-
-        dx_t = np.einsum("Rrgi,Rrg->Rig", U, dx_, optimize=True)
-        tr_t = dx_t / diagd
-        tr_ = np.einsum('Rigr,Rig->Rrg', U, tr_t, optimize=True)
-
-        #return np.fft.ifft(tr_, axis=2).ravel()
-        return tr_.ravel()
-
-    #@partial(jax.jit, static_argnums=0)
-    def _preconditioner_kernel_BO(self, dx, e, x0):
-        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
-        diagd = Ad_vn - (e - 1e-5)
-        
-        NR, Nr, Ng = self.shape
-        Nelec = Nr*Ng
-
-        dx_ = dx.reshape((NR, Nelec))
-        dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
-        tr_vn = dx_vn / diagd
-        tr_ = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
-
-        return tr_.ravel()
 
     def _build_preconditioner_BO(self, min_guess=4):
         NR, Nr, Ng = self.shape
@@ -300,87 +273,79 @@ class Hamiltonian:
         U_v   = np.zeros((Nelec, NR, NR))
         Ad_n  = np.zeros((NR, Nelec))
         Ad_vn = np.zeros((NR, Nelec))
-
-        # # diagonalize H_electronic (r,g) -> n
-        # for i, R in enumerate(H.R):
-        #     Hel = (
-        #         -1/(2*H.mu)*(
-        #             np.kron(H.ddr2, np.eye(Ng)) +
-        #             np.kron((1/R**2 + np.diag(1/H.r**2)), H.ddg2) +
-        #             0 # FIXME: need J terms
-        #         ) + np.diag(H.Vgrid[i].ravel())
-        #     )
-        #     Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
-
-        #     # match phases
-        #     if i > 0:
-        #         for n in range(Nelec):
-        #             if np.sum(U_n[i,:,n] * U_n[i-1,:,n]) < 0:
-        #                 U_n[i,:,n] *= -1.0
-
+        
         def diag_Hel(i, Ad_n=Ad_n, U_n=U_n):
-            R = H.R[i]
+            R = self.R[i]
             Hel = (
-                -1/(2*H.mu)*(
-                    np.kron(H.ddr2, np.eye(Ng)) +
-                    np.kron((1/R**2 + np.diag(1/H.r**2)), H.ddg2) +
+                -1/(2*self.mu)*(
+                    np.kron(self.ddr2, np.eye(Ng)) +
+                    np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
                     0 # FIXME: need J terms
-                ) + np.diag(H.Vgrid[i].ravel())
+                ) + np.diag(self.Vgrid[i].ravel())
             )
             Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
 
-        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+        threadctl = ThreadpoolController()
+        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
                 ex.map(diag_Hel, range(NR)),
-                total=NR, desc="Building U_n"))#, delay=3))
-            
-        phase_match(U_n)
-                        
-        # # diagonalize H_BO R->v
-        # for i in range(Nelec):
-        #     Hbo = -1/(2*H.mu)*H.ddR2 + np.diag(Ad_n[:,i])
-        #     Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
+                total=NR, desc="Building U_n", delay=1))
 
-        #     # match phases
-        #     if i > 0:
-        #         for v in range(NR):
-        #             if np.sum(U_v[i,:,v] * U_v[i-1,:,v]) < 0:
-        #                 U_v[i,:,v] *= -1.0
+        phase_match(U_n)
 
         def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn, U_v=U_v):
-            Hbo = -1/(2*H.mu)*H.ddR2 + np.diag(Ad_n[:,i])
+            Hbo = -1/(2*self.mu)*self.ddR2 + np.diag(Ad_n[:,i])
             Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
 
-        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
                 ex.map(diag_Hbo, range(Nelec)),
-                total=Nelec, desc="Building U_v"))#, delay=3))
+                total=Nelec, desc="Building U_v", delay=1))
 
-            
         phase_match(U_v)
 
+        Ad_vn.flags.writeable = False
+        U_n.flags.writeable   = False
+        U_v.flags.writeable   = False
+
+        return (Ad_vn, U_n, U_v)
+
+    def _make_guess_BO(self, min_guess):
+        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         # BO states are like: U_n[:,:,n]
         # vib states are like: U_v[n,:,v]
         s = int(np.ceil(np.sqrt(min_guess)))
+
         guesses = [
             (U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel()
             for n in range(s) for v in range(s)
         ]
 
-        Ad_vn.flags.writeable = False
-        U_n.flags.writeable   = False
-        U_v.flags.writeable   = False
-        self._preconditioner_data = (Ad_vn, U_n, U_v)
-        
         return guesses
-
-    def _build_preconditioner_V1(self, min_guess=4):
-        self._preconditioner_data = (self.diag,)
-        guesses = np.exp(-(self.Vgrid - np.min(self.Vgrid))**2/27.211).ravel()
+    
+    #@partial(jax.jit, static_argnums=0)
+    def _preconditioner_BO(self, dx, e, x0):
+        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
+        diagd = Ad_vn - (e - 1e-5)
 
         NR, Nr, Ng = self.shape
+        Nelec = Nr*Ng
 
+        dx_ = dx.reshape((NR, Nelec))
+
+        dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
+        tr_vn = dx_vn / diagd
+        tr_ = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
+
+        return tr_.ravel()
+
+
+    def _build_preconditioner_V1(self, min_guess=4):
+        NR, Nr, Ng = self.shape
         dg = self.g[1] - self.g[0]
+
+        threadctl = ThreadpoolController()
+        threadctl.limit(limits=1)
 
         j_full = fftshift(np.arange(Ng)-Ng//2)
         COS = np.cos(2*j_full[:,None] * self.g)
@@ -402,7 +367,7 @@ class Hamiltonian:
             Ad[Ri, :, ji], U[Ri, :, ji, :] = np.linalg.eigh(H_el)
 
 
-        # Presumably because of gated access, this tops out pretty fast at ~ 
+        # Presumably because of gated access, this tops out pretty fast at ~
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
             list(tqdm(
                 ex.map(diag_H0, product(range(NR),enumerate(j_full))),
@@ -448,14 +413,16 @@ class Hamiltonian:
 
         Ad.flags.writeable = False
         U.flags.writeable  = False
-        self._preconditioner_data = (Ad, U)
 
         #U = np.fft.ifft(U, axis=2)
         #assert(np.mean(np.abs(U.imag)) < 1e-12)
         #U = U.real
+        return (Ad, U)
 
+    def _make_guess_V1(self, min_guess):
+        Ad, U, *_ = self._preconditioner_data
+        NR, Nr, Ng = self.shape
         # States are U[R, :, Ng//2 + j, n]
-
         s = int(np.ceil(np.sqrt(min_guess)))
         guesses = [
             np.copy(np.broadcast_to(
@@ -465,11 +432,59 @@ class Hamiltonian:
 
         return guesses
 
-    build_preconditioner   =  _build_preconditioner_BO
-    _preconditioner_kernel = _preconditioner_kernel_BO
+    @partial(jax.jit, static_argnums=0)
+    def _preconditioner_V1(self, dx, e, x0):
+        #dx_ = np.fft.fft(dx.reshape(self.shape), axis=2)
+        dx_ = dx.reshape(self.shape)
+        Ad, U, *_ = self._preconditioner_data
+        diagd = Ad - (e - 1e-5)
 
-    #build_preconditioner   = _build_preconditioner_V1
-    #_preconditioner_kernel = _preconditioner_kernel_naive
+        dx_t = np.einsum("Rrgi,Rrg->Rig", U, dx_, optimize=True)
+        tr_t = dx_t / diagd
+        tr_ = np.einsum('Rigr,Rig->Rrg', U, tr_t, optimize=True)
+
+        #return np.fft.ifft(tr_, axis=2).ravel()
+        return tr_.ravel()
+
+    # Below here are a bunch of things related to immutability
+    # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
+    def _make_hash(self):
+        def recursive_hash(obj):
+            if isinstance(obj, np.ndarray):
+                if obj.flags.writeable:
+                    raise ValueError("Refusing to hash mutable array")
+                return hash((obj.shape, obj.dtype, obj.tobytes()))
+            elif isinstance(obj, tuple):
+                return hash(tuple(recursive_hash(x) for x in obj))
+            else:
+                return hash(obj)
+
+        return reduce(
+            operator.xor,
+            (recursive_hash(getattr(self, key)) for key in self.__slots__ if key not in ['_locked', '_hash']),
+            0)
+
+    def __hash__(self):
+        if not getattr(self, '_locked', False):
+            raise RuntimeError("Hash called before init")
+        return self._hash
+
+    def __eq__(self, other):
+        if not getattr(self, '_locked', False):
+            raise RuntimeError("Eq called before init")
+        if not isinstance(other, Hamiltonian):
+            return False
+        try:
+            return all(getattr(self, key) == getattr(other, key) for key in self.__slots__)
+        except AttributeError:
+            return False
+
+    # prevent data from being modified
+    def __setattr__(self, key, value):
+        if getattr(self, '_locked', False):
+            raise AttributeError(f"Cannot modify '{key}'; all members are frozen on creation")
+        super().__setattr__(key, value)
+
 
     
 def parse_args():
@@ -490,6 +505,7 @@ def parse_args():
     parser.add_argument('--extent', metavar="X", default=None,
                         type=float, nargs=3, help="Rmin Rmax rmax, but set automatically")
     parser.add_argument('--exact_diagonalization', action='store_true')
+    parser.add_argument('--preconditioner', default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
@@ -509,15 +525,11 @@ if __name__ == '__main__':
 
     with timer_ctx("Build H"):
         H = Hamiltonian(args)
-
-    with timer_ctx("Load guesses(?)"):
+        
+    with timer_ctx("Load/make guesses"):
         guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
-
-    with timer_ctx("Build preconditioner"), threadctl.limit(limits=1):
         if guess is None:
-            guess = H.build_preconditioner(args.k)
-        else:
-            H.build_preconditioner(0)
+            guess = H.make_guess(args.k)
 
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
