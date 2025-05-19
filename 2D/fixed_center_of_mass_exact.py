@@ -149,6 +149,7 @@ class Hamiltonian:
             'BO':     (self._build_preconditioner_BO, self._preconditioner_BO,    self._make_guess_BO),
             'V1':     (self._build_preconditioner_V1, self._preconditioner_V1,    self._make_guess_V1),
             'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
+            'power':  (lambda: (self.diag,),          self._preconditioner_power, self._make_guess_naive),
             'diagbo': (self._build_preconditioner_BO, self._preconditioner_naive, self._make_guess_BO),
             None:     (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
             }[preconditioner]
@@ -198,6 +199,10 @@ class Hamiltonian:
     # FIXME: can likely speed these up using opt_einsum for constant arguments
     @partial(jax.jit, static_argnums=0)
     def Hx(self, x):
+        return self.Tx(x) + x * self.Vgrid.ravel()
+
+    @partial(jax.jit, static_argnums=0)
+    def Tx(self, x):
         xa = x.reshape(self.shape)
         ke = np.zeros(self.shape)
 
@@ -217,11 +222,9 @@ class Hamiltonian:
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
+        return ke.ravel()
 
-        # Potential terms
-        res = ke + xa * self.Vgrid
-        return res.ravel()
-
+    
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
         # ke = sum(np.diag(op).reshape(
@@ -258,13 +261,16 @@ class Hamiltonian:
     @partial(jax.jit, static_argnums=0)
     def _preconditioner_naive(self, dx, e, x0):
         diagd = self.diag - (e - 1e-5)
-
-        #diagd[abs(diagd)<1e-8] = 1e-8
-        #diagd = jnp.where(abs(diagd) > 1e-8, diagd, 1e-8)
-        #diagd = np.where(abs(diagd) > 1e-8, diagd, 1e-8)
-
         return dx/diagd
 
+    #@partial(jax.jit, static_argnums=0)
+    def _preconditioner_power(self, dx, e, x0):
+        #vinv = 1/(self.Vgrid.ravel() - (e - 1e-5))
+        vinv = 1/(self.diag - (e - 1e-5))
+        vr = vinv * dx
+        tvr = self.Tx(vr) - (self.diag - self.Vgrid.ravel()) * vr
+        return vr - vinv * tvr
+    
     def _build_preconditioner_BO(self, min_guess=4):
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
@@ -304,6 +310,9 @@ class Hamiltonian:
 
         phase_match(U_v)
 
+        for i in range(5):
+            print(f"BO n={i} vibrational states:", Ad_vn[:5,i])
+
         Ad_vn.flags.writeable = False
         U_n.flags.writeable   = False
         U_v.flags.writeable   = False
@@ -331,13 +340,30 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        dx_ = dx.reshape((NR, Nelec))
+        # dx_ = dx.reshape((NR, Nelec))
 
-        dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
-        tr_vn = dx_vn / diagd
-        tr_ = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
+        # dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
+        # tr_vn = dx_vn / diagd
+        # tr_ = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
 
-        return tr_.ravel()
+        # return tr_.ravel()
+        
+        dx_Rr = dx.reshape((NR,Nelec))
+
+        dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
+        dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
+
+        #dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_Rr, optimize=True)
+
+        tr_vn = dx_vn / (Ad_vn - e)
+
+        tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
+        tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
+
+        #tr_Rr = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
+
+        return tr_Rr.ravel()
+
 
 
     def _build_preconditioner_V1(self, min_guess=4):
@@ -405,18 +431,19 @@ class Hamiltonian:
                     U[current] *= -1
 
         # yolo
-        oddjs = j_full%2 == 1
-        U[:, :, oddjs, :] = 0
+        #oddjs = j_full%2 == 1
+        #U[:, :, oddjs, :] = 0
         #U = fft(U, axis=2)
         #assert(np.mean(np.abs(U.imag)) < 1e-12)
         #U = U.real
 
+        U = np.fft.ifft(U, axis=2)
+        assert(np.mean(np.abs(U.imag)) < 1e-12)
+        U = U.real
+        
         Ad.flags.writeable = False
         U.flags.writeable  = False
 
-        #U = np.fft.ifft(U, axis=2)
-        #assert(np.mean(np.abs(U.imag)) < 1e-12)
-        #U = U.real
         return (Ad, U)
 
     def _make_guess_V1(self, min_guess):
@@ -432,9 +459,8 @@ class Hamiltonian:
 
         return guesses
 
-    @partial(jax.jit, static_argnums=0)
+    #@partial(jax.jit, static_argnums=0)
     def _preconditioner_V1(self, dx, e, x0):
-        #dx_ = np.fft.fft(dx.reshape(self.shape), axis=2)
         dx_ = dx.reshape(self.shape)
         Ad, U, *_ = self._preconditioner_data
         diagd = Ad - (e - 1e-5)
@@ -443,7 +469,6 @@ class Hamiltonian:
         tr_t = dx_t / diagd
         tr_ = np.einsum('Rigr,Rig->Rrg', U, tr_t, optimize=True)
 
-        #return np.fft.ifft(tr_, axis=2).ravel()
         return tr_.ravel()
 
     # Below here are a bunch of things related to immutability
