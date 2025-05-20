@@ -89,7 +89,7 @@ __lasttime = None
 
 def tic(label):
     global __lasttime
-    printing = True
+    printing = False
     if printing and __lasttime:
         print(f"EEElapsed {label}", perf_counter() - __lasttime)
     __lasttime = perf_counter()

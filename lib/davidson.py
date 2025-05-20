@@ -54,8 +54,9 @@ def get_interpolated_guess(guessfile, axes, method='cubic'):
     except Exception as e:
         print(f"WARNING: Unable to load {guessfile}; the error was:", e, sep='\n')
         return
-    
-    if H.shape == [len(ax) for ax in axes]:
+
+    target_shape = tuple(len(ax) for ax in axes)
+    if H.shape == target_shape:
         print("Loaded guess from", guessfile)
         return guess
     else:

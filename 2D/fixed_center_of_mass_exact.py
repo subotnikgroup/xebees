@@ -6,6 +6,7 @@ jax.config.update('jax_enable_x64', True)
 import numpy as np
 from numpy.fft import fft, fftshift
 from scipy.integrate import simpson
+from scipy.sparse.linalg import lobpcg
 
 from sys import stderr
 import argparse as ap
@@ -23,14 +24,19 @@ from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
 from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
-
+from threadpoolctl import ThreadpoolController
+    
 if __name__ == '__main__':
-    from threadpoolctl import ThreadpoolController
+
     from tqdm import tqdm
 else:  # mock these out for use in Jupyter Notebooks etc
-    class ThreadpoolController:
-        def limit(_, limits):
-            print(f"Mock call to ThreadpoolController.limit(limits={limits})")
+    # from contextlib import contextmanager
+    
+    # class ThreadpoolController:
+    #     @contextmanager
+    #     def limit(_, limits):
+    #         print(f"Mock call to ThreadpoolController.limit(limits={limits})")
+    #         yield
 
     def tqdm(iterator, **kwargs):
         print(f"Mock call to tqdm({kwargs})")
@@ -41,6 +47,7 @@ class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'aa', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
+        'axes',
         'max_threads',
         'preconditioner', 'make_guess',
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
@@ -97,7 +104,7 @@ class Hamiltonian:
         # all over the place
         self.g = np.linspace(0, 2*np.pi, args.Ng, endpoint=False)
 
-        #self.axes = (self.R, self.r, self.g)
+        self.axes = (self.R, self.r, self.g)
         
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V_2Dfcm(self.R_grid, self.r_grid, self.g_grid)
@@ -189,17 +196,18 @@ class Hamiltonian:
         D1 = self.g_1 * D * c**2 * (    np.exp(-(2*a/c) * (r1e-d))
                                         - 2*np.exp(-(  a/c) * (r1e-d)))
 
-        return KCALMOLE_TO_HARTREE * (D1 + D2 + A*np.exp(-B*R/aa) - C/(R/aa)**6)
+        #return KCALMOLE_TO_HARTREE * (D1 + D2 + (A*np.exp(-B*R/aa) - C/(R/aa)**6))
+        return KCALMOLE_TO_HARTREE * (D1 + D2 +
+                                      self.g_1*self.g_2*(A*np.exp(-B*R/aa) - C/(R/aa)**6))
 
     # allows H @ x
     def __matmul__(self, other):
-        # FIXME: consider performance implications of reshape
-        return self.Hx(other.ravel()).reshape(other.shape)
+        return self.Hx(other).reshape(other.shape)
 
     # FIXME: can likely speed these up using opt_einsum for constant arguments
     @partial(jax.jit, static_argnums=0)
     def Hx(self, x):
-        return self.Tx(x) + x * self.Vgrid.ravel()
+        return self.Tx(x) + x.ravel() * self.Vgrid.ravel()
 
     @partial(jax.jit, static_argnums=0)
     def Tx(self, x):
@@ -270,8 +278,47 @@ class Hamiltonian:
         vr = vinv * dx
         tvr = self.Tx(vr) - (self.diag - self.Vgrid.ravel()) * vr
         return vr - vinv * tvr
+
+    def BO_spectrum(self, nroots=None):
+        print("Building BO spectrum")
+        NR, Nr, Ng = self.shape
+        Nelec = Nr*Ng
+        Ad_n  = np.zeros((NR, Nelec))
+        Ad_vn = np.zeros((NR, Nelec))
+        
+        def diag_Hel(i, Ad_n=Ad_n):
+            R = self.R[i]
+            Hel = (
+                -1/(2*self.mu)*(
+                    np.kron(self.ddr2, np.eye(Ng)) +
+                    np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
+                    0 # FIXME: need J terms
+                ) + np.diag(self.Vgrid[i].ravel())
+            )
+            Ad_n[i] = np.linalg.eigvalsh(Hel)
+
+        threadctl = ThreadpoolController()
+        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
+            list(tqdm(
+                ex.map(diag_Hel, range(NR)),
+                total=NR, desc="Building electronic surfaces"))
+
+        def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn):
+            Hbo = -1/(2*self.mu)*self.ddR2 + np.diag(Ad_n[:,i])
+            Ad_vn[:,i] = np.linalg.eigvalsh(Hbo)
+
+        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
+            list(tqdm(
+                ex.map(diag_Hbo, range(Nelec)),
+                total=Nelec, desc="Building vibrational states"))
+
+        for i in range(nroots):
+            with np.printoptions(linewidth=np.inf):
+                print(f"BO state {i} spectrum:", Ad_vn[:nroots,i])
+        return Ad_vn  # energies are Ad_vn[v,n]
+
     
-    def _build_preconditioner_BO(self, min_guess=4):
+    def _build_preconditioner_BO(self):
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
@@ -289,13 +336,14 @@ class Hamiltonian:
                     0 # FIXME: need J terms
                 ) + np.diag(self.Vgrid[i].ravel())
             )
+            print(i, Hel.shape)
             Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
 
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
                 ex.map(diag_Hel, range(NR)),
-                total=NR, desc="Building U_n", delay=1))
+                total=NR, desc="Building U_n"))
 
         phase_match(U_n)
 
@@ -306,12 +354,9 @@ class Hamiltonian:
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
                 ex.map(diag_Hbo, range(Nelec)),
-                total=Nelec, desc="Building U_v", delay=1))
+                total=Nelec, desc="Building U_v"))
 
         phase_match(U_v)
-
-        for i in range(5):
-            print(f"BO n={i} vibrational states:", Ad_vn[:5,i])
 
         Ad_vn.flags.writeable = False
         U_n.flags.writeable   = False
@@ -340,30 +385,13 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        # dx_ = dx.reshape((NR, Nelec))
+        dx_ = dx.reshape((NR, Nelec))
 
-        # dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
-        # tr_vn = dx_vn / diagd
-        # tr_ = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
+        dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
+        tr_vn = dx_vn / diagd
+        tr_ = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
 
-        # return tr_.ravel()
-        
-        dx_Rr = dx.reshape((NR,Nelec))
-
-        dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
-        dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
-
-        #dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_Rr, optimize=True)
-
-        tr_vn = dx_vn / (Ad_vn - e)
-
-        tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
-        tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
-
-        #tr_Rr = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
-
-        return tr_Rr.ravel()
-
+        return tr_.ravel()
 
 
     def _build_preconditioner_V1(self, min_guess=4):
@@ -510,6 +538,15 @@ class Hamiltonian:
             raise AttributeError(f"Cannot modify '{key}'; all members are frozen on creation")
         super().__setattr__(key, value)
 
+    # Allow pickleing
+    def __getstate__(self):
+        return {slot: getattr(self, slot) for slot in self.__slots__}
+
+    # Go around the locks at unpickle time
+    def __setstate__(self, state):
+        for key, value in state.items():
+            object.__setattr__(self, key, value)
+
 
     
 def parse_args():
@@ -530,6 +567,7 @@ def parse_args():
     parser.add_argument('--extent', metavar="X", default=None,
                         type=float, nargs=3, help="Rmin Rmax rmax, but set automatically")
     parser.add_argument('--exact_diagonalization', action='store_true')
+    parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
     parser.add_argument('--preconditioner', default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
@@ -556,6 +594,23 @@ if __name__ == '__main__':
         if guess is None:
             guess = H.make_guess(args.k)
 
+    if args.bo_spectrum:
+        with timer_ctx("BO spectrum"):
+            spec = H.BO_spectrum(args.k)
+            np.savez_compressed(args.bo_spectrum, bo_spectrum=spec)
+
+            
+    # with timer_ctx(f"LOBPCG of size {np.prod(H.shape)}"):
+    #     e_approx_lobpcg, evecs_lobpcg = lobpcg(
+    #         lambda xs: np.asarray([ H @ x for x in xs.T ]).T,
+    #         np.asarray(guess).T,
+    #         tol=1e-6,
+    #         maxiter=args.iterations,
+    #         verbosityLevel=args.verbosity,
+    #         restartControl=4,
+    #         largest=False,
+    #     )
+    
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
@@ -579,6 +634,7 @@ if __name__ == '__main__':
     
     print("Davidson:", e_approx)
     print(conv)
+    print("Exact excitations / meV", (e_approx - e_approx[0]) * HARTREE_TO_EV*1000)
 
     if args.evecs:
         np.savez_compressed(args.evecs, guess=evecs, H=H)
