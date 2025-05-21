@@ -59,7 +59,7 @@ def plotpsi2D(psi, H, levels, scale=1):
         [limit]=ax.get_yticks()[-1:]
         ax.set_yticks([limit], [f"r={limit}a₀"])
 
-    return  matplotlib.animation.FuncAnimation(fig, animate, frames=args.NR)
+    return  matplotlib.animation.FuncAnimation(fig, animate, frames=H.shape[0])
 
 
 # # plot many slices, but this time just the radial components

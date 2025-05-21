@@ -371,7 +371,6 @@ class Hamiltonian:
                     )
                 ) + np.diag(self.Vgrid[i].ravel())
             )
-            print(i, Hel.shape)
             Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
 
         threadctl = ThreadpoolController()
