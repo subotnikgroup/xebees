@@ -47,7 +47,7 @@ class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'aa', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
-        'axes',
+        'axes', 'dtype',
         'max_threads',
         'preconditioner', 'make_guess',
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
@@ -69,6 +69,7 @@ class Hamiltonian:
         self.g_2 = args.g_2
 
         self.J   = args.J
+        self.dtype = np.float64 if self.J == 0 else np.complex128
 
         # Grid setup
         # Scale coords so we see R \on [2,4] and r \on (0, 5] for M1=M2=1
@@ -180,6 +181,35 @@ class Hamiltonian:
 
         D, d, a, c = 60, 0.95, 2.52, 1
         A, B, C = 2.32e5, 3.15, 2.31e4
+        #D, d, a, c = 60, 0.95, 2.52/2, 1
+        #fac=4
+        #A, B, C = fac*2.32e5, 3.15, fac*2.31e4
+
+        mu12 = self.mu12
+        aa = self.aa
+        M_1 = self.M_1
+        M_2 = self.M_2
+        
+        kappa2 = r*R*np.cos(gamma)
+        r1e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1)
+        r2e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2)
+        
+        D2 = self.g_2 * D * (    np.exp(-2*a * (r2e-d))
+                             - 2*np.exp(  -a * (r2e-d))
+                             + 1)
+        D1 = self.g_1 * D * c**2 * (    np.exp(-(2*a/c) * (r1e-d))
+                                    - 2*np.exp(-(  a/c) * (r1e-d)))
+
+        return KCALMOLE_TO_HARTREE * (D1 + D2 +
+                                      self.g_1*self.g_2*
+                                      (A*np.exp(-B*R/aa) - C/(R/aa)**6))
+
+    def V_2Dfcm_original(self, R_amu, r_amu, gamma):
+        R = R_amu / ANGSTROM_TO_BOHR
+        r = r_amu / ANGSTROM_TO_BOHR
+
+        D, d, a, c = 60, 0.95, 2.52, 1
+        A, B, C = 2.32e5, 3.15, 2.31e4
 
         mu12 = self.mu12
         aa = self.aa
@@ -196,10 +226,9 @@ class Hamiltonian:
         D1 = self.g_1 * D * c**2 * (    np.exp(-(2*a/c) * (r1e-d))
                                         - 2*np.exp(-(  a/c) * (r1e-d)))
 
-        #return KCALMOLE_TO_HARTREE * (D1 + D2 + (A*np.exp(-B*R/aa) - C/(R/aa)**6))
-        return KCALMOLE_TO_HARTREE * (D1 + D2 +
-                                      self.g_1*self.g_2*(A*np.exp(-B*R/aa) - C/(R/aa)**6))
+        return KCALMOLE_TO_HARTREE * (D1 + D2 + (A*np.exp(-B*R/aa) - C/(R/aa)**6))
 
+    
     # allows H @ x
     def __matmul__(self, other):
         return self.Hx(other).reshape(other.shape)
@@ -224,8 +253,8 @@ class Hamiltonian:
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
-            keg  = xa*self.J**2                                       # J^2
-            keg -= 2j*self.J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # J^2 - 2J ∂/∂γ
+            keg  = -xa*self.J**2                                       # -J^2
+            keg += 2j*self.J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # -J^2 + 2J ∂/∂γ
             ke += self.Rinv2*keg                                 # (1/R^2)*(J^2 - 2J ∂/∂γ)
 
         # mass portion of KE
@@ -247,7 +276,7 @@ class Hamiltonian:
         # Angular Kinetic Energy J terms
         if self.J != 0:
             ke += self.Rinv2 * (
-                self.J**2 -
+                -self.J**2 +
                 2*self.J*np.ones(self.shape) * np.diag(self.ddg1)[None, None, :]
             )
 
@@ -279,7 +308,7 @@ class Hamiltonian:
         tvr = self.Tx(vr) - (self.diag - self.Vgrid.ravel()) * vr
         return vr - vinv * tvr
 
-    def BO_spectrum(self, nroots=None):
+    def BO_spectrum(self, nroots=0):
         print("Building BO spectrum")
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
@@ -292,11 +321,14 @@ class Hamiltonian:
                 -1/(2*self.mu)*(
                     np.kron(self.ddr2, np.eye(Ng)) +
                     np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
-                    0 # FIXME: need J terms
+                    0 if self.J == 0 else (
+                        np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
+                        self.J**2/R**2*np.eye(Ng*Nr)
+                    )
                 ) + np.diag(self.Vgrid[i].ravel())
             )
             Ad_n[i] = np.linalg.eigvalsh(Hel)
-
+            
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
@@ -315,14 +347,14 @@ class Hamiltonian:
         for i in range(nroots):
             with np.printoptions(linewidth=np.inf):
                 print(f"BO state {i} spectrum:", Ad_vn[:nroots,i])
-        return Ad_vn  # energies are Ad_vn[v,n]
+        return (Ad_vn, Ad_n)  # energies are Ad_vn[v,n]
 
     
     def _build_preconditioner_BO(self):
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        U_n   = np.zeros((NR, Nr*Ng, Nelec))
+        U_n   = np.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
         U_v   = np.zeros((Nelec, NR, NR))
         Ad_n  = np.zeros((NR, Nelec))
         Ad_vn = np.zeros((NR, Nelec))
@@ -333,7 +365,10 @@ class Hamiltonian:
                 -1/(2*self.mu)*(
                     np.kron(self.ddr2, np.eye(Ng)) +
                     np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
-                    0 # FIXME: need J terms
+                    0 if self.J == 0 else (
+                        np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
+                        self.J**2/R**2*np.eye(Ng*Nr)
+                    )
                 ) + np.diag(self.Vgrid[i].ravel())
             )
             print(i, Hel.shape)
@@ -596,8 +631,8 @@ if __name__ == '__main__':
 
     if args.bo_spectrum:
         with timer_ctx("BO spectrum"):
-            spec = H.BO_spectrum(args.k)
-            np.savez_compressed(args.bo_spectrum, bo_spectrum=spec)
+            Ad_vn, Ad_n = H.BO_spectrum(args.k)
+            np.savez_compressed(args.bo_spectrum, bo_spectrum=Ad_vn, bo_surfaces=Ad_n)
 
             
     # with timer_ctx(f"LOBPCG of size {np.prod(H.shape)}"):
@@ -610,7 +645,9 @@ if __name__ == '__main__':
     #         restartControl=4,
     #         largest=False,
     #     )
-    
+    # print(e_approx_lobpcg)
+    # exit()
+        
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
@@ -634,7 +671,6 @@ if __name__ == '__main__':
     
     print("Davidson:", e_approx)
     print(conv)
-    print("Exact excitations / meV", (e_approx - e_approx[0]) * HARTREE_TO_EV*1000)
 
     if args.evecs:
         np.savez_compressed(args.evecs, guess=evecs, H=H)
