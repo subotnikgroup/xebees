@@ -20,6 +20,7 @@ import operator
 from pyscf import lib as pyscflib
 import linalg_helper as lib
 
+import potentials
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
 from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
@@ -49,7 +50,7 @@ class Hamiltonian:
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
         'axes', 'dtype',
         'max_threads',
-        'preconditioner', 'make_guess',
+        'preconditioner', 'make_guess', '_Vfunc',
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
@@ -108,7 +109,13 @@ class Hamiltonian:
         self.axes = (self.R, self.r, self.g)
         
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
-        self.Vgrid = self.V_2Dfcm(self.R_grid, self.r_grid, self.g_grid)
+
+        # Potential function selection
+        #self._Vfunc = partial(potentials.original, asymmetry_param=1)
+        #self._Vfunc = partial(potentials.borgis, asymmetry_param=1)
+        self._Vfunc = partial(potentials.soft_coulomb, dv=1, G=0.02)
+        
+        self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
         self.shape = self.Vgrid.shape
         self.size = np.prod(self.shape)
 
@@ -174,17 +181,7 @@ class Hamiltonian:
         self._hash = self._make_hash()
         self._locked = True
 
-
-    def V_2Dfcm(self, R_amu, r_amu, gamma):
-        R = R_amu / ANGSTROM_TO_BOHR
-        r = r_amu / ANGSTROM_TO_BOHR
-
-        D, d, a, c = 60, 0.95, 2.52, 1
-        A, B, C = 2.32e5, 3.15, 2.31e4
-        #D, d, a, c = 60, 0.95, 2.52/2, 1
-        #fac=4
-        #A, B, C = fac*2.32e5, 3.15, fac*2.31e4
-
+    def V(self, R, r, gamma):
         mu12 = self.mu12
         aa = self.aa
         M_1 = self.M_1
@@ -193,40 +190,8 @@ class Hamiltonian:
         kappa2 = r*R*np.cos(gamma)
         r1e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1)
         r2e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2)
-        
-        D2 = self.g_2 * D * (    np.exp(-2*a * (r2e-d))
-                             - 2*np.exp(  -a * (r2e-d))
-                             + 1)
-        D1 = self.g_1 * D * c**2 * (    np.exp(-(2*a/c) * (r1e-d))
-                                    - 2*np.exp(-(  a/c) * (r1e-d)))
 
-        return KCALMOLE_TO_HARTREE * (D1 + D2 +
-                                      self.g_1*self.g_2*
-                                      (A*np.exp(-B*R/aa) - C/(R/aa)**6))
-
-    def V_2Dfcm_original(self, R_amu, r_amu, gamma):
-        R = R_amu / ANGSTROM_TO_BOHR
-        r = r_amu / ANGSTROM_TO_BOHR
-
-        D, d, a, c = 60, 0.95, 2.52, 1
-        A, B, C = 2.32e5, 3.15, 2.31e4
-
-        mu12 = self.mu12
-        aa = self.aa
-        M_1 = self.M_1
-        M_2 = self.M_2
-        
-        kappa2 = r*R*np.cos(gamma)
-        r1e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1)
-        re2 = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2)
-        
-        D2 = self.g_2 * D * (    np.exp(-2*a * (re2-d))
-                                 - 2*np.exp(  -a * (re2-d))
-                                 + 1)
-        D1 = self.g_1 * D * c**2 * (    np.exp(-(2*a/c) * (r1e-d))
-                                        - 2*np.exp(-(  a/c) * (r1e-d)))
-
-        return KCALMOLE_TO_HARTREE * (D1 + D2 + (A*np.exp(-B*R/aa) - C/(R/aa)**6))
+        return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
     
     # allows H @ x

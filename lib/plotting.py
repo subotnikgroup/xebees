@@ -32,7 +32,12 @@ def plotpotential2D(H, levels=None):
     return  matplotlib.animation.FuncAnimation(fig, animate, frames=H.shape[0])
 
 
-def plotpsi2D(psi, H, levels, scale=1):
+def plotpsi2D(psi, H, levels=None, scale=1):
+    if levels is None:
+        levels = np.linspace(np.min(H.Vgrid),
+                             np.min(H.Vgrid) + 0.15, 16) # 0.15 a.u. ~4 eV range
+        levels = levels[-2:]
+    
     psi = np.copy(psi) / np.sqrt(H.R_grid*H.r_grid)
     fig, ax = plt.subplots(subplot_kw=dict(projection='polar'))
 
