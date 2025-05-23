@@ -38,7 +38,7 @@ def plotpsi2D(psi, H, levels=None, scale=1):
                              np.min(H.Vgrid) + 0.15, 16) # 0.15 a.u. ~4 eV range
         levels = levels[-2:]
     
-    psi = np.copy(psi) / np.sqrt(H.R_grid*H.r_grid)
+    psi = np.copy(psi).reshape(H.shape) / np.sqrt(H.R_grid*H.r_grid)
     fig, ax = plt.subplots(subplot_kw=dict(projection='polar'))
 
     ax.contour(*np.meshgrid(H.g,H.r, indexing='ij'), H.Vgrid[0,:,:].T, levels=levels)
