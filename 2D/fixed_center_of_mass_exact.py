@@ -18,7 +18,7 @@ from functools import reduce, partial
 import operator
 
 from pyscf import lib as pyscflib
-import linalg_helper as lib
+# import linalg_helper as lib
 
 import potentials
 from constants import *
@@ -26,10 +26,18 @@ from hamiltonian import  KE, KE_FFT, KE_Borisov
 from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
-    
+
 if __name__ == '__main__':
     from tqdm import tqdm
-else:  # mock this out for use in Jupyter Notebooks etc
+else:  # mock these out for use in Jupyter Notebooks etc
+    # from contextlib import contextmanager
+
+    # class ThreadpoolController:
+    #     @contextmanager
+    #     def limit(_, limits):
+    #         print(f"Mock call to ThreadpoolController.limit(limits={limits})")
+    #         yield
+
     def tqdm(iterator, **kwargs):
         print(f"Mock call to tqdm({kwargs})")
         return iterator
@@ -71,14 +79,14 @@ class Hamiltonian:
 
         # (R_min, R_max, r_max)
         if hasattr(args, "extent") and args.extent is not None:
-            R_range = args.extent[:2]
-            r_max = args.extent[-1]
+            R_range = np.array(args.extent[:2])*self.aa
+            r_max = args.extent[-1]/self.aa
 
         # save number of threads for preconditioner
         self.max_threads = 1
         if hasattr(args, "t") and args.t is not None:
             self.max_threads = args.t
-            
+
         self.R = np.linspace(*R_range, args.NR) * ANGSTROM_TO_BOHR
 
         # N.B.: We are careful not to include 0 in the range of r by
@@ -91,21 +99,21 @@ class Hamiltonian:
         # require Ng to be even
         if args.Ng % 2 != 0:
             raise RuntimeError(f"Ng must be even!")
-        
+
         # N.B.: It is essential that we not include the endpoint in
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
         self.g = np.linspace(0, 2*np.pi, args.Ng, endpoint=False)
 
         self.axes = (self.R, self.r, self.g)
-        
+
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
 
         # Potential function selection
         #self._Vfunc = partial(potentials.original, asymmetry_param=1)
         #self._Vfunc = partial(potentials.borgis, asymmetry_param=1)
         self._Vfunc = partial(potentials.soft_coulomb, dv=1, G=0.02)
-        
+
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
         self.shape = self.Vgrid.shape
         self.size = np.prod(self.shape)
@@ -150,7 +158,7 @@ class Hamiltonian:
         preconditioner = 'naive'
         if hasattr(args, "preconditioner"):
             preconditioner = args.preconditioner
-        
+
         builder, self.preconditioner, self.make_guess = {
             'BO':     (self._build_preconditioner_BO, self._preconditioner_BO,    self._make_guess_BO),
             'V1':     (self._build_preconditioner_V1, self._preconditioner_V1,    self._make_guess_V1),
@@ -165,7 +173,7 @@ class Hamiltonian:
 
         # Lock the object and protect arrays from writing
         for key in self.__slots__:
-            if (hasattr(self, key) and 
+            if (hasattr(self, key) and
                 isinstance(member := super().__getattribute__(key), np.ndarray)):
                 member.flags.writeable = False
 
@@ -177,14 +185,14 @@ class Hamiltonian:
         aa = self.aa
         M_1 = self.M_1
         M_2 = self.M_2
-        
+
         kappa2 = r*R*np.cos(gamma)
         r1e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1)
         r2e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2)
 
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
-    
+
     # allows H @ x
     def __matmul__(self, other):
         return self.Hx(other).reshape(other.shape)
@@ -217,7 +225,7 @@ class Hamiltonian:
         ke *= -1 / (2*self.mu)
         return ke.ravel()
 
-    
+
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
         # ke = sum(np.diag(op).reshape(
@@ -228,7 +236,7 @@ class Hamiltonian:
         ke += np.diag(self.ddR2)[:, None, None]
         ke += np.diag(self.ddr2)[None, :, None]
         ke += (self.Rinv2 + self.rinv2) * np.diag(self.ddg2)[None, None, :]
-        
+
         # Angular Kinetic Energy J terms
         if self.J != 0:
             ke += self.Rinv2 * (
@@ -270,7 +278,7 @@ class Hamiltonian:
         Nelec = Nr*Ng
         Ad_n  = np.zeros((NR, Nelec))
         Ad_vn = np.zeros((NR, Nelec))
-        
+
         def diag_Hel(i, Ad_n=Ad_n):
             R = self.R[i]
             Hel = (
@@ -284,7 +292,7 @@ class Hamiltonian:
                 ) + np.diag(self.Vgrid[i].ravel())
             )
             Ad_n[i] = np.linalg.eigvalsh(Hel)
-            
+
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
@@ -305,7 +313,7 @@ class Hamiltonian:
                 print(f"BO state {i} spectrum:", Ad_vn[:nroots,i])
         return (Ad_vn, Ad_n)  # energies are Ad_vn[v,n]
 
-    
+
     def _build_preconditioner_BO(self):
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
@@ -314,7 +322,7 @@ class Hamiltonian:
         U_v   = np.zeros((Nelec, NR, NR))
         Ad_n  = np.zeros((NR, Nelec))
         Ad_vn = np.zeros((NR, Nelec))
-        
+
         def diag_Hel(i, Ad_n=Ad_n, U_n=U_n):
             R = self.R[i]
             Hel = (
@@ -366,7 +374,7 @@ class Hamiltonian:
         ]
 
         return guesses
-    
+
     #@partial(jax.jit, static_argnums=0)
     def _preconditioner_BO(self, dx, e, x0):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
@@ -399,7 +407,7 @@ class Hamiltonian:
         # IF debugging
         #V2 = simpson(self.Vgrid[:,:,None,:] * COS[None,None,:,:], dx=dg, axis=-1)/np.pi/2
         #assert(np.allclose(V1, V2[:,:,np.squeeze(np.where(j_full == 0)).item()]))
-        
+
         Ad = np.zeros((NR, Nr, Ng))
         U  = np.zeros((NR, Nr, Ng, Nr))
 
@@ -458,7 +466,7 @@ class Hamiltonian:
         U = np.fft.ifft(U, axis=2)
         assert(np.mean(np.abs(U.imag)) < 1e-12)
         U = U.real
-        
+
         Ad.flags.writeable = False
         U.flags.writeable  = False
 
@@ -538,12 +546,12 @@ class Hamiltonian:
             object.__setattr__(self, key, value)
 
 
-    
+
 def parse_args():
     parser = ap.ArgumentParser(
         prog='3body-2D',
         description="computes the lowest k eigenvalues of a 3-body potential in 2D")
-    
+
     parser.add_argument('-k', metavar='num_eigenvalues', default=5, type=int)
     parser.add_argument('-t', metavar="num_threads", default=16, type=int)
     parser.add_argument('-g_1', metavar='g_1', required=True, type=float)
@@ -578,7 +586,7 @@ if __name__ == '__main__':
 
     with timer_ctx("Build H"):
         H = Hamiltonian(args)
-        
+
     with timer_ctx("Load/make guesses"):
         guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
         if guess is None:
@@ -589,7 +597,7 @@ if __name__ == '__main__':
             Ad_vn, Ad_n = H.BO_spectrum(args.k)
             np.savez_compressed(args.bo_spectrum, bo_spectrum=Ad_vn, bo_surfaces=Ad_n)
 
-            
+
     # with timer_ctx(f"LOBPCG of size {np.prod(H.shape)}"):
     #     e_approx_lobpcg, evecs_lobpcg = lobpcg(
     #         lambda xs: np.asarray([ H @ x for x in xs.T ]).T,
@@ -602,12 +610,12 @@ if __name__ == '__main__':
     #     )
     # print(e_approx_lobpcg)
     # exit()
-        
+
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
-        #conv, e_approx, evecs = pyscflib.davidson1(
-        conv, e_approx, evecs = lib.davidson1(
+        conv, e_approx, evecs = pyscflib.davidson1(
+        # conv, e_approx, evecs = lib.davidson1(
             lambda xs: [ H @ x for x in xs ],
             guess,
             #H.diag,
@@ -623,7 +631,7 @@ if __name__ == '__main__':
     #guess quality
     #for i, (e,g) in enumerate(zip(evecs, guess)):
     #    print(i, np.abs(np.vdot(e, g))**2 / (np.vdot(e, e) * np.vdot(g, g)))
-    
+
     print("Davidson:", e_approx)
     print(conv)
 
@@ -643,7 +651,7 @@ if __name__ == '__main__':
                   f"and appended to {args.save}")
         else:
             print("Skipping saving unconverged results.")
-    
+
     if args.exact_diagonalization:
         e_exact = solve_exact_gen(H.Hx, H.size, num_state=args.k)
         print("Exact:", e_exact)
