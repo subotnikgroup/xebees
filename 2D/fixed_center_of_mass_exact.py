@@ -28,17 +28,8 @@ from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
     
 if __name__ == '__main__':
-
     from tqdm import tqdm
-else:  # mock these out for use in Jupyter Notebooks etc
-    # from contextlib import contextmanager
-    
-    # class ThreadpoolController:
-    #     @contextmanager
-    #     def limit(_, limits):
-    #         print(f"Mock call to ThreadpoolController.limit(limits={limits})")
-    #         yield
-
+else:  # mock this out for use in Jupyter Notebooks etc
     def tqdm(iterator, **kwargs):
         print(f"Mock call to tqdm({kwargs})")
         return iterator
