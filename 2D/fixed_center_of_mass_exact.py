@@ -53,13 +53,25 @@ class Hamiltonian:
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
-        '_locked', '_hash'
+        '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2'
     )
 
     def __init__(self, args):
-        self.m_e = AMU_TO_AU * 1
-        self.M_1 = AMU_TO_AU * args.M_1
-        self.M_2 = AMU_TO_AU * args.M_2
+        ### HELPPPPPPPP: man, am I so totally wrong??? Why would you multiply
+        #the electron mass by amu? That would the same as setting 1e --> 1 proton
+        # the mass of the electron is just 1 in atomic units... then we can choose
+        # to give nuclei mass in either units of amu or m_e...
+        # e.g. Carbon mass = 12 amu ~ 21,874 m_e
+        # note "atomic units" for electronic structure is not the same as amu
+        # when it's like printed on a periodic table
+        # but this would TOTALLY fuck with all the KE terms !!!
+        self.m_e = 1
+        self.M_1 = args.M_1
+        self.M_2 = args.M_2
+
+        # self.m_e = AMU_TO_AU * 1
+        # self.M_1 = AMU_TO_AU * args.M_1
+        # self.M_2 = AMU_TO_AU * args.M_2
 
         self.mu  = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
@@ -74,27 +86,36 @@ class Hamiltonian:
         # Grid setup
         # Scale coords so we see R \on [2,4] and r \on (0, 5] for M1=M2=1
         # FIXME: may need to pick ranges based on charges too
-        R_range = np.array([1.861,3.722]) * self.aa
-        r_max   = 5.373 / self.aa
+
+        # N.B.NB: updated to include AA2Bohr conversion here for consistency
+        R_range = np.array([1.861,3.722]) * self.aa * ANGSTROM_TO_BOHR
+        r_max   = 5.373 / self.aa* ANGSTROM_TO_BOHR
 
         # (R_min, R_max, r_max)
         if hasattr(args, "extent") and args.extent is not None:
-            R_range = np.array(args.extent[:2])*self.aa
-            r_max = args.extent[-1]/self.aa
+            R_range = np.array(args.extent[:2])*self.aa * ANGSTROM_TO_BOHR
+            r_max = args.extent[-1]/self.aa * ANGSTROM_TO_BOHR
 
         # save number of threads for preconditioner
         self.max_threads = 1
         if hasattr(args, "t") and args.t is not None:
             self.max_threads = args.t
 
-        self.R = np.linspace(*R_range, args.NR) * ANGSTROM_TO_BOHR
+        self.R = np.linspace(*R_range, args.NR)
 
         # N.B.: We are careful not to include 0 in the range of r by
         # starting 1 "step" away from 0. It might be more consistent
         # to have Nr-1 points, but the confusion this would cause
         # would be intolerable. This behavior is required because we
         # have terms that go like 1/r.
-        self.r = np.linspace(r_max/args.Nr, r_max, args.Nr) * ANGSTROM_TO_BOHR
+        self.r = np.linspace(r_max/args.Nr, r_max, args.Nr)
+
+        #N.B: creating new objets that refer to the unscaled coords for plotting
+        # simulations of different masses on the same axis. NB notes she is
+        # preserving VCS's language on "lab frame" meaning Jacobi unscaled coords
+        # All jupyter nb's need to be updated to plot with R_lab coords!
+        self.r_lab = self.r*self.aa
+        self.R_lab = self.R/self.aa
 
         # require Ng to be even
         if args.Ng % 2 != 0:
@@ -112,7 +133,9 @@ class Hamiltonian:
         # Potential function selection
         #self._Vfunc = partial(potentials.original, asymmetry_param=1)
         #self._Vfunc = partial(potentials.borgis, asymmetry_param=1)
-        self._Vfunc = partial(potentials.soft_coulomb, dv=1, G=0.02)
+        
+        ## N.B: default G =1, no need to scale anymore
+        self._Vfunc = partial(potentials.soft_coulomb, dv=1, G=1)
 
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
         self.shape = self.Vgrid.shape
@@ -141,6 +164,9 @@ class Hamiltonian:
         # We also are throwing away the returned jacobian of R/r
         self.ddR2, _ = KE_Borisov(self.R, bare=True)
         self.ddr2, _ = KE_Borisov(self.r, bare=True)
+
+        ## test
+        self.ddr_lab2, _ = KE_Borisov(self.r_lab, bare=True)
 
         # Part of the reason for using a cyclic *stencil* for gamma
         # rather than KE_FFT is that it wasn't immediately obvious how
