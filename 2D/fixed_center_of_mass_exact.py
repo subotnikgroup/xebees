@@ -133,9 +133,9 @@ class Hamiltonian:
         # Potential function selection
         #self._Vfunc = partial(potentials.original, asymmetry_param=1)
         #self._Vfunc = partial(potentials.borgis, asymmetry_param=1)
-        
+
         ## N.B: default G =1, no need to scale anymore
-        self._Vfunc = partial(potentials.soft_coulomb, dv=1, G=1)
+        self._Vfunc = partial(potentials.soft_coulomb, dv=0.5, G=1)
 
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
         self.shape = self.Vgrid.shape
