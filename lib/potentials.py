@@ -25,6 +25,25 @@ def soft_coulomb(R, r1e, r2e, charges, dv=0.5, G=1, p=2):
     VN =  Q1 * Q2 / (R**p   + dv**p)**(1/p)
     return G*(V1 + V2 + VN)
 
+def soft_coulomb_barrier(R, r1e, r2e, charges, dv=0.5, G=1, p=2, A=1):
+    Q1, Q2 = charges
+
+    V1 =  -Q1      / (r1e**p + dv**p)**(1/p)
+    V2 =  -Q2      / (r2e**p + dv**p)**(1/p)
+    VN =   Q1 * Q2 / (R**p   + dv**p)**(1/p)
+    Vbar = Q1 * Q2 / 4 / R**2
+    return G*(V1 + V2 + VN + A*Vbar)
+
+def soft_coulomb_exp(R, r1e, r2e, charges, dv=0.5, G=1, p=2, alpha=0.15, A=2):
+    Q1, Q2 = charges
+
+    V1 =  -Q1      / (r1e**p + dv**p)**(1/p)
+    V2 =  -Q2      / (r2e**p + dv**p)**(1/p)
+    VN =   Q1 * Q2 / (R**p   + dv**p)**(1/p)
+    Vexp = Q1 * Q2 * A * np.exp(-R/alpha) / R**2
+    return G*(V1 + V2 + VN + Vexp)
+
+
 
 def harmonic(R, r1e, r2e, charges, w=1, R0=0):
     V = 0.5 * w**2 * (R - R0)**2
