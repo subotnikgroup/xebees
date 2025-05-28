@@ -17,14 +17,18 @@ import numpy as np
 # Soft Coulomb potential; dv control softness. G is a term of
 # dimension mass that effectively scales the competition between
 # kinetic and potential energy
-def soft_coulomb(R, r1e, r2e, charges, dv=1, G=0.02):
+def soft_coulomb(R, r1e, r2e, charges, dv=0.5, G=1, p=2):
     Q1, Q2 = charges
 
-    V1 = -G * Q1      / np.sqrt(r1e**2 + dv**2)
-    V2 = -G * Q2      / np.sqrt(r2e**2 + dv**2)
-    VN =  G * Q1 * Q2 / np.sqrt(R**2   + dv**2)
-    return V1 + V2 + VN
+    V1 = -Q1      / (r1e**p + dv**p)**(1/p)
+    V2 = -Q2      / (r2e**p + dv**p)**(1/p)
+    VN =  Q1 * Q2 / (R**p   + dv**p)**(1/p)
+    return G*(V1 + V2 + VN)
 
+
+def harmonic(R, r1e, r2e, charges, w=1, R0=0):
+    V = 0.5 * w**2 * (R - R0)**2
+    return V
 
 # Original potential used by Xuezhi with the addition of
 # charges. Adapted from Borgis, CPL 423 (2006). In their paper,
