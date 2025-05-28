@@ -53,7 +53,11 @@ class Hamiltonian:
         self.M_2 = args.M_2
 
         # Potential function selection
-        self._Vfunc = partial(potentials.soft_coulomb, dv=0.5, G=40, p=2)
+
+        funcparams = getattr(args, "funcparams", dict(dv=0.5, G=40, p=2))
+        self._Vfunc = partial(potentials.soft_coulomb, **funcparams)
+        print(funcparams)
+        #self._Vfunc = partial(potentials.soft_coulomb, dv=0.5, G=40, p=2)
         #self._Vfunc = partial(potentials.soft_coulomb, dv=1, G=0.02, p=2)
         #self._Vfunc = potentials.borgis
         #self._Vfunc = partial(potentials.harmonic, w=1, R0=1)
@@ -84,11 +88,15 @@ class Hamiltonian:
             R_range = np.array(args.extent[:2])
             r_max = args.extent[-1]
 
+        print("unscaled coords:", R_range, r_max)
+            
         if r_max < R_range[-1]/2:
             raise RuntimeError("r_max should be at least R_max/2")
-            
+
         R_range *= ANGSTROM_TO_BOHR * self.aa
         r_max   *= ANGSTROM_TO_BOHR / self.aa
+
+        print("  scaled coords:", R_range, r_max)
         
         # save number of threads for preconditioner
         self.max_threads = 1
