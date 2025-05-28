@@ -17,8 +17,7 @@ from itertools import product
 from functools import reduce, partial
 import operator
 
-from pyscf import lib as pyscflib
-# import linalg_helper as lib
+import linalg_helper as lib
 
 import potentials
 from constants import *
@@ -29,15 +28,7 @@ from threadpoolctl import ThreadpoolController
 
 if __name__ == '__main__':
     from tqdm import tqdm
-else:  # mock these out for use in Jupyter Notebooks etc
-    # from contextlib import contextmanager
-
-    # class ThreadpoolController:
-    #     @contextmanager
-    #     def limit(_, limits):
-    #         print(f"Mock call to ThreadpoolController.limit(limits={limits})")
-    #         yield
-
+else:  # mock this out for use in Jupyter Notebooks etc
     def tqdm(iterator, **kwargs):
         print(f"Mock call to tqdm({kwargs})")
         return iterator
@@ -57,21 +48,21 @@ class Hamiltonian:
     )
 
     def __init__(self, args):
-        ### HELPPPPPPPP: man, am I so totally wrong??? Why would you multiply
-        #the electron mass by amu? That would the same as setting 1e --> 1 proton
-        # the mass of the electron is just 1 in atomic units... then we can choose
-        # to give nuclei mass in either units of amu or m_e...
-        # e.g. Carbon mass = 12 amu ~ 21,874 m_e
-        # note "atomic units" for electronic structure is not the same as amu
-        # when it's like printed on a periodic table
-        # but this would TOTALLY fuck with all the KE terms !!!
         self.m_e = 1
         self.M_1 = args.M_1
         self.M_2 = args.M_2
 
-        # self.m_e = AMU_TO_AU * 1
-        # self.M_1 = AMU_TO_AU * args.M_1
-        # self.M_2 = AMU_TO_AU * args.M_2
+        # Potential function selection
+        self._Vfunc = partial(potentials.soft_coulomb, dv=0.5, G=40, p=2)
+        #self._Vfunc = partial(potentials.soft_coulomb, dv=1, G=0.02, p=2)
+        #self._Vfunc = potentials.borgis
+        #self._Vfunc = partial(potentials.harmonic, w=1, R0=1)
+
+        if self._Vfunc == potentials.borgis:
+            print("Waring: All masses scaled to AMU!")
+            self.m_e *= AMU_TO_AU
+            self.M_1 *= AMU_TO_AU
+            self.M_2 *= AMU_TO_AU
 
         self.mu  = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
@@ -83,19 +74,22 @@ class Hamiltonian:
         self.J   = args.J
         self.dtype = np.float64 if self.J == 0 else np.complex128
 
-        # Grid setup
-        # Scale coords so we see R \on [2,4] and r \on (0, 5] for M1=M2=1
+        # Grid setup; sensible defaults in the unscaled (lab) frame
         # FIXME: may need to pick ranges based on charges too
-
-        # N.B.NB: updated to include AA2Bohr conversion here for consistency
-        R_range = np.array([1.861,3.722]) * self.aa * ANGSTROM_TO_BOHR
-        r_max   = 5.373 / self.aa* ANGSTROM_TO_BOHR
+        R_range = np.array([1.861,3.722])
+        r_max   = 5.373
 
         # (R_min, R_max, r_max)
         if hasattr(args, "extent") and args.extent is not None:
-            R_range = np.array(args.extent[:2])*self.aa * ANGSTROM_TO_BOHR
-            r_max = args.extent[-1]/self.aa * ANGSTROM_TO_BOHR
+            R_range = np.array(args.extent[:2])
+            r_max = args.extent[-1]
 
+        if r_max < R_range[-1]/2:
+            raise RuntimeError("r_max should be at least R_max/2")
+            
+        R_range *= ANGSTROM_TO_BOHR * self.aa
+        r_max   *= ANGSTROM_TO_BOHR / self.aa
+        
         # save number of threads for preconditioner
         self.max_threads = 1
         if hasattr(args, "t") and args.t is not None:
@@ -110,7 +104,7 @@ class Hamiltonian:
         # have terms that go like 1/r.
         self.r = np.linspace(r_max/args.Nr, r_max, args.Nr)
 
-        #N.B: creating new objets that refer to the unscaled coords for plotting
+        #N.B: creating new objects that refer to the unscaled coords for plotting
         # simulations of different masses on the same axis. NB notes she is
         # preserving VCS's language on "lab frame" meaning Jacobi unscaled coords
         # All jupyter nb's need to be updated to plot with R_lab coords!
@@ -129,13 +123,6 @@ class Hamiltonian:
         self.axes = (self.R, self.r, self.g)
 
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
-
-        # Potential function selection
-        #self._Vfunc = partial(potentials.original, asymmetry_param=1)
-        #self._Vfunc = partial(potentials.borgis, asymmetry_param=1)
-
-        ## N.B: default G =1, no need to scale anymore
-        self._Vfunc = partial(potentials.soft_coulomb, dv=0.5, G=1)
 
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
         self.shape = self.Vgrid.shape
@@ -165,7 +152,7 @@ class Hamiltonian:
         self.ddR2, _ = KE_Borisov(self.R, bare=True)
         self.ddr2, _ = KE_Borisov(self.r, bare=True)
 
-        ## test
+        ## FIXME: "lab" KE isn't the same as the scaled ones.
         self.ddr_lab2, _ = KE_Borisov(self.r_lab, bare=True)
 
         # Part of the reason for using a cyclic *stencil* for gamma
@@ -640,8 +627,7 @@ if __name__ == '__main__':
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
-        conv, e_approx, evecs = pyscflib.davidson1(
-        # conv, e_approx, evecs = lib.davidson1(
+        conv, e_approx, evecs = lib.davidson1(
             lambda xs: [ H @ x for x in xs ],
             guess,
             #H.diag,
