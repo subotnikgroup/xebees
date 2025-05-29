@@ -48,12 +48,20 @@ class Hamiltonian:
     )
 
     def __init__(self, args):
+        # save number of threads for preconditioner
+        self.max_threads = getattr(args, "t", 1)
+
         self.m_e = 1
         self.M_1 = args.M_1
         self.M_2 = args.M_2
 
-        # Potential function selection
+        self.g_1 = args.g_1
+        self.g_2 = args.g_2
 
+        self.J   = args.J
+        self.dtype = np.float64 if self.J == 0 else np.complex128
+
+        # Potential function selection
         funcparams = getattr(args, "funcparams", dict(dv=0.5, G=40, p=1))
         #self._Vfunc = partial(potentials.soft_coulomb, **funcparams)
         self._Vfunc = partial(potentials.soft_coulomb_exp, **funcparams)
@@ -63,34 +71,28 @@ class Hamiltonian:
         #self._Vfunc = potentials.borgis
         #self._Vfunc = partial(potentials.harmonic, w=1, R0=1)
 
+        # Grid setup; sensible defaults in the unscaled (lab) frame
+        extent = np.array([1/args.NR, 2, 3])
+
         if self._Vfunc == potentials.borgis:
             print("Waring: All masses scaled to AMU!")
             self.m_e *= AMU_TO_AU
             self.M_1 *= AMU_TO_AU
             self.M_2 *= AMU_TO_AU
+            extent = np.array([[1.861, 3.722, 5.373]])
 
         self.mu  = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.aa = np.sqrt(self.mu/self.mu12) # factor of 'a' for lab and scaled coordinates
 
-        self.g_1 = args.g_1
-        self.g_2 = args.g_2
-
-        self.J   = args.J
-        self.dtype = np.float64 if self.J == 0 else np.complex128
-
-        # Grid setup; sensible defaults in the unscaled (lab) frame
-        # FIXME: may need to pick ranges based on charges too
-        R_range = np.array([1.861,3.722])
-        r_max   = 5.373
-
-        # (R_min, R_max, r_max)
         if hasattr(args, "extent") and args.extent is not None:
-            R_range = np.array(args.extent[:2])
-            r_max = args.extent[-1]
+            extent = args.extent
+
+        R_range = extent[:2]
+        r_max   = extent[-1]
 
         print("unscaled coords:", R_range, r_max)
-            
+
         if r_max < R_range[-1]/2:
             raise RuntimeError("r_max should be at least R_max/2")
 
@@ -98,11 +100,6 @@ class Hamiltonian:
         r_max   *= ANGSTROM_TO_BOHR / self.aa
 
         print("  scaled coords:", R_range, r_max)
-        
-        # save number of threads for preconditioner
-        self.max_threads = 1
-        if hasattr(args, "t") and args.t is not None:
-            self.max_threads = args.t
 
         self.R = np.linspace(*R_range, args.NR)
 
@@ -574,6 +571,10 @@ def parse_args():
         prog='3body-2D',
         description="computes the lowest k eigenvalues of a 3-body potential in 2D")
 
+    class NumpyArrayAction(ap.Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            setattr(namespace, self.dest, np.array(values, dtype=float))
+
     parser.add_argument('-k', metavar='num_eigenvalues', default=5, type=int)
     parser.add_argument('-t', metavar="num_threads", default=16, type=int)
     parser.add_argument('-g_1', metavar='g_1', required=True, type=float)
@@ -583,9 +584,9 @@ def parse_args():
     parser.add_argument('-J', default=0, type=float)
     parser.add_argument('-R', dest="NR", metavar="NR", default=101, type=int)
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=400, type=int)
-    parser.add_argument('-g', dest="Ng", metavar="Ng", default=250, type=int)
-    parser.add_argument('--extent', metavar="X", default=None,
-                        type=float, nargs=3, help="Rmin Rmax rmax, but set automatically")
+    parser.add_argument('-g', dest="Ng", metavar="Ng", default=158, type=int)
+    parser.add_argument('--extent', metavar="X", action=NumpyArrayAction,
+                        nargs=3, help="Rmin Rmax rmax, but set automatically")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
     parser.add_argument('--preconditioner', default="naive", type=str)
