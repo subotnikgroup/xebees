@@ -54,7 +54,7 @@ class Hamiltonian:
 
         # Potential function selection
 
-        funcparams = getattr(args, "funcparams", dict(dv=0.5, G=40, p=2))
+        funcparams = getattr(args, "funcparams", dict(dv=0.5, G=40, p=1))
         #self._Vfunc = partial(potentials.soft_coulomb, **funcparams)
         self._Vfunc = partial(potentials.soft_coulomb_exp, **funcparams)
         print(funcparams)
