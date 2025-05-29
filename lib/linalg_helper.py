@@ -16,6 +16,11 @@
 # Author: Qiming Sun <osirpt.sun@gmail.com>
 #
 
+#
+# Heavily modified by Vale Cofer-Shabica <vale.cofershabica@gmail.com>, 2025
+#
+
+
 '''
 Extension to scipy.linalg module
 '''
