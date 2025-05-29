@@ -18,13 +18,14 @@ import numpy as np
 # Soft Coulomb potential; dv control softness. G is a term of
 # dimension mass that effectively scales the competition between
 # kinetic and potential energy
-def soft_coulomb(R, r1e, r2e, charges, dv=0.5, G=1, p=1):
+def soft_coulomb(R, r1e, r2e, charges, mu=None, dv=0.5, G=1, p=1):
     Q1, Q2 = charges
 
-    V1 = -Q1      / (r1e**2 + dv**2)**(p/2)
-    V2 = -Q2      / (r2e**2 + dv**2)**(p/2)
-    VN =  Q1 * Q2 / (R**2   + dv**2)**(p/2)
-    return G*(V1 + V2 + VN)
+    V1  = -Q1      / (r1e**2 + dv**2)**(p/2)
+    V2  = -Q2      / (r2e**2 + dv**2)**(p/2)
+    VN  =  Q1 * Q2 / (R**2   + dv**2)**(p/2)
+    VKE = 1/8/R**2/mu if mu is not None else 0
+    return G*(V1 + V2 + VN) + VKE
 
 def soft_coulomb_barrier(R, r1e, r2e, charges, dv=0.5, G=1, p=2, A=1):
     Q1, Q2 = charges

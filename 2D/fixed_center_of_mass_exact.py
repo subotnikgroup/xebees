@@ -61,10 +61,21 @@ class Hamiltonian:
         self.J   = args.J
         self.dtype = np.float64 if self.J == 0 else np.complex128
 
+        # if self._Vfunc == potentials.borgis:
+        #     print("Waring: All masses scaled to AMU!")
+        #     self.m_e *= AMU_TO_AU
+        #     self.M_1 *= AMU_TO_AU
+        #     self.M_2 *= AMU_TO_AU
+        #     extent = np.array([[1.861, 3.722, 5.373]])
+
+        self.mu  = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
+        self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
+        self.aa = np.sqrt(self.mu/self.mu12) # factor of 'a' for lab and scaled coordinates
+
         # Potential function selection
-        funcparams = getattr(args, "funcparams", dict(dv=0.5, G=40, p=1))
-        #self._Vfunc = partial(potentials.soft_coulomb, **funcparams)
-        self._Vfunc = partial(potentials.soft_coulomb_exp, **funcparams)
+        funcparams = getattr(args, "funcparams", dict(dv=0.5, G=36, p=1))
+        self._Vfunc = partial(potentials.soft_coulomb, mu=None, **funcparams)
+        #self._Vfunc = partial(potentials.soft_coulomb_exp, **funcparams)
         print(funcparams)
         #self._Vfunc = partial(potentials.soft_coulomb, dv=0.5, G=40, p=2)
         #self._Vfunc = partial(potentials.soft_coulomb, dv=1, G=0.02, p=2)
@@ -72,19 +83,7 @@ class Hamiltonian:
         #self._Vfunc = partial(potentials.harmonic, w=1, R0=1)
 
         # Grid setup; sensible defaults in the unscaled (lab) frame
-        extent = np.array([1/args.NR, 2, 3])
-
-        if self._Vfunc == potentials.borgis:
-            print("Waring: All masses scaled to AMU!")
-            self.m_e *= AMU_TO_AU
-            self.M_1 *= AMU_TO_AU
-            self.M_2 *= AMU_TO_AU
-            extent = np.array([[1.861, 3.722, 5.373]])
-
-        self.mu  = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
-        self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
-        self.aa = np.sqrt(self.mu/self.mu12) # factor of 'a' for lab and scaled coordinates
-
+        extent = np.array([1/args.NR, 2, 2])        
         if hasattr(args, "extent") and args.extent is not None:
             extent = args.extent
 
@@ -155,7 +154,8 @@ class Hamiltonian:
 
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
-        self.ddR2, _ = KE_Borisov(self.R, bare=True)
+        #self.ddR2, _ = KE_Borisov(self.R, bare=True)
+        self.ddR2    = KE(args.NR, dg, bare=True, cyclic=False) #+ np.diag(1/4/self.R**2)
         self.ddr2, _ = KE_Borisov(self.r, bare=True)
 
         ## FIXME: "lab" KE isn't the same as the scaled ones.
@@ -206,8 +206,12 @@ class Hamiltonian:
         M_2 = self.M_2
 
         kappa2 = r*R*np.cos(gamma)
-        r1e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1)
-        r2e = np.sqrt((aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2)
+
+        r1e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
+        r2e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
+        
+        r1e = np.sqrt(np.where(r1e2 < 0, 0, r1e2))
+        r2e = np.sqrt(np.where(r2e2 < 0, 0, r2e2))
 
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
@@ -304,6 +308,7 @@ class Hamiltonian:
                 -1/(2*self.mu)*(
                     np.kron(self.ddr2, np.eye(Ng)) +
                     np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
+                    # np.eye(Nr*Ng)/4/R**2 +
                     0 if self.J == 0 else (
                         np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
                         self.J**2/R**2*np.eye(Ng*Nr)
@@ -348,6 +353,10 @@ class Hamiltonian:
                 -1/(2*self.mu)*(
                     np.kron(self.ddr2, np.eye(Ng)) +
                     np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
+                    # we don't need this b.c. R isn't operator from
+                    # the perspective of BO
+                    
+                    #np.eye(Nr*Ng)/4/R**2 +
                     0 if self.J == 0 else (
                         np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
                         self.J**2/R**2*np.eye(Ng*Nr)
@@ -376,10 +385,11 @@ class Hamiltonian:
         phase_match(U_v)
 
         Ad_vn.flags.writeable = False
+        Ad_n.flags.writeable  = False
         U_n.flags.writeable   = False
         U_v.flags.writeable   = False
 
-        return (Ad_vn, U_n, U_v)
+        return (Ad_vn, U_n, U_v, Ad_n)
 
     def _make_guess_BO(self, min_guess):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
