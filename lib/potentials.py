@@ -20,9 +20,9 @@ import numpy as np
 def soft_coulomb(R, r1e, r2e, charges, dv=0.5, G=1, p=2):
     Q1, Q2 = charges
 
-    V1 = -Q1      / (r1e**p + dv**p)**(1/p)
-    V2 = -Q2      / (r2e**p + dv**p)**(1/p)
-    VN =  Q1 * Q2 / (R**p   + dv**p)**(1/p)
+    V1 = -Q1      / (r1e**2 + dv**2)**(1/p)
+    V2 = -Q2      / (r2e**2 + dv**2)**(1/p)
+    VN =  Q1 * Q2 / (R**2   + dv**2)**(1/p)
     return G*(V1 + V2 + VN)
 
 def soft_coulomb_barrier(R, r1e, r2e, charges, dv=0.5, G=1, p=2, A=1):
@@ -95,4 +95,3 @@ def original(R_au, r1e_au, r2e_au, charges, asymmetry_param=1):
                           - 2*np.exp(-(  a/c) * (r1e-d)))
 
     return KCALMOLE_TO_HARTREE * (D1 + D2 + (A*np.exp(-B*R) - C/R**6))
-
