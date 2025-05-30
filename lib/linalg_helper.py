@@ -316,6 +316,14 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         # remove subspace linear dependencies
         keep = ~conv & (dx_norm > np.sqrt(lindep))
         xt = xt[keep]
+
+        if len(xt) == 0:
+            log.debug('Linear dependency in trial subspace. |r| for each state %s',
+                      dx_norm)
+            conv = dx_norm < toloose
+            break
+
+        
         tic("norms")
         xt = np.stack([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
         tic("preconditioner")
@@ -327,6 +335,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         tic("normalize")
         log.debug('davidson %d %d  |r|= %4.3g  e= %s  max|de|= %4.3g  lindep= %4.3g',
                   icyc, space, max_dx_norm, e, de[ide], norm_min)
+        #log.debug('davidson %d %d  |r|= %s', icyc, space, dx_norm)
 
         if icyc > 3:
             mydiff = e[0] - mylast
@@ -335,12 +344,13 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
                 print(f"Hold up! Why isn't e0 monotonic??? {mydiff}")
                 #raise RuntimeError("Hold up! Why isn't e0 monotonic???")
         mylast = e[0]
-        
-        if len(xt) == 0:
-            log.debug('Linear dependency in trial subspace. |r| for each state %s',
-                      dx_norm)
-            conv = dx_norm < toloose
-            break
+
+        # Moved this check up
+        # if len(xt) == 0:
+        #     log.debug('Linear dependency in trial subspace. |r| for each state %s',
+        #               dx_norm)
+        #     conv = dx_norm < toloose
+        #     break
 
         max_dx_last = max_dx_norm
         fresh_start = space+nroots > max_space

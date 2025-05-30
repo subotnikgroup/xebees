@@ -18,6 +18,7 @@ from functools import reduce, partial
 import operator
 
 import linalg_helper as lib
+#from pyscf import lib
 
 import potentials
 from constants import *
@@ -61,28 +62,18 @@ class Hamiltonian:
         self.J   = args.J
         self.dtype = np.float64 if self.J == 0 else np.complex128
 
-        # if self._Vfunc == potentials.borgis:
-        #     print("Waring: All masses scaled to AMU!")
-        #     self.m_e *= AMU_TO_AU
-        #     self.M_1 *= AMU_TO_AU
-        #     self.M_2 *= AMU_TO_AU
-        #     extent = np.array([[1.861, 3.722, 5.373]])
-
         self.mu  = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.aa = np.sqrt(self.mu/self.mu12) # factor of 'a' for lab and scaled coordinates
 
         # Potential function selection
-        funcparams = getattr(args, "funcparams", dict(dv=0.5, G=36, p=1))
-        self._Vfunc = partial(potentials.soft_coulomb, mu=None, **funcparams)
-        #self._Vfunc = partial(potentials.soft_coulomb_exp, **funcparams)
-        print(funcparams)
-        #self._Vfunc = partial(potentials.soft_coulomb, dv=0.5, G=40, p=2)
-        #self._Vfunc = partial(potentials.soft_coulomb, dv=1, G=0.02, p=2)
-        #self._Vfunc = potentials.borgis
-        #self._Vfunc = partial(potentials.harmonic, w=1, R0=1)
+        self._Vfunc = potentials.soft_coulomb
 
         # Grid setup; sensible defaults in the unscaled (lab) frame
+        
+        # FIXME: need to pick extents based on mu12 and the observed
+        # size of the BO wavepackets. Then we need to take [1/NR,
+        # Rmax, Rmax] as the defaults.
         extent = np.array([1/args.NR, 2, 2])        
         if hasattr(args, "extent") and args.extent is not None:
             extent = args.extent
@@ -324,7 +315,7 @@ class Hamiltonian:
                 total=NR, desc="Building electronic surfaces"))
 
         def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn):
-            Hbo = -1/(2*self.mu)*self.ddR2 + np.diag(Ad_n[:,i])
+            Hbo = -1/(2*self.mu)*(self.ddR2) + np.diag(Ad_n[:,i])
             Ad_vn[:,i] = np.linalg.eigvalsh(Hbo)
 
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
