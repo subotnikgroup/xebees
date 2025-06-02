@@ -174,3 +174,66 @@ def solve_BO_surfaces(Tr, V):
 #     )
 def solve_BOv(TR, Tr, V):
     return np.linalg.eigvalsh(TR + np.diag(solve_BO_surface(Tr,V)))
+
+@timer
+def Gamma_etf(R,r,g,pr,pg,M_1,M_2):
+    """
+    Gamma operator
+    """
+    print("building etf")
+    mu12 = M_1*M_2/(M_1+M_2)
+    sigma = 1
+    Ng = len(pg)
+    kappa2 = R*r*np.cos(g)    
+    r1e = (r)**2 + (R)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
+    re2 = (r)**2 + (R)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
+
+    theta1 = np.exp(-r1e / sigma**2)
+    theta2 = np.exp(-re2 / sigma**2)
+    partition = theta1 + theta2
+    
+    t1 = np.diag((theta1/partition).ravel())
+    t2 = np.diag((theta2/partition).ravel())
+    
+    pR = np.kron(-1j*pr,np.eye(Ng))
+    pt = np.kron(np.diag(1/r[:,0]), -1j*pg)
+    
+    gamma1R = (t1 @ pR + pR @ t1) / (2j)
+    gamma1t = (t1 @ pt + pt @ t1) / (2j)
+    gamma2R = (t2 @ pR + pR @ t2) / (2j)
+    gamma2t = (t2 @ pt + pt @ t2) / (2j)
+    
+    return gamma1R, gamma1t, gamma2R, gamma2t
+
+@timer
+def Gamma_erf(R,r,g,pr,pg,M_1,M_2):
+    print("building erf")
+
+    mu12 = M_1*M_2/(M_1+M_2)
+    sigma = 1
+    Ng = len(pg)
+    Nr = len(pr)
+    kappa2 = R*r*np.cos(g)    
+    r1e = (r)**2 + (R)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
+    re2 = (r)**2 + (R)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
+
+    theta1 = np.exp(-r1e / sigma**2)
+    theta2 = np.exp(-re2 / sigma**2)
+    partition = theta1 + theta2
+    t1 = np.diag((theta1/partition).ravel())
+    t2 = np.diag((theta2/partition).ravel())
+    
+    pR = np.kron(-1j*pr,np.eye(Ng))
+    pGdr = np.kron(np.diag(1/r[:,0]),-1j*pg)
+    rcosg = np.kron(np.diag(r[:,0]),np.diag(np.cos(g[0,:])))
+    rsing = np.kron(np.diag(r[:,0]),np.diag(np.sin(g[0,:])))
+
+    
+    J1 = -0.5j*((rcosg-(np.eye(Nr*Ng)*R*mu12/M_1))@(t1@pGdr+pGdr@t1)-rsing@((t1@pR+pR@t1)))
+    J2 = -0.5j*((rcosg+(np.eye(Nr*Ng)*R*mu12/M_2))@(t2@pGdr+pGdr@t2)-rsing@((t2@pR+pR@t2)))
+
+    #check signs
+    gamma1 = -1/R*(J1+J2)
+    gamma2 = 1/R*(J1+J2)
+  
+    return gamma1,gamma2
