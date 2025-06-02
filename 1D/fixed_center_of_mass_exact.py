@@ -5,6 +5,9 @@ import argparse as ap
 from pathlib import Path
 from pyscf import lib as pyscflib
 
+import os, sys
+sys.path.append(os.path.abspath("lib"))
+
 from constants import *
 from hamiltonian import  KE, KE_FFT
 from davidson import solve_davidson, solve_exact, get_davidson_guess
@@ -29,7 +32,7 @@ def parse_args():
     parser = ap.ArgumentParser(
         prog='davidson-ps-1d',
         description="computes the lowest k eigenvalues of phase space model in Xuezhi's paper")
-    
+
     parser.add_argument('-k', metavar='num_eigenvalues', default=5, type=int)
     parser.add_argument('-t', metavar="num_threads", default=16, type=int)
     parser.add_argument('-g_1', metavar='g_1', required=True, type=float)
@@ -116,7 +119,7 @@ if __name__ == '__main__':
                   f"and appended to {args.save}")
         else:
             print("Skipping saving unconverged results.")
-    
+
     if args.exact_diagonalization:
         e_exact = solve_exact(TR, Tr + Tmp, Vgrid, num_state=args.k)
         print("Exact:", e_exact)

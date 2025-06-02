@@ -5,6 +5,9 @@ import argparse as ap
 from pathlib import Path
 from pyscf import lib as pyscflib
 
+import os, sys
+sys.path.append(os.path.abspath("lib"))
+
 from constants import *
 from hamiltonian import  KE, KE_FFT
 from davidson import solve_davidson, solve_exact, get_davidson_guess
@@ -29,10 +32,10 @@ def build_terms(args):
     # Grid setup
     R = np.linspace(2, 4, args.NR) * ANGSTROM_TO_BOHR
     r = np.linspace(-4, 1, args.Nr) * ANGSTROM_TO_BOHR
-    
+
     dR, dr = R[1] - R[0], r[1] - r[0]
     Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), args.g_1, args.g_2)
-    
+
     P = np.fft.fftshift(np.fft.fftfreq(args.NR, dR)) * 2 * np.pi
     p = np.fft.fftshift(np.fft.fftfreq(args.Nr, dr)) * 2 * np.pi
 
@@ -101,7 +104,7 @@ if __name__ == '__main__':
                   f"and appended to {args.save}")
         else:
             print("Skipping saving unconverged results.")
-    
+
     if args.exact_diagonalization:
         e_exact = solve_exact(TR, Tr, Vgrid, num_state=args.k)
         print("Exact:", e_exact)
@@ -112,4 +115,3 @@ if __name__ == '__main__':
         exit(1)
     else:
         print("All eigenvalues converged")
-
