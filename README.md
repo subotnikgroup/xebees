@@ -1,3 +1,5 @@
+### Jupiter cluster set up with uv
+
 Compute the lowest k eigenvalues of the exact Hamiltonian for a 3-body system
 
 First, install uv:
