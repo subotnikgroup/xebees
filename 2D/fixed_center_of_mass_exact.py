@@ -17,6 +17,9 @@ from itertools import product
 from functools import reduce, partial
 import operator
 
+import os, sys 
+sys.path.append(os.path.abspath("lib"))
+
 import linalg_helper as lib
 #from pyscf import lib
 
