@@ -1,0 +1,13 @@
+name : ps-exact
+channels: 
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pyscf
+  - numpy
+  - jax
+  - matplotlib
+  - notebook
+  - tqdm=4.67.1
+  - threadpoolctl=3.6.0
+  - line_profiler
