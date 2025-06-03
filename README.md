@@ -46,7 +46,7 @@ jupyter lab
 
 On Della, anaconda is already installed so we can use that to manage our python env's instead. First, we will need to load the modules
 ```
-module load anaconda/2024.10
+module load anaconda3/2024.10
 module load nsight-systems/2025.3.1
 ```
 Then, create the new conda env
