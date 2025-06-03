@@ -238,3 +238,38 @@ def Gamma_erf(R,r,g,pr,pg,M_1,M_2):
     gamma2 = 1/R*(J1+J2)
   
     return gamma1,gamma2
+
+def inverse_weyl_transform(E, NR, R, P):
+    """
+    Perform the inverse Weyl transform 
+    """
+    HPS = np.zeros((NR, NR), dtype=complex)
+    EPP = np.zeros((NR, NR), dtype=complex)
+    EPS_half = np.zeros((NR + 1, NR), dtype=complex)
+    dR = R[1] - R[0]
+    R_half = np.linspace(R[0] - dR/2, R[-1] + dR/2, NR + 1)
+
+    # Build EPP
+    for i in range(NR):
+        for j in range(NR):
+            for k in range(NR):
+                EPP[j, i] += np.exp(-1j * R[k] * P[j]) * E[k, i] / np.sqrt(NR)
+
+    # Build EPS_half
+    for i in range(NR):
+        for j in range(NR + 1):
+            for k in range(NR):
+                EPS_half[j, i] += np.exp(1j * R_half[j] * P[k]) * EPP[k, i] / np.sqrt(NR)
+
+    # Build HPS
+    for j in range(NR):
+        for q1 in range(NR):
+            for q2 in range(NR):
+                if (q1 - q2) % 2 == 0:
+                    HPS[q1, q2] += (np.exp(-1j * (R[q1] - R[q2]) * P[j])
+                                    * E[(q1 + q2) // 2, j] / NR)
+                else:
+                    idx = (q1 + q2 + 1) // 2
+                    HPS[q1, q2] += (np.exp(-1j * (R[q1] - R[q2]) * P[j])
+                                    * EPS_half[idx, j] / NR)
+    return HPS

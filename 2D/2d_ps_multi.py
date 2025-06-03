@@ -273,7 +273,7 @@ def parse_args():
         description="computes the lowest k eigenvalues of a 3-body potential in 2D")
     
     parser.add_argument('-k', metavar='num_eigenvalues', default=5, type=int)
-    parser.add_argument('-t', metavar="num_threads", default=16, type=int)
+    parser.add_argument('-t', metavar="num_threads", default=1, type=int)
     parser.add_argument('-g_1', metavar='g_1', required=True, type=float)
     parser.add_argument('-g_2', metavar='g_2', required=True, type=float)
     parser.add_argument('-M_1', required=True, type=float)
@@ -302,7 +302,7 @@ if __name__ == '__main__':
     EPS = np.zeros((H.shape[0], H.shape[0]))
  
     index_pairs = [(i, k, H, args) for i in range(H.shape[0]) for k in range(H.shape[0])]
-    with multiprocessing.Pool(processes=5) as pool:
+    with multiprocessing.Pool(processes=10) as pool:
         results = pool.map(compute_EPS, index_pairs)
 
     for i,k,val in results:
