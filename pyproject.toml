@@ -10,6 +10,7 @@ dependencies = [
     "notebook",
     "tqdm>=4.67.1",
     "threadpoolctl>=3.6.0",
+    "line-profiler>=4.2.0",
 ]
 
 [tool.setuptools.packages.find]
