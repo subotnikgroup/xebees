@@ -40,7 +40,7 @@ else:  # mock this out for use in Jupyter Notebooks etc
 
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
-        'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'aa', 'g_1', 'g_2', 'J',
+        'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
         'axes', 'dtype',
         'max_threads',
@@ -48,7 +48,7 @@ class Hamiltonian:
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
-        '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2'
+        '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2'
     )
 
     def __init__(self, args):
@@ -65,50 +65,54 @@ class Hamiltonian:
         self.J   = args.J
         self.dtype = np.float64 if self.J == 0 else np.complex128
 
-        self.mu  = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
+        self.mu   = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
+        self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
-        self.aa = np.sqrt(self.mu/self.mu12) # factor of 'a' for lab and scaled coordinates
+        self.aa   = np.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
 
+        # FIXME: add a knob for tuning dv
         # Potential function selection
-        self._Vfunc = potentials.soft_coulomb
+        self._Vfunc = partial(potentials.soft_coulomb, dv=0.5)
 
         # Grid setup; sensible defaults in the unscaled (lab) frame
-        
         # FIXME: need to pick extents based on mu12 and the observed
         # size of the BO wavepackets. Then we need to take [1/NR,
         # Rmax, Rmax] as the defaults.
-        extent = np.array([1/args.NR, 2, 2])        
+        # 1  0.1 8
+        #
+        #
+        #
+        #
+        # N.B.: extents are now and forevermore in units of Bohr
+        extent = np.array([1/args.NR, 4, 4])
         if hasattr(args, "extent") and args.extent is not None:
             extent = args.extent
 
-        R_range = extent[:2]
-        r_max   = extent[-1]
+        R_range_lab = extent[:2]
+        r_max_lab   = extent[-1]
 
-        print("unscaled coords:", R_range, r_max)
-
-        if r_max < R_range[-1]/2:
+        if r_max_lab < R_range_lab[-1]/2:
             raise RuntimeError("r_max should be at least R_max/2")
 
-        R_range *= ANGSTROM_TO_BOHR * self.aa
-        r_max   *= ANGSTROM_TO_BOHR / self.aa
+        R_range = R_range_lab * self.aa
+        r_max   = r_max_lab   / self.aa
 
-        print("  scaled coords:", R_range, r_max)
+        #R_range = R_range_lab / self.aa
+        #r_max   = r_max_lab   * self.aa
 
-        self.R = np.linspace(*R_range, args.NR)
+        
+        print("extent in unscaled coords:", R_range_lab, r_max_lab)
+        print("extent in   scaled coords:", R_range, r_max)
 
         # N.B.: We are careful not to include 0 in the range of r by
         # starting 1 "step" away from 0. It might be more consistent
         # to have Nr-1 points, but the confusion this would cause
         # would be intolerable. This behavior is required because we
         # have terms that go like 1/r.
-        self.r = np.linspace(r_max/args.Nr, r_max, args.Nr)
-
-        #N.B: creating new objects that refer to the unscaled coords for plotting
-        # simulations of different masses on the same axis. NB notes she is
-        # preserving VCS's language on "lab frame" meaning Jacobi unscaled coords
-        # All jupyter nb's need to be updated to plot with R_lab coords!
-        self.r_lab = self.r*self.aa
-        self.R_lab = self.R/self.aa
+        self.r     = np.linspace(r_max    /args.Nr, r_max, args.Nr)
+        self.r_lab = np.linspace(r_max_lab/args.Nr, r_max_lab, args.Nr)
+        self.R     = np.linspace(*R_range,     args.NR)
+        self.R_lab = np.linspace(*R_range_lab, args.NR)
 
         # require Ng to be even
         if args.Ng % 2 != 0:
@@ -122,8 +126,8 @@ class Hamiltonian:
         self.axes = (self.R, self.r, self.g)
 
         self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
-
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
+        
         self.shape = self.Vgrid.shape
         self.size = np.prod(self.shape)
 
@@ -149,11 +153,12 @@ class Hamiltonian:
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
         #self.ddR2, _ = KE_Borisov(self.R, bare=True)
-        self.ddR2    = KE(args.NR, dg, bare=True, cyclic=False) #+ np.diag(1/4/self.R**2)
+        self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False) + np.diag(1/4/self.R**2)
         self.ddr2, _ = KE_Borisov(self.r, bare=True)
-
-        ## FIXME: "lab" KE isn't the same as the scaled ones.
+        
         self.ddr_lab2, _ = KE_Borisov(self.r_lab, bare=True)
+        self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False)
+
 
         # Part of the reason for using a cyclic *stencil* for gamma
         # rather than KE_FFT is that it wasn't immediately obvious how
@@ -203,10 +208,15 @@ class Hamiltonian:
 
         r1e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
         r2e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
+
+        #r1e2 = (r/aa)**2 + (R*aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
+        #r2e2 = (r/aa)**2 + (R*aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
+
         
         r1e = np.sqrt(np.where(r1e2 < 0, 0, r1e2))
         r2e = np.sqrt(np.where(r2e2 < 0, 0, r2e2))
-
+        
+        #return self._Vfunc(R*aa, r1e, r2e, (self.g_1, self.g_2))
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
 
@@ -302,7 +312,7 @@ class Hamiltonian:
                 -1/(2*self.mu)*(
                     np.kron(self.ddr2, np.eye(Ng)) +
                     np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
-                    # np.eye(Nr*Ng)/4/R**2 +
+                    np.eye(Nr*Ng)/4/R**2 +
                     0 if self.J == 0 else (
                         np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
                         self.J**2/R**2*np.eye(Ng*Nr)
@@ -347,10 +357,7 @@ class Hamiltonian:
                 -1/(2*self.mu)*(
                     np.kron(self.ddr2, np.eye(Ng)) +
                     np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
-                    # we don't need this b.c. R isn't operator from
-                    # the perspective of BO
-                    
-                    #np.eye(Nr*Ng)/4/R**2 +
+                    np.eye(Nr*Ng)/4/R**2 +
                     0 if self.J == 0 else (
                         np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
                         self.J**2/R**2*np.eye(Ng*Nr)
