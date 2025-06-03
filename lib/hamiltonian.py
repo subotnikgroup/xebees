@@ -2,6 +2,7 @@ import numpy as np
 from scipy.special import factorial
 import scipy.signal as ssg
 import scipy.ndimage as snd
+from debug import timer
 
 def get_stencil_coefficients(stencil_size, derivative_order):
     if stencil_size % 2 == 0:
