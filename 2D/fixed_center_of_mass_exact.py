@@ -78,20 +78,9 @@ class Hamiltonian:
         # FIXME: add a knob for tuning dv
         # Potential function selection
         self._Vfunc = partial(potentials.soft_coulomb, dv=0.5)
+        extent = potentials.extents_soft_coulomb(self.mu12)
 
         #self._Vfunc = potentials.borgis
-
-        # Grid setup; sensible defaults in the unscaled (lab) frame
-        # FIXME: need to pick extents based on mu12 and the observed
-        # size of the BO wavepackets. Then we need to take [1/NR,
-        # Rmax, Rmax] as the defaults.
-        # 1  0.1 8
-        #
-        #
-        #
-        #
-        # N.B.: extents are now and forevermore in units of Bohr
-        extent = np.array([1/args.NR, 4, 4])
         #extent = np.array([3.5, 7, 7])
 
         if hasattr(args, "extent") and args.extent is not None:
@@ -200,7 +189,7 @@ class Hamiltonian:
                 isinstance(member := super().__getattribute__(key), np.ndarray)):
                 member.flags.writeable = False
 
-        self._hash = self._make_hash()
+        self._hash = np.random.randint(2**63)  # self._make_hash()
         self._locked = True
 
     def V(self, R, r, gamma):

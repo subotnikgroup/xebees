@@ -1,4 +1,4 @@
-
+from scipy.interpolate import PchipInterpolator
 from constants import *
 import numpy as np
 
@@ -14,10 +14,35 @@ import numpy as np
 #     Q1, Q2 = charges
 #     ...
 
+# You can use _extents_log_factory to build a function defining the
+# appropriate extents in R for your potential as well. simply pass 3
+# empirically determined array-likes containing 1) the reduced mass,
+# 2) the lower bound, and 3) the upper bound. The resulting function
+# will monotonically log-interpolate between them. See
+# extents_soft_coulumb below.
 
-# Soft Coulomb potential; dv control softness. G is a term of
-# dimension mass that effectively scales the competition between
-# kinetic and potential energy
+def _extents_log_factory(mu12ref, lower, upper, decimals=3):
+    if any(np.diff(mu12ref) < 0):
+        raise RuntimeError("mu12ref must be monotonic")
+
+    def extents(mu12):
+        if mu12 < mu12ref[0] or mu12 > mu12ref[-1]:
+            print(f"WARNING: extents may be invalid for mu12 outside of [{mu12ref[0]},{mu12ref[-1]}]")
+
+        logm = np.log(mu12)
+        logmref = np.log(mu12ref)
+
+        up_int = PchipInterpolator(logmref, upper)
+        lo_int = PchipInterpolator(logmref, lower)
+
+        lo = lo_int(logm)
+        up = up_int(logm)
+
+        return np.round([lo, up, up], decimals)
+    return extents
+
+
+# Soft Coulomb potential; dv controls softness
 def soft_coulomb(R, r1e, r2e, charges, dv=0.5):
     Q1, Q2 = charges
 
@@ -25,6 +50,13 @@ def soft_coulomb(R, r1e, r2e, charges, dv=0.5):
     V2  = -Q2      / np.sqrt(r2e**2 + dv**2)
     VN  =  Q1 * Q2 / np.sqrt(R**2   + dv**2)
     return V1 + V2 + VN
+
+extents_soft_coulomb = _extents_log_factory(
+    [1e1, 1e2, 1e3, 1e4, 1e5],
+    [0.3, 0.3, 0.5, 1,   1],
+    [8,   5,   4,   3.5, 3.5]
+)
+
 
 def soft_coulomb_barrier(R, r1e, r2e, charges, dv=0.5, G=1, p=2, A=1):
     Q1, Q2 = charges
