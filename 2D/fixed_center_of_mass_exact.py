@@ -65,6 +65,11 @@ class Hamiltonian:
         self.J   = args.J
         self.dtype = np.float64 if self.J == 0 else np.complex128
 
+        # print("Waring: All masses scaled to AMU!")
+        # self.m_e *= AMU_TO_AU
+        # self.M_1 *= AMU_TO_AU
+        # self.M_2 *= AMU_TO_AU
+
         self.mu   = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
@@ -73,6 +78,8 @@ class Hamiltonian:
         # FIXME: add a knob for tuning dv
         # Potential function selection
         self._Vfunc = partial(potentials.soft_coulomb, dv=0.5)
+
+        #self._Vfunc = potentials.borgis
 
         # Grid setup; sensible defaults in the unscaled (lab) frame
         # FIXME: need to pick extents based on mu12 and the observed
@@ -85,6 +92,8 @@ class Hamiltonian:
         #
         # N.B.: extents are now and forevermore in units of Bohr
         extent = np.array([1/args.NR, 4, 4])
+        #extent = np.array([3.5, 7, 7])
+
         if hasattr(args, "extent") and args.extent is not None:
             extent = args.extent
 
@@ -97,10 +106,6 @@ class Hamiltonian:
         R_range = R_range_lab * self.aa
         r_max   = r_max_lab   / self.aa
 
-        #R_range = R_range_lab / self.aa
-        #r_max   = r_max_lab   * self.aa
-
-        
         print("extent in unscaled coords:", R_range_lab, r_max_lab)
         print("extent in   scaled coords:", R_range, r_max)
 
@@ -209,14 +214,9 @@ class Hamiltonian:
         r1e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
         r2e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
 
-        #r1e2 = (r/aa)**2 + (R*aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
-        #r2e2 = (r/aa)**2 + (R*aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
-
-        
         r1e = np.sqrt(np.where(r1e2 < 0, 0, r1e2))
         r2e = np.sqrt(np.where(r2e2 < 0, 0, r2e2))
         
-        #return self._Vfunc(R*aa, r1e, r2e, (self.g_1, self.g_2))
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
 
@@ -364,7 +364,9 @@ class Hamiltonian:
                     )
                 ) + np.diag(self.Vgrid[i].ravel())
             )
-            Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
+            val, vec = np.linalg.eigh(Hel)
+            Ad_n[i] = val[:Nelec]
+            U_n[i]  = vec[:,:Nelec]
 
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
@@ -671,6 +673,12 @@ if __name__ == '__main__':
     if args.evecs:
         np.savez_compressed(args.evecs, guess=evecs, H=H)
         print("Wrote eigenvectors to", args.evecs)
+
+    if args.bo_spectrum:
+        e_bo = np.sort(Ad_vn.flatten())
+        ex = e_approx[1] - e_approx[0]
+        bo = e_bo[1] - e_bo[0]
+        print("exact, bo, error:", ex, bo, (bo-ex)/ex)
 
     if args.save is not None:
         if all(conv):
