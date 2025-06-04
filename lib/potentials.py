@@ -108,6 +108,12 @@ def borgis(R_au, r1e_au, r2e_au, charges, asymmetry_param=1):
 
     return KCALMOLE_TO_HARTREE * (D1 + D2 + VN)
 
+extents_borgis = _extents_log_factory(
+    np.array([1,   2,   10,  50,  1e2, 1e3, 1e4, 1e5])*AMU_TO_AU,
+             [3.5, 3.5, 3.9, 4.3, 4.0, 4.1, 4.3, 4.3],
+             [7,   6,   5.6, 5.5, 5.4, 5.2, 5.0, 5.0]
+)
+
 
 # Same potential as the one we used in 1-D; charges added, but only
 # "seen" by electron. Adapted from Borgis

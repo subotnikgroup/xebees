@@ -81,7 +81,7 @@ class Hamiltonian:
         extent = potentials.extents_soft_coulomb(self.mu12)
 
         #self._Vfunc = potentials.borgis
-        #extent = np.array([3.5, 7, 7])
+        #extent = potentials.extents_borgis(self.mu12)
 
         if hasattr(args, "extent") and args.extent is not None:
             extent = args.extent
