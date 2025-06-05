@@ -22,7 +22,6 @@ sys.path.append(os.path.abspath("lib"))
 
 import linalg_helper as lib
 #from pyscf import lib
-
 import potentials
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
@@ -172,7 +171,7 @@ class Hamiltonian:
             preconditioner = args.preconditioner
 
         builder, self.preconditioner, self.make_guess = {
-            'BO':     (self._build_preconditioner_BO, self._preconditioner_BO,    self._make_guess_BO),
+            'BO':     (self._build_preconditioner_BO_threaded, self._preconditioner_BO,    self._make_guess_BO),
             'V1':     (self._build_preconditioner_V1, self._preconditioner_V1,    self._make_guess_V1),
             'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
             'power':  (lambda: (self.diag,),          self._preconditioner_power, self._make_guess_naive),
@@ -229,13 +228,13 @@ class Hamiltonian:
 
         #  ∂²/∂γ² + 1/4 terms
         keg  = jnp.einsum('Rrg,gh->Rrh', xa, self.ddg2)  # ∂²/∂γ²
-        ke += (self.Rinv2 + self.rinv2)*keg              # (1/R^2 + 1/r^2) (∂²/∂γ²)
+        ke += (self.Rinv2 + self.rinv2)*keg              # (1/R² + 1/r²) (∂²/∂γ²)
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
-            keg  = -xa*self.J**2                                       # -J^2
-            keg += 2j*self.J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  # -J^2 + 2J ∂/∂γ
-            ke += self.Rinv2*keg                                 # (1/R^2)*(J^2 - 2J ∂/∂γ)
+            keg  = xa*self.J**2                                        #  J²
+            keg += 2j*self.J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  #  J² + 2Ji ∂/∂γ
+            ke -= self.Rinv2*keg                                 # (1/R²)*(J² - 2Ji ∂/∂γ)
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
@@ -255,8 +254,8 @@ class Hamiltonian:
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
-            ke += self.Rinv2 * (
-                -self.J**2 +
+            ke = self.Rinv2 * (
+                self.J**2 +
                 2*self.J*np.ones(self.shape) * np.diag(self.ddg1)[None, None, :]
             )
 
@@ -301,7 +300,7 @@ class Hamiltonian:
                 -1/(2*self.mu)*(
                     np.kron(self.ddr2, np.eye(Ng)) +
                     np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
-                    np.eye(Nr*Ng)/4/R**2 +
+                    # np.eye(Nr*Ng)/4/R**2 +  # already in ddR2 (in Hbo)
                     0 if self.J == 0 else (
                         np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
                         self.J**2/R**2*np.eye(Ng*Nr)
@@ -331,7 +330,7 @@ class Hamiltonian:
         return (Ad_vn, Ad_n)  # energies are Ad_vn[v,n]
 
 
-    def _build_preconditioner_BO(self):
+    def _build_preconditioner_BO_threaded(self):
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
@@ -346,23 +345,20 @@ class Hamiltonian:
                 -1/(2*self.mu)*(
                     np.kron(self.ddr2, np.eye(Ng)) +
                     np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
-                    np.eye(Nr*Ng)/4/R**2 +
+                    np.eye(Nr*Ng)/4/R**2 +  # already in ddR2 (in Hbo)
                     0 if self.J == 0 else (
                         np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
                         self.J**2/R**2*np.eye(Ng*Nr)
                     )
                 ) + np.diag(self.Vgrid[i].ravel())
             )
-            val, vec = np.linalg.eigh(Hel)
-            Ad_n[i] = val[:Nelec]
-            U_n[i]  = vec[:,:Nelec]
+            Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
 
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
                 ex.map(diag_Hel, range(NR)),
                 total=NR, desc="Building U_n"))
-
         phase_match(U_n)
 
         def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn, U_v=U_v):
@@ -373,7 +369,59 @@ class Hamiltonian:
             list(tqdm(
                 ex.map(diag_Hbo, range(Nelec)),
                 total=Nelec, desc="Building U_v"))
+        phase_match(U_v)
 
+        Ad_vn.flags.writeable = False
+        Ad_n.flags.writeable  = False
+        U_n.flags.writeable   = False
+        U_v.flags.writeable   = False
+
+        return (Ad_vn, U_n, U_v, Ad_n)
+
+    # this is slower than the explicitly threaded version above when building
+    def _build_preconditioner_BO(self):
+        print("Building U_n")
+        NR, Nr, Ng = self.shape
+        Nelec = Nr*Ng
+
+        # Hel = -1/2/μ · Te + V
+        # Te  =  ∂²/∂r² + (1/r²)(∂²/∂γ² + 1/4) + (1/R²)(∂²/∂γ²) - (1/R²)(J² + J2i(∂/∂γ))
+        Hel = np.empty((NR, Nelec, Nelec), self.dtype)
+
+        # build *bare* Te first
+        # R-independent terms: ∂²/∂r² + (1/r²)(∂²/∂γ² + 1/4)
+        Hel[:] = (
+            np.kron(self.ddr2, np.eye(Ng)) +                           # ∂²/∂r²
+            np.kron(np.diag(1 / self.r**2), self.ddg2 + np.eye(Ng)/4)  # (1/r²) (∂²/∂γ² + 1/4)
+        )
+
+        # R-dependent terms: (1/R²)(∂²/∂γ²)
+        Rinv2 = (1 / self.R**2)[:, None, None]  # (1/R²), ready for broadcasting
+        Hel += Rinv2 * np.kron(np.eye(Nr), self.ddg2)[None]  # 1/R² (∂²/∂γ²)
+
+        # J terms: -(1/R²)(J² + J2i(∂/∂γ))
+        if self.J != 0:
+            Hel -= (
+                np.kron(self.J * np.eye(Nr), 2j * self.ddg1) [None, :, :] + # J2i(∂/∂γ)
+                (self.J**2 * np.eye(Nelec))[None] # J²
+            )  * Rinv2  # -(1/R²)
+
+        Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
+        Hel[:, np.arange(Nelec), np.arange(Nelec)] +=(  # extract diagonal at every R
+            np.reshape(self.Vgrid, (NR, Nelec))         # + V
+        )
+        Ad_n, U_n = np.linalg.eigh(Hel)
+        phase_match(U_n)
+
+        NR, Nelec, _ = Hel.shape
+
+        print("Building U_v")
+        Hbo = np.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+        Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
+        Hbo[:, np.arange(NR), np.arange(NR)] += Ad_n.T # V_n
+
+        Ad_vn, U_v = np.linalg.eigh(Hbo)
+        Ad_vn = Ad_vn.T
         phase_match(U_v)
 
         Ad_vn.flags.writeable = False
@@ -396,7 +444,7 @@ class Hamiltonian:
 
         return guesses
 
-    #@partial(jax.jit, static_argnums=0)
+    @partial(jax.jit, static_argnums=0)
     def _preconditioner_BO(self, dx, e, x0):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         diagd = Ad_vn - (e - 1e-5)
@@ -406,9 +454,14 @@ class Hamiltonian:
 
         dx_ = dx.reshape((NR, Nelec))
 
-        dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
-        tr_vn = dx_vn / diagd
-        tr_ = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
+        #dx_vn = jnp.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
+        #tr_vn = dx_vn / diagd
+        #tr_ = jnp.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
+
+        tr_ = jnp.einsum(
+            'Rij,jRq,qj,jmq,mpj,mp->Ri',
+            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, optimize=True
+        )
 
         return tr_.ravel()
 
@@ -455,7 +508,6 @@ class Hamiltonian:
                            ):
             for n in range(Nr):
                 current = (Ri, slice(None), ji, n)
-
                 if Ri == 0 and ji == 0:   # consistent, arbitrary reference phase
                     reference = (0, 0, 0, 0)
                 elif ji > 0:              # line up with previous j
