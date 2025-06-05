@@ -96,10 +96,15 @@ def eye_lazy(N):
 
 def phase_match(U):
     N, _, M = U.shape
+
+    if np.iscomplexobj(U):
+        phase = lambda x, y: np.exp(-1j*np.angle(np.dot(x.conj(), y)))
+    else:
+        phase = lambda x, y: np.sign(np.dot(x, y))
+
     for i in range(1,N):
         for n in range(M):
-            if np.sum(U[i,:,n] * U[i-1,:,n]) < 0:
-                U[i,:,n] *= -1.0
+            U[i,:,n] *= phase(U[i-1,:,n], U[i,:,n])
 
         
 @timer
