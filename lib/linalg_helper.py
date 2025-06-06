@@ -218,7 +218,9 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
 # but the eigenvectors x0 might not be strictly orthogonal
             xt = None
             x0len = len(x0)
-            xt = _qr(x0, dot, lindep)[0]
+
+            xt = list((np.linalg.qr(np.array(x0).T)[0]).T)
+
             if len(xt) != x0len:
                 log.warn('QR decomposition removed %d vectors.', x0len - len(xt))
                 if len(xt) == 0:
@@ -234,7 +236,9 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
             max_dx_last = 1e9
             tic("fresh start")
         elif len(xt) > 1:
-            xt = _qr(xt, dot, lindep)[0]
+            # xt = _qr(xt, dot, lindep)[0]
+            xt = list((np.linalg.qr(np.array(xt).T)[0]).T)
+
             xt = xt[:40]  # 40 trial vectors at most
             tic("QR")
 
@@ -248,7 +252,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
 
 
         tic("build xs,ax")
-        
+
         if dtype is None:
             try:
                 dtype = numpy.result_type(axt[0], xt[0])
@@ -269,7 +273,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         xt = axt = None
         w, v = scipy.linalg.eigh(heff[:space,:space])
         tic("eigh(subspace)")
-        
+
         e = w[:nroots]
         v = v[:,:nroots]
         conv = numpy.zeros(e.size, dtype=bool)
@@ -277,7 +281,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
             elast, conv_last = _sort_elast(elast, conv_last, vlast, v, log)
 
         tic("sort_elast")
-            
+
         if elast is None:
             de = e
         elif elast.size != e.size:
@@ -288,7 +292,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
             de = e - elast
 
         tic("de")
-        
+
         x0 = None
         x0 = _gen_x0(v, xs)
         ax0 = _gen_x0(v, ax)
@@ -297,7 +301,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         xt = ax0 - e[:,None]*x0
         dx_norm = scipy.linalg.norm(xt, axis=1)
         conv = (np.abs(de) < tol) & (dx_norm < toloose)
-        
+
         for k, ek in enumerate(e):
             if conv[k] and not conv_last[k]:
                 log.debug('root %d converged  |r|= %4.3g  e= %s  max|de|= %4.3g',
@@ -305,7 +309,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         ax0 = None
         max_dx_norm = max(dx_norm)
         ide = numpy.argmax(abs(de))
-        
+
         if all(conv):
             log.debug('converged %d %d  |r|= %4.3g  e= %s  max|de|= %4.3g',
                       icyc, space, max_dx_norm, e, de[ide])
@@ -323,13 +327,13 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
             conv = dx_norm < toloose
             break
 
-        
+
         tic("norms")
         xt = np.stack([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
         tic("preconditioner")
         norms = scipy.linalg.norm(xt, axis=1)
         xt /= norms[:, None]
-                
+
         tic("lindep")
         xt, norm_min = _normalize_xt_(xt, xs, lindep)
         tic("normalize")
