@@ -295,19 +295,7 @@ class Hamiltonian:
         Ad_vn = np.zeros((NR, Nelec))
 
         def diag_Hel(i, Ad_n=Ad_n):
-            R = self.R[i]
-            Hel = (
-                -1/(2*self.mu)*(
-                    np.kron(self.ddr2, np.eye(Ng)) +
-                    np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
-                    # np.eye(Nr*Ng)/4/R**2 +  # already in ddR2 (in Hbo)
-                    0 if self.J == 0 else (
-                        np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
-                        self.J**2/R**2*np.eye(Ng*Nr)
-                    )
-                ) + np.diag(self.Vgrid[i].ravel())
-            )
-            Ad_n[i] = np.linalg.eigvalsh(Hel)
+            Ad_n[i] = np.linalg.eigvalsh(self.build_Hel(i))
 
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
@@ -340,19 +328,7 @@ class Hamiltonian:
         Ad_vn = np.zeros((NR, Nelec))
 
         def diag_Hel(i, Ad_n=Ad_n, U_n=U_n):
-            R = self.R[i]
-            Hel = (
-                -1/(2*self.mu)*(
-                    np.kron(self.ddr2, np.eye(Ng)) +
-                    np.kron((1/R**2 + np.diag(1/self.r**2)), self.ddg2) +
-                    np.eye(Nr*Ng)/4/R**2 +  # already in ddR2 (in Hbo)
-                    0 if self.J == 0 else (
-                        np.kron(2j*self.J*np.eye(Nr), self.ddg1) -
-                        self.J**2/R**2*np.eye(Ng*Nr)
-                    )
-                ) + np.diag(self.Vgrid[i].ravel())
-            )
-            Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
+            Ad_n[i], U_n[i] = np.linalg.eigh(self.build_Hel(i))
 
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
@@ -378,25 +354,30 @@ class Hamiltonian:
 
         return (Ad_vn, U_n, U_v, Ad_n)
 
-    # this is slower than the explicitly threaded version above when building
-    def _build_preconditioner_BO(self):
-        print("Building U_n")
+    def build_Hel(self, Ridx=None):
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
+        if Ridx is None:
+            Ridx = np.arange(NR)
+        else:
+            Ridx = np.atleast_1d(Ridx)
+            NR,  = Ridx.shape
+
         # Hel = -1/2/μ · Te + V
-        # Te  =  ∂²/∂r² + (1/r²)(∂²/∂γ² + 1/4) + (1/R²)(∂²/∂γ²) - (1/R²)(J² + J2i(∂/∂γ))
+        # Te  =  ∂²/∂r² + 1/4/r² + (1/r²)(∂²/∂γ²) + (1/R²)(∂²/∂γ²) - (1/R²)(J² + J2i(∂/∂γ))
+        # N.B. self.ddr2 = ∂²/∂r² + 1/4/r²
         Hel = np.empty((NR, Nelec, Nelec), self.dtype)
 
         # build *bare* Te first
         # R-independent terms: ∂²/∂r² + (1/r²)(∂²/∂γ² + 1/4)
         Hel[:] = (
-            np.kron(self.ddr2, np.eye(Ng)) +                           # ∂²/∂r²
-            np.kron(np.diag(1 / self.r**2), self.ddg2 + np.eye(Ng)/4)  # (1/r²) (∂²/∂γ² + 1/4)
+            np.kron(self.ddr2, np.eye(Ng)) +            # ∂²/∂r² + 1/4/r²
+            np.kron(np.diag(1 / self.r**2), self.ddg2)  # (1/r²)(∂²/∂γ²)
         )
 
         # R-dependent terms: (1/R²)(∂²/∂γ²)
-        Rinv2 = (1 / self.R**2)[:, None, None]  # (1/R²), ready for broadcasting
+        Rinv2 = (1 / self.R**2)[Ridx, None, None]  # (1/R²), ready for broadcasting
         Hel += Rinv2 * np.kron(np.eye(Nr), self.ddg2)[None]  # 1/R² (∂²/∂γ²)
 
         # J terms: -(1/R²)(J² + J2i(∂/∂γ))
@@ -408,8 +389,20 @@ class Hamiltonian:
 
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
         Hel[:, np.arange(Nelec), np.arange(Nelec)] +=(  # extract diagonal at every R
-            np.reshape(self.Vgrid, (NR, Nelec))         # + V
+            np.reshape(self.Vgrid[Ridx], (NR, Nelec))         # + V
         )
+
+        return np.squeeze(Hel)
+
+    # FIXME: why is this slower than the explicitly threaded version above?
+    def _build_preconditioner_BO(self):
+        print("Building U_n")
+        NR, Nr, Ng = self.shape
+        Nelec = Nr*Ng
+
+        Hel = self.build_Hel()
+        #FIXME: something like this enhances preconditioning...
+        #Hel[:] += -np.kron(np.diag(1 / self.r**2), np.eye(Ng)/4)/2/self.mu
         Ad_n, U_n = np.linalg.eigh(Hel)
         phase_match(U_n)
 
