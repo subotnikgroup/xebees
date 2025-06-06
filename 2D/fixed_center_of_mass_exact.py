@@ -64,23 +64,28 @@ class Hamiltonian:
         self.J   = args.J
         self.dtype = np.float64 if self.J == 0 else np.complex128
 
-        # print("Waring: All masses scaled to AMU!")
-        # self.m_e *= AMU_TO_AU
-        # self.M_1 *= AMU_TO_AU
-        # self.M_2 *= AMU_TO_AU
+        # Potential function selection
+        if not hasattr(args, "potential"):
+            args.extent = 'soft_coulomb'
+
+        if args.potential == 'borgis' or args.potential == 'original':
+            print(f"Waring: All masses scaled to AMU for {args.potential}!")
+            self.m_e *= AMU_TO_AU
+            self.M_1 *= AMU_TO_AU
+            self.M_2 *= AMU_TO_AU
 
         self.mu   = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.aa   = np.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
+        self._Vfunc, extent_func = {
+            'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb),
+            'borgis': (potentials.borgis, potentials.extents_borgis),
+            }[args.potential]
 
-        # FIXME: add a knob for tuning dv
-        # Potential function selection
-        self._Vfunc = partial(potentials.soft_coulomb, dv=0.5)
-        extent = potentials.extents_soft_coulomb(self.mu12)
+        extent = extent_func(self.mu12)
 
-        #self._Vfunc = potentials.borgis
-        #extent = potentials.extents_borgis(self.mu12)
+        print(f"Potential: {args.potential}")
 
         if hasattr(args, "extent") and args.extent is not None:
             extent = args.extent
@@ -632,11 +637,15 @@ def parse_args():
     parser.add_argument('-R', dest="NR", metavar="NR", default=101, type=int)
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=400, type=int)
     parser.add_argument('-g', dest="Ng", metavar="Ng", default=158, type=int)
+    parser.add_argument('--potential', choices=['soft_coulomb', 'borgis'],
+                        default='soft_coulomb')
     parser.add_argument('--extent', metavar="X", action=NumpyArrayAction,
-                        nargs=3, help="Rmin Rmax rmax, but set automatically")
+                        nargs=3, help="Rmin Rmax rmax, in Bohr "
+                        "(typically set automatically)")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
-    parser.add_argument('--preconditioner', default="naive", type=str)
+    parser.add_argument('--preconditioner', choices=['naive', 'V1', 'BO'],
+                        default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
