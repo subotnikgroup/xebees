@@ -20,31 +20,16 @@
 # Heavily modified by Vale Cofer-Shabica <vale.cofershabica@gmail.com>, 2025
 #
 
-
-'''
-Extension to scipy.linalg module
-'''
-
-import sys
-import inspect
-import warnings
-from functools import reduce
-import numpy
 import numpy as np
-import scipy.linalg
+
+from sys import stdout
 from pyscf.lib import logger
-from pyscf.lib import numpy_helper
-from pyscf.lib import misc
-from pyscf.lib.exceptions import LinearDependencyError
-from pyscf import __config__
 
 from debug import timer, timer_ctx
-
 from time import perf_counter
 
-DAVIDSON_LINDEP = getattr(__config__, 'lib_linalg_helper_davidson_lindep', 1e-14)
-DSOLVE_LINDEP = getattr(__config__, 'lib_linalg_helper_dsolve_lindep', 1e-13)
-MAX_MEMORY = getattr(__config__, 'lib_linalg_helper_davidson_max_memory', 4000)  # 4GB
+class LinearDependenceError(RuntimeError):
+    pass
 
 # def _fill_heff_hermitian(heff, xs, ax, xt, axt, dot):
 #     nrow = len(axt)
@@ -57,14 +42,12 @@ MAX_MEMORY = getattr(__config__, 'lib_linalg_helper_davidson_max_memory', 4000) 
 #         heff[i,i] = dot(xt[ip].conj(), axt[ip]).real
 
 #     for i in range(row0):
-#         axi = numpy.asarray(ax[i])
+#         axi = np.asarray(ax[i])
 #         for jp, j in enumerate(range(row0, row1)):
 #             heff[j,i] = dot(xt[jp].conj(), axi)
 #             heff[i,j] = heff[j,i].conj()
 #         axi = None
 #     return heff
-
-
 
 def _fill_heff_hermitian(heff, xs, ax, xt, axt, _):
     nrow = len(axt)
@@ -91,7 +74,6 @@ def _fill_heff_hermitian(heff, xs, ax, xt, axt, _):
 
 
 __lasttime = None
-
 def tic(label):
     global __lasttime
     printing = False
@@ -101,8 +83,8 @@ def tic(label):
 
 
 def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
-              lindep=DAVIDSON_LINDEP, max_memory=MAX_MEMORY,
-              dot=numpy.dot, callback=None,
+              lindep=1e-14, max_memory=8000,
+              dot=np.dot, callback=None,
               nroots=1, verbose=logger.WARN,
               tol_residual=None,
               fill_heff=_fill_heff_hermitian
@@ -163,9 +145,9 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
     Examples:
 
     >>> from pyscf import lib
-    >>> a = numpy.random.random((10,10))
+    >>> a = np.random.random((10,10))
     >>> a = a + a.T
-    >>> aop = lambda xs: [numpy.dot(a,x) for x in xs]
+    >>> aop = lambda xs: [np.dot(a,x) for x in xs]
     >>> precond = lambda dx, e, x0: dx/(a.diagonal()-e)
     >>> x0 = a[0]
     >>> e, c = lib.davidson(aop, x0, precond, nroots=2)
@@ -176,10 +158,10 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
     if isinstance(verbose, logger.Logger):
         log = verbose
     else:
-        log = logger.Logger(misc.StreamObject.stdout, verbose)
+        log = logger.Logger(stdout, verbose)
 
     if tol_residual is None:
-        toloose = numpy.sqrt(tol)
+        toloose = np.sqrt(tol)
     else:
         toloose = tol_residual
     log.debug1('tol %g  toloose %g', tol, toloose)
@@ -189,7 +171,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
 
     if callable(x0):  # lazy initialization to reduce memory footprint
         x0 = x0()
-    if isinstance(x0, numpy.ndarray) and x0.ndim == 1:
+    if isinstance(x0, np.ndarray) and x0.ndim == 1:
         x0 = [x0]
     #max_cycle = min(max_cycle, x0[0].size)
     max_space = max_space + (nroots-1) * 4
@@ -201,7 +183,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
     fresh_start = True
     e = None
     v = None
-    conv = numpy.zeros(nroots, dtype=bool)
+    conv = np.zeros(nroots, dtype=bool)
     emin = None
 
     tic("init")
@@ -255,14 +237,14 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
 
         if dtype is None:
             try:
-                dtype = numpy.result_type(axt[0], xt[0])
+                dtype = np.result_type(axt[0], xt[0])
             except IndexError:
                 raise LinearDependenceError('No linearly independent basis found '
                                             'by the diagonalization solver.')
         if heff is None:  # Lazy initialize heff to determine the dtype
-            heff = numpy.empty((max_space+nroots,max_space+nroots), dtype=dtype)
+            heff = np.empty((max_space+nroots,max_space+nroots), dtype=dtype)
         else:
-            heff = numpy.asarray(heff, dtype=dtype)
+            heff = np.asarray(heff, dtype=dtype)
 
         elast = e
         vlast = v
@@ -271,12 +253,12 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         fill_heff(heff, xs, ax, xt, axt, dot)
         tic("fill_heff")
         xt = axt = None
-        w, v = scipy.linalg.eigh(heff[:space,:space])
+        w, v = np.linalg.eigh(heff[:space,:space])
         tic("eigh(subspace)")
 
         e = w[:nroots]
         v = v[:,:nroots]
-        conv = numpy.zeros(e.size, dtype=bool)
+        conv = np.zeros(e.size, dtype=bool)
         if not fresh_start:
             elast, conv_last = _sort_elast(elast, conv_last, vlast, v, log)
 
@@ -299,7 +281,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         tic("_gen_x0(v,)")
 
         xt = ax0 - e[:,None]*x0
-        dx_norm = scipy.linalg.norm(xt, axis=1)
+        dx_norm = np.linalg.norm(xt, axis=1)
         conv = (np.abs(de) < tol) & (dx_norm < toloose)
 
         for k, ek in enumerate(e):
@@ -308,7 +290,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
                           k, dx_norm[k], ek, de[k])
         ax0 = None
         max_dx_norm = max(dx_norm)
-        ide = numpy.argmax(abs(de))
+        ide = np.argmax(abs(de))
 
         if all(conv):
             log.debug('converged %d %d  |r|= %4.3g  e= %s  max|de|= %4.3g',
@@ -331,7 +313,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         tic("norms")
         xt = np.stack([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
         tic("preconditioner")
-        norms = scipy.linalg.norm(xt, axis=1)
+        norms = np.linalg.norm(xt, axis=1)
         xt /= norms[:, None]
 
         tic("lindep")
@@ -378,7 +360,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         # required number of roots.
         log.warn(f'Not enough eigenvectors (len(x0)={len(x0)}, nroots={nroots})')
 
-    return numpy.asarray(conv), e, x0
+    return np.asarray(conv), e, x0
 
 
 def make_diag_precond(diag, level_shift=1e-3):
@@ -398,8 +380,8 @@ def _qr(xs, dot, lindep=1e-14):
     xs = (r.T).dot(qs)
     '''
     nvec = len(xs)
-    xs = qs = numpy.array(xs, copy=True)
-    rmat = numpy.eye(nvec, order='F', dtype=xs.dtype)
+    xs = qs = np.array(xs, copy=True)
+    rmat = np.eye(nvec, order='F', dtype=xs.dtype)
 
     nv = 0
     for i in range(nvec):
@@ -409,23 +391,23 @@ def _qr(xs, dot, lindep=1e-14):
             xi -= qs[j] * prod
             rmat[:,nv] -= rmat[:,j] * prod
         innerprod = dot(xi.conj(), xi).real
-        norm = numpy.sqrt(innerprod)
+        norm = np.sqrt(innerprod)
         if innerprod > lindep:
             qs[nv] = xi/norm
             rmat[:nv+1,nv] /= norm
             nv += 1
-    return qs[:nv], numpy.linalg.inv(rmat[:nv,:nv])
+    return qs[:nv], np.linalg.inv(rmat[:nv,:nv])
 
 
 def _outprod_to_subspace(v, xs):
-    v = numpy.asarray(v)
+    v = np.asarray(v)
     ndim = v.ndim
     if ndim == 1:
         v = v[:, None]  # shape: (space, 1)
     # FIXME: the majority of the time is spent building xs; move to
     # everything as arrays for big speedup
-    xs = numpy.asarray(xs)  # shape: (space, n)
-    x0 = numpy.einsum('ik,ij->kj', v, xs, optimize=True)
+    xs = np.asarray(xs)  # shape: (space, n)
+    x0 = np.einsum('ik,ij->kj', v, xs, optimize=True)
 
     if ndim == 1:
         x0 = x0[0]
@@ -441,15 +423,15 @@ def _sort_elast(elast, conv_last, vlast, v, log):
     of the current iterations.
     '''
     head, nroots = vlast.shape
-    ovlp = abs(numpy.dot(v[:head].conj().T, vlast))
-    mapping = numpy.argmax(ovlp, axis=1)
-    found = numpy.any(ovlp > .5, axis=1)
+    ovlp = abs(np.dot(v[:head].conj().T, vlast))
+    mapping = np.argmax(ovlp, axis=1)
+    found = np.any(ovlp > .5, axis=1)
 
     if log.verbose >= logger.DEBUG:
-        ordering_diff = (mapping != numpy.arange(len(mapping)))
+        ordering_diff = (mapping != np.arange(len(mapping)))
         if any(ordering_diff & found):
             log.debug('Old state -> New state')
-            for i in numpy.where(ordering_diff)[0]:
+            for i in np.where(ordering_diff)[0]:
                 log.debug('  %3d     ->   %3d ', mapping[i], i)
 
     conv = conv_last[mapping]
@@ -469,7 +451,7 @@ def _normalize_xt_(xt, xs, threshold):
     xt -= (proj.T @ xs)  # shape: (nvecs, ndim)
 
     # Compute norms
-    norms = scipy.linalg.norm(xt, axis=1)
+    norms = np.linalg.norm(xt, axis=1)
     keep = norms**2 > threshold
 
     # Normalize and select
@@ -481,6 +463,3 @@ def _normalize_xt_(xt, xs, threshold):
 
     # FIXME: I have no idea why, but list() doubles our performance
     return list(xt), norms.min()
-
-
-LinearDependenceError = LinearDependencyError
