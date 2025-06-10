@@ -7,6 +7,7 @@ import numpy as np
 from numpy.fft import fft, fftshift
 from scipy.integrate import simpson
 from scipy.sparse.linalg import lobpcg
+from scipy.interpolate import RegularGridInterpolator
 
 from sys import stderr
 import argparse as ap
@@ -41,7 +42,7 @@ class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
         'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
-        'axes', 'dtype',
+        'axes', 'dtype', 'args',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
         'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
@@ -171,21 +172,25 @@ class Hamiltonian:
 
         self.diag = self.buildDiag()
 
-        preconditioner = 'naive'
-        if hasattr(args, "preconditioner"):
-            preconditioner = args.preconditioner
 
+        if not hasattr(args, "preconditioner"):
+            args.preconditioner = 'naive'        
+
+        self.args = args
+            
         builder, self.preconditioner, self.make_guess = {
             'BO':     (self._build_preconditioner_BO_threaded, self._preconditioner_BO,    self._make_guess_BO),
+            'BO-int': (self._build_preconditioner_BO_interp, self._preconditioner_BO_interp,    self._make_guess_BO_interp),
             'V1':     (self._build_preconditioner_V1, self._preconditioner_V1,    self._make_guess_V1),
             'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
             'power':  (lambda: (self.diag,),          self._preconditioner_power, self._make_guess_naive),
             'diagbo': (self._build_preconditioner_BO, self._preconditioner_naive, self._make_guess_BO),
             None:     (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
-            }[preconditioner]
+            }[args.preconditioner]
 
-        with timer_ctx(f"Build preconditioner {preconditioner}"):
+        with timer_ctx(f"Build preconditioner {args.preconditioner}"):
             self._preconditioner_data = builder()
+
 
         # Lock the object and protect arrays from writing
         for key in self.__slots__:
@@ -406,7 +411,7 @@ class Hamiltonian:
         Nelec = Nr*Ng
 
         Hel = self.build_Hel()
-        #FIXME: something like this enhances preconditioning...
+        #FIXME: something like this enhanced preconditioning in some cases, maybe?
         #Hel[:] += -np.kron(np.diag(1 / self.r**2), np.eye(Ng)/4)/2/self.mu
         Ad_n, U_n = np.linalg.eigh(Hel)
         phase_match(U_n)
@@ -446,11 +451,20 @@ class Hamiltonian:
     def _preconditioner_BO(self, dx, e, x0):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         diagd = Ad_vn - (e - 1e-5)
-
         NR, Nr, Ng = self.shape
-        Nelec = Nr*Ng
-
-        dx_ = dx.reshape((NR, Nelec))
+        dx_ = dx.reshape((NR, Nr*Ng))
+        
+        # YOLO: truncate it
+        # Nelec=(3*Nr*Ng)//4
+        
+        # Ad_vn_t = Ad_vn[:, :Nelec]
+        # diagd_t = Ad_vn_t - (e - 1e-5)
+        # U_n_t = U_n[:,:, :Nelec]
+        # U_v_t = U_v[:Nelec, :, :]
+        # tr_ = jnp.einsum(
+        #     'Rij,jRq,qj,jmq,mpj,mp->Ri',
+        #     U_n_t, U_v_t, 1.0 / diagd_t, U_v_t, U_n_t, dx_, optimize=True
+        # )
 
         #dx_vn = jnp.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
         #tr_vn = dx_vn / diagd
@@ -460,10 +474,33 @@ class Hamiltonian:
             'Rij,jRq,qj,jmq,mpj,mp->Ri',
             U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, optimize=True
         )
-
+        
         return tr_.ravel()
 
 
+    def _preconditioner_BO_interp(self, dx, e, x0):
+        return
+    
+    def _build_preconditioner_BO_interp(self):
+        args = self.args
+        args.NR //= 2
+        args.Nr //= 2
+        args.Ng //= 2
+        args.preconditioner='BO'
+        print(args)
+        H = Hamiltonian(args)
+        Ad_vn, U_n, U_v, *_ = H._preconditioner_data
+        print(Ad_vn.shape, U_n.shape, U_v.shape)
+        
+        exit()
+        # pseudo-code...
+        # H_coarse = 
+        
+        return
+    
+    def _make_guess_BO_interp(self, min_guess):
+        return
+    
     def _build_preconditioner_V1(self, min_guess=4):
         NR, Nr, Ng = self.shape
         dg = self.g[1] - self.g[0]
@@ -644,7 +681,7 @@ def parse_args():
                         "(typically set automatically)")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
-    parser.add_argument('--preconditioner', choices=['naive', 'V1', 'BO'],
+    parser.add_argument('--preconditioner', choices=['naive', 'V1', 'BO', 'BO-int'],
                         default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)

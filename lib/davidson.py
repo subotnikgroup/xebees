@@ -60,8 +60,7 @@ def get_interpolated_guess(guessfile, axes, method='cubic'):
         print("Loaded guess from", guessfile)
         return guess
     else:
-        print("Attempting to interpolate guess on new grid!")
-        #FIXME don't build interpolator for each guess!!
+        print("Attempting to interpolate guesses on new grid!")
         return list(map(
             lambda g: interpolate_guess(g.reshape(H.shape),
                                         H.axes,
