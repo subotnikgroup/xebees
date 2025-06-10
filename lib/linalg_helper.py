@@ -28,66 +28,11 @@ from pyscf.lib import logger
 from debug import timer, timer_ctx
 from time import perf_counter
 
-class LinearDependenceError(RuntimeError):
-    pass
-
-# def _fill_heff_hermitian(heff, xs, ax, xt, axt, dot):
-#     nrow = len(axt)
-#     row1 = len(ax)
-#     row0 = row1 - nrow
-#     for ip, i in enumerate(range(row0, row1)):
-#         for jp, j in enumerate(range(row0, i)):
-#             heff[i,j] = dot(xt[ip].conj(), axt[jp])
-#             heff[j,i] = heff[i,j].conj()
-#         heff[i,i] = dot(xt[ip].conj(), axt[ip]).real
-
-#     for i in range(row0):
-#         axi = np.asarray(ax[i])
-#         for jp, j in enumerate(range(row0, row1)):
-#             heff[j,i] = dot(xt[jp].conj(), axi)
-#             heff[i,j] = heff[j,i].conj()
-#         axi = None
-#     return heff
-
-def _fill_heff_hermitian(heff, xs, ax, xt, axt, _):
-    nrow = len(axt)
-    row1 = len(ax)
-    row0 = row1 - nrow
-    #print("fill_heff", nrow, row1, row0)
-
-    # Stack active blocks
-    XT = np.stack(xt)         # shape (nrow, dim)
-    AXT = np.stack(axt)       # shape (nrow, dim)
-
-    # === Block A: lower-right (nrow x nrow), symmetric ===
-    block_A = XT @ AXT.T.conj()  # shape (nrow, nrow)
-    heff[row0:row1, row0:row1] = (block_A + block_A.T.conj()) / 2
-
-    # === Block B: off-diagonal (row0 x nrow), symmetric ===
-    if row0 > 0:
-        AX = np.stack(ax[:row0])  # shape (row0, dim)
-        block_B = XT @ AX.T.conj()  # shape (nrow, row0)
-        heff[row0:row1, :row0] = block_B
-        heff[:row0, row0:row1] = block_B.T.conj()
-
-    return heff
-
-
-__lasttime = None
-def tic(label):
-    global __lasttime
-    printing = False
-    if printing and __lasttime:
-        print(f"EEElapsed {label}", perf_counter() - __lasttime)
-    __lasttime = perf_counter()
-
-
 def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
               lindep=1e-14, max_memory=8000,
               dot=np.dot, callback=None,
               nroots=1, verbose=logger.WARN,
               tol_residual=None,
-              fill_heff=_fill_heff_hermitian
               ):
     r'''Davidson diagonalization method to solve  a c = e c.  Ref
     [1] E.R. Davidson, J. Comput. Phys. 17 (1), 87-94 (1975).
@@ -250,7 +195,8 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         vlast = v
         conv_last = conv
 
-        fill_heff(heff, xs, ax, xt, axt, dot)
+        fill_heff_hermitian(heff, np.asarray(ax), np.asarray(xt), np.asarray(axt))
+
         tic("fill_heff")
         xt = axt = None
         w, v = np.linalg.eigh(heff[:space,:space])
@@ -276,9 +222,9 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         tic("de")
 
         x0 = None
-        x0 = _gen_x0(v, xs)
-        ax0 = _gen_x0(v, ax)
-        tic("_gen_x0(v,)")
+        x0 = gen_x0(np.asarray(v), np.asarray(xs))
+        ax0 = gen_x0(np.asarray(v), np.asarray(ax))
+        tic("gen_x0(v,)")
 
         xt = ax0 - e[:,None]*x0
         dx_norm = np.linalg.norm(xt, axis=1)
@@ -317,7 +263,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=12,
         xt /= norms[:, None]
 
         tic("lindep")
-        xt, norm_min = _normalize_xt_(xt, xs, lindep)
+        xt, norm_min = normalize_xt(xt, xs, lindep)
         tic("normalize")
         log.debug('davidson %d %d  |r|= %4.3g  e= %s  max|de|= %4.3g  lindep= %4.3g',
                   icyc, space, max_dx_norm, e, de[ide], norm_min)
@@ -399,21 +345,11 @@ def _qr(xs, dot, lindep=1e-14):
     return qs[:nv], np.linalg.inv(rmat[:nv,:nv])
 
 
-def _outprod_to_subspace(v, xs):
-    v = np.asarray(v)
-    ndim = v.ndim
-    if ndim == 1:
-        v = v[:, None]  # shape: (space, 1)
-    # FIXME: the majority of the time is spent building xs; move to
-    # everything as arrays for big speedup
-    xs = np.asarray(xs)  # shape: (space, n)
+def gen_x0(v, xs):
+    v = np.atleast_2d(v)
     x0 = np.einsum('ik,ij->kj', v, xs, optimize=True)
 
-    if ndim == 1:
-        x0 = x0[0]
-    return x0
-
-_gen_x0 = _outprod_to_subspace
+    return np.squeeze(x0)
 
 
 def _sort_elast(elast, conv_last, vlast, v, log):
@@ -441,9 +377,9 @@ def _sort_elast(elast, conv_last, vlast, v, log):
     return e, conv
 
 
-def _normalize_xt_(xt, xs, threshold):
-    '''Projects out existing basis vectors xs. Also checks whether the precond
-    function is ill-conditioned'''
+def normalize_xt(xt, xs, threshold):
+    """Projects out existing basis vectors xs. Also checks whether the precond
+    function is ill-conditioned"""
 
     # Project: xt_mat -= xs.T @ (xs @ xt_mat.T)
     # In detail: subtract each xi's projection onto the span of xs
@@ -461,5 +397,35 @@ def _normalize_xt_(xt, xs, threshold):
         return [], 1
     xt /= norms[:, None]
 
-    # FIXME: I have no idea why, but list() doubles our performance
-    return list(xt), norms.min()
+    return xt, norms.min()
+
+
+def fill_heff_hermitian(heff, ax, xt, axt):
+    # Stack active blocks
+    nrow = len(axt)
+    row1 = len(ax)
+    row0 = row1 - nrow
+
+    # === Block A: lower-right (nrow x nrow), symmetric ===
+    block_A = xt @ axt.T.conj()  # shape (nrow, nrow)
+    heff[row0:row1, row0:row1] = (block_A + block_A.T.conj()) / 2
+
+    # === Block B: off-diagonal (row0 x nrow), symmetric ===
+    block_B = xt @ ax[:row0].T.conj()  # shape (nrow, row0)
+    heff[row0:row1, :row0] = block_B
+    heff[:row0, row0:row1] = block_B.T.conj()
+
+    return heff
+
+
+class LinearDependenceError(RuntimeError):
+    pass
+
+
+__lasttime = None
+def tic(label):
+    global __lasttime
+    printing = False
+    if printing and __lasttime:
+        print(f"EEElapsed {label}", perf_counter() - __lasttime)
+    __lasttime = perf_counter()
