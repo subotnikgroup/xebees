@@ -100,7 +100,6 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
     >>> len(e)
     2
     """
-    tic("start")
     if isinstance(verbose, logger.Logger):
         log = verbose
     else:
@@ -120,30 +119,43 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
     max_cycle = min(max_cycle, Nelem)
     max_space = max_space + (nroots-1) * 4
     # max_space*2 for holding ax and xs, nroots*2 for holding axt and xt
-    log.debug1(f"max_cycle %d  max_space %d  max_memory %d Nelem %d",
-               max_cycle, max_space, max_memory, Nelem)
+    required_memory = (max_space*2 + nroots*3) * x0[0].nbytes / 1024 / 1024
+    allow_resize = False
+    if  required_memory > max_memory:
+        log.warn("Required space is %d MB, but max memory is %d MB. "
+                 "Resizing will be allowed, but the performance penalty may be significant.", required_memory, max_memory)
+        allow_resize = True
+    log.debug1("max_cycle %d  max_space %d  Nelem %d  required_memory %dMB  max_memory %dMB  resize %s",
+               max_cycle, max_space, Nelem, required_memory, max_memory, allow_resize)
+
+    # FIXME: aop(x0) is a wasted calculation
+    dtype = np.result_type(aop(x0), x0)
+    log.debug("dtype=%s", dtype)
     
-    dtype = None
-    heff = None
+    if allow_resize:
+        xs = np.empty((0, Nelem), dtype=dtype)
+        ax = np.empty((0, Nelem), dtype=dtype)
+    else:
+        xs = np.empty((max_space, Nelem), dtype=dtype)
+        ax = np.empty((max_space, Nelem), dtype=dtype)
+
     fresh_start = True
+    heff = np.zeros((max_space,max_space), dtype=dtype)
     e = None
     v = None
     conv = np.zeros(nroots, dtype=bool)
     emin = None
 
-    tic("init")
     for icyc in range(max_cycle):
-        tic("cycle start")
         if fresh_start:
-            xs = [] #np.empty((0, Nelem))
-            ax = np.empty((0, Nelem))  # np.zeros((max_space, Nelem))
-            
-            space = 0
-            x0len = len(x0)
+            if allow_resize:
+                xs = np.empty((0, Nelem))
+                ax = np.empty((0, Nelem))
 
+            space = 0
             xt = _qr(x0)
 
-            if len(xt) != x0len:
+            if len(xt) != len(x0):
                 log.warn('QR decomposition removed %d vectors.', x0len - len(xt))
                 if len(xt) == 0:
                     if icyc == 0:
@@ -153,53 +165,34 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
                                'Unless loosen the lindep tolerance (current value '
                                f'{lindep}), the diagonalization solver is not able '
                                'to find eigenvectors.')
-                    raise LinearDependenceError(msg)
+                    raise RuntimeError(msg)
 
-            tic("fresh start")
         elif len(xt) > 1:
             xt = _qr(xt)[:max_trial]
-            tic("QR")
 
         axt = aop(xt)
-        tic("aop(xt)")
-        for k, xi in enumerate(xt):
-            xs.append(xt[k])
 
-        #xs = np.concat((ax,xt))
-        ax = np.concat((ax, axt))
-        space += len(xt)
-
-        tic("build xs,ax")
-
-        if dtype is None:
-            try:
-                dtype = np.result_type(axt[0], xt[0])
-            except IndexError:
-                raise LinearDependenceError('No linearly independent basis found '
-                                            'by the diagonalization solver.')
-        if heff is None:  # Lazy initialize heff to determine the dtype
-            heff = np.empty((max_space+nroots,max_space+nroots), dtype=dtype)
+        if allow_resize:
+            xs = np.concat((xs, xt))
+            ax = np.concat((ax, axt))
         else:
-            heff = np.asarray(heff, dtype=dtype)
+            nxt = len(xt)
+            xs[space:space+nxt] = xt
+            ax[space:space+nxt] = axt
+        space += len(xt)
 
         elast = e
         vlast = v
         conv_last = conv
 
-        fill_heff_hermitian(heff, ax[:space], xt, axt)
+        _fill_heff_hermitian(heff, ax[:space], xt, axt)
 
-        tic("fill_heff")
-        #xt = axt = None
-        w, v = np.linalg.eigh(heff[:space,:space])
-        tic("eigh(subspace)")
-
-        e = w[:nroots]
+        e, v = np.linalg.eigh(heff[:space,:space])
+        e = e[:nroots]
         v = v[:,:nroots]
 
         if not fresh_start:
-            elast, conv_last = sort_elast(elast, conv_last, vlast, v, log)
-
-        tic("sort_elast")
+            elast, conv_last = _sort_elast(elast, conv_last, vlast, v, log)
 
         if elast is None:
             de = e
@@ -210,12 +203,8 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         else:
             de = e - elast
 
-        tic("de")
-
-        x0 = gen_x0(v, np.asarray(xs[:space]))
-        tic("gen_x0(v,)")
-
-        xt = gen_x0(v, ax[:space]) - e[:,None]*x0
+        x0 = _from_subspace(v, xs[:space])
+        xt = _from_subspace(v, ax[:space]) - e[:,None]*x0
         dx_norm = np.linalg.norm(xt, axis=1)
         conv = (np.abs(de) < tol) & (dx_norm < tol_residual)
 
@@ -231,8 +220,6 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
                       icyc, space, dx_norm.max(), e, de[ide])
             break
 
-        tic("covergence")
-
         # remove subspace linear dependencies
         keep = ~conv & (dx_norm > np.sqrt(lindep))
         xt = xt[keep]
@@ -243,26 +230,22 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
             conv = dx_norm < tol_residual
             break
 
-        tic("norms")
         xt = np.asarray([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
-        tic("preconditioner")
         norms = np.linalg.norm(xt, axis=1)
         xt /= norms[:, None]
 
-        tic("lindep")
-        xt, norm_min = _orthonormalize_xt(xt, np.asarray(xs[:space]), lindep)
-        tic("orthonormalize")
+        xt, norm_min = _orthonormalize_xt(xt, xs[:space], lindep)
         log.debug('davidson %d %d  |r|=%4.3g  e=%s  max|de|=%4.3g  lindep=%4.3g',
                   icyc, space, dx_norm.max(), e, de[ide], norm_min)
 
+        if icyc > 3 and de[0] > 0 and abs(de[0]) > tol:
+            log.debug("Hold up! Why isn't de monotonic??? %s", de)
+
         fresh_start = space+nroots > max_space
 
-        tic("end")
         # useful, e.g., for restarts
         if callable(callback):
             callback(locals())
-
-        tic("callback")
 
     foundroots, _ = x0.shape
     if foundroots < nroots:
@@ -291,14 +274,14 @@ def _qr(X):
     return (np.linalg.qr(X.T)[0]).T
 
 
-def gen_x0(v, xs):
+def _from_subspace(v, xs):
     v = np.atleast_2d(v)
     x0 = np.einsum('ik,ij->kj', v, xs, optimize=True)
 
     return x0
 
 
-def sort_elast(elast, conv_last, vlast, v, log):
+def _sort_elast(elast, conv_last, vlast, v, log):
     """
     Eigenstates may be flipped during the Davidson iterations.  Reorder the
     eigenvalues of last iteration to make them comparable to the eigenvalues
@@ -346,7 +329,7 @@ def _orthonormalize_xt(xt, xs, threshold):
     return xt, norms.min()
 
 
-def fill_heff_hermitian(heff, ax, xt, axt):
+def _fill_heff_hermitian(heff, ax, xt, axt):
     # Stack active blocks
     nrow = len(axt)
     row1 = len(ax)
@@ -362,16 +345,3 @@ def fill_heff_hermitian(heff, ax, xt, axt):
     heff[:row0, row0:row1] = block_B.T.conj()
 
     return heff
-
-
-class LinearDependenceError(RuntimeError):
-    pass
-
-
-__lasttime = None
-def tic(label):
-    global __lasttime
-    printing = False
-    if printing and __lasttime:
-        print(f"EEElapsed {label}", perf_counter() - __lasttime)
-    __lasttime = perf_counter()
