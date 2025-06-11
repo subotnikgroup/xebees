@@ -1,5 +1,7 @@
 import xp
+# we use numpy and the interpolator for the extents; which have no need of GPU
 from scipy.interpolate import PchipInterpolator
+import numpy as np
 from constants import *
 
 ## README ##
@@ -22,15 +24,15 @@ from constants import *
 # extents_soft_coulumb below.
 
 def _extents_log_factory(mu12ref, lower, upper, decimals=3):
-    if any(xp.diff(mu12ref) < 0):
+    if any(np.diff(mu12ref) < 0):
         raise RuntimeError("mu12ref must be monotonic")
 
     def extents(mu12):
         if mu12 < mu12ref[0] or mu12 > mu12ref[-1]:
             print(f"WARNING: extents may be invalid for mu12 outside of [{mu12ref[0]},{mu12ref[-1]}]")
 
-        logm = xp.log(mu12)
-        logmref = xp.log(mu12ref)
+        logm = np.log(mu12)
+        logmref = np.log(mu12ref)
 
         up_int = PchipInterpolator(logmref, upper)
         lo_int = PchipInterpolator(logmref, lower)
@@ -38,7 +40,7 @@ def _extents_log_factory(mu12ref, lower, upper, decimals=3):
         lo = lo_int(logm)
         up = up_int(logm)
 
-        return xp.round([lo, up, up], decimals)
+        return np.round([lo, up, up], decimals)
     return extents
 
 
