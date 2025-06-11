@@ -156,7 +156,7 @@ def KE_FFT_cutoff(N, dx, ecut=xp.inf, mass=None, bare=False, cyclic=True, order=
         bi[i-1]= 1
         if order==2:
             bk = k2cut*xp.fft.fft(bi)
-        else if order==1:
+        elif order==1:
             bk = (0+1j)*kgrid*xp.fft.fft(bi)
         else:
             raise RuntimeError("order=1,2 are only valid orders")
