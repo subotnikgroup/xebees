@@ -731,7 +731,8 @@ if __name__ == '__main__':
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
         conv, e_approx, evecs = lib.davidson1(
-            lambda xs: [ H @ x for x in xs ],
+            # FIXME: need to batch Hx
+            lambda xs: np.asarray([ H @ x for x in xs ]),
             guess,
             #H.diag,
             H.preconditioner,
