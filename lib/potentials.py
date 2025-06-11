@@ -1,6 +1,6 @@
+import xp
 from scipy.interpolate import PchipInterpolator
 from constants import *
-import numpy as np
 
 ## README ##
 # Functions in this file should be defined to take the *lab-frame*
@@ -22,15 +22,15 @@ import numpy as np
 # extents_soft_coulumb below.
 
 def _extents_log_factory(mu12ref, lower, upper, decimals=3):
-    if any(np.diff(mu12ref) < 0):
+    if any(xp.diff(mu12ref) < 0):
         raise RuntimeError("mu12ref must be monotonic")
 
     def extents(mu12):
         if mu12 < mu12ref[0] or mu12 > mu12ref[-1]:
             print(f"WARNING: extents may be invalid for mu12 outside of [{mu12ref[0]},{mu12ref[-1]}]")
 
-        logm = np.log(mu12)
-        logmref = np.log(mu12ref)
+        logm = xp.log(mu12)
+        logmref = xp.log(mu12ref)
 
         up_int = PchipInterpolator(logmref, upper)
         lo_int = PchipInterpolator(logmref, lower)
@@ -38,7 +38,7 @@ def _extents_log_factory(mu12ref, lower, upper, decimals=3):
         lo = lo_int(logm)
         up = up_int(logm)
 
-        return np.round([lo, up, up], decimals)
+        return xp.round([lo, up, up], decimals)
     return extents
 
 
@@ -46,9 +46,9 @@ def _extents_log_factory(mu12ref, lower, upper, decimals=3):
 def soft_coulomb(R, r1e, r2e, charges, dv=0.5):
     Q1, Q2 = charges
 
-    V1  = -Q1      / np.sqrt(r1e**2 + dv**2)
-    V2  = -Q2      / np.sqrt(r2e**2 + dv**2)
-    VN  =  Q1 * Q2 / np.sqrt(R**2   + dv**2)
+    V1  = -Q1      / xp.sqrt(r1e**2 + dv**2)
+    V2  = -Q2      / xp.sqrt(r2e**2 + dv**2)
+    VN  =  Q1 * Q2 / xp.sqrt(R**2   + dv**2)
     return V1 + V2 + VN
 
 extents_soft_coulomb = _extents_log_factory(
@@ -73,7 +73,7 @@ def soft_coulomb_exp(R, r1e, r2e, charges, dv=0.5, G=1, p=2, alpha=0.15, A=2):
     V1 =  -Q1      / (r1e**p + dv**p)**(1/p)
     V2 =  -Q2      / (r2e**p + dv**p)**(1/p)
     VN =   Q1 * Q2 / (R**p   + dv**p)**(1/p)
-    Vexp = Q1 * Q2 * A * np.exp(-R/alpha) / R**2
+    Vexp = Q1 * Q2 * A * xp.exp(-R/alpha) / R**2
     return G*(V1 + V2 + VN + Vexp)
 
 
@@ -98,18 +98,18 @@ def borgis(R_au, r1e_au, r2e_au, charges, asymmetry_param=1):
     D, d, a, c = 60, 0.95, 2.52, asymmetry_param
     A, B, C = 2.32e5, 3.15, 2.31e4
 
-    D2 = Q2 * D * (     np.exp(-2*a * (r2e-d))
-                    - 2*np.exp(  -a * (r2e-d))
+    D2 = Q2 * D * (     xp.exp(-2*a * (r2e-d))
+                    - 2*xp.exp(  -a * (r2e-d))
                     + 1)
-    D1 = Q1 * D * c**2 * (     np.exp(-(2*a/c) * (r1e-d))
-                           - 2*np.exp(-(  a/c) * (r1e-d)))
+    D1 = Q1 * D * c**2 * (     xp.exp(-(2*a/c) * (r1e-d))
+                           - 2*xp.exp(-(  a/c) * (r1e-d)))
 
-    VN = Q1 * Q2 * (A*np.exp(-B*R) - C/R**6)
+    VN = Q1 * Q2 * (A*xp.exp(-B*R) - C/R**6)
 
     return KCALMOLE_TO_HARTREE * (D1 + D2 + VN)
 
 extents_borgis = _extents_log_factory(
-    np.array([1,   2,   10,  50,  1e2, 1e3, 1e4, 1e5])*AMU_TO_AU,
+    xp.array([1,   2,   10,  50,  1e2, 1e3, 1e4, 1e5])*AMU_TO_AU,
              [3.5, 3.5, 3.9, 4.3, 4.0, 4.1, 4.3, 4.3],
              [7,   6,   5.6, 5.5, 5.4, 5.2, 5.0, 5.0]
 )
@@ -127,10 +127,10 @@ def original(R_au, r1e_au, r2e_au, charges, asymmetry_param=1):
     D, d, a, c = 60, 0.95, 2.52, asymmetry_param
     A, B, C = 2.32e5, 3.15, 2.31e4
 
-    D2 = Q2 * D * (    np.exp(-2*a * (r2e-d))
-                   - 2*np.exp(  -a * (r2e-d))
+    D2 = Q2 * D * (    xp.exp(-2*a * (r2e-d))
+                   - 2*xp.exp(  -a * (r2e-d))
                    + 1)
-    D1 = Q1 * D * c**2 * (    np.exp(-(2*a/c) * (r1e-d))
-                          - 2*np.exp(-(  a/c) * (r1e-d)))
+    D1 = Q1 * D * c**2 * (    xp.exp(-(2*a/c) * (r1e-d))
+                          - 2*xp.exp(-(  a/c) * (r1e-d)))
 
-    return KCALMOLE_TO_HARTREE * (D1 + D2 + (A*np.exp(-B*R) - C/R**6))
+    return KCALMOLE_TO_HARTREE * (D1 + D2 + (A*xp.exp(-B*R) - C/R**6))
