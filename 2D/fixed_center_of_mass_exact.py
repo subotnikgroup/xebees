@@ -8,6 +8,7 @@
 # memory concerns
 # vectorize phase_matching
 # nvtx and timing annotations
+# batchify all preconditionders
 
 import jax
 import jax.numpy as jnp
