@@ -222,33 +222,32 @@ class Hamiltonian:
     def __matmul__(self, other):
         return self.Hx(other).reshape(other.shape)
 
-    # FIXME: can likely speed these up using opt_einsum for constant arguments
     @partial(jax.jit, static_argnums=0)
     def Hx(self, x):
-        return self.Tx(x) + x.ravel() * self.Vgrid.ravel()
+        return self.Tx(x) + (x.reshape((-1,) + self.shape) * self.Vgrid).reshape(x.shape)
 
     @partial(jax.jit, static_argnums=0)
     def Tx(self, x):
-        xa = x.reshape(self.shape)
-        ke = np.zeros(self.shape)
+        xa = x.reshape((-1,) + self.shape)
+        ke = jnp.empty_like(xa)
 
         # Radial Kinetic Energy terms, easy
-        ke += jnp.einsum('Rrg,RS->Srg', xa, self.ddR2)  # ∂²/∂R²
-        ke += jnp.einsum('Rrg,rs->Rsg', xa, self.ddr2)  # ∂²/∂r²
+        ke += jnp.einsum('BRrg,RS->BSrg', xa, self.ddR2)  # ∂²/∂R²
+        ke += jnp.einsum('BRrg,rs->BRsg', xa, self.ddr2)  # ∂²/∂r²
 
         #  ∂²/∂γ² + 1/4 terms
-        keg  = jnp.einsum('Rrg,gh->Rrh', xa, self.ddg2)  # ∂²/∂γ²
-        ke += (self.Rinv2 + self.rinv2)*keg              # (1/R² + 1/r²) (∂²/∂γ²)
+        keg  = jnp.einsum('BRrg,gh->BRrh', xa, self.ddg2)  # ∂²/∂γ²
+        ke += (self.Rinv2 + self.rinv2)*keg                # (1/R² + 1/r²) (∂²/∂γ²)
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
-            keg  = xa*self.J**2                                        #  J²
-            keg += 2j*self.J*jnp.einsum('Rrg,gh->Rrh', xa, self.ddg1)  #  J² + 2Ji ∂/∂γ
+            keg  = xa*self.J**2                                          #  J²
+            keg += 2j*self.J*jnp.einsum('BRrg,gh->BRrh', xa, self.ddg1)  #  J² + 2Ji ∂/∂γ
             ke -= self.Rinv2*keg                                 # (1/R²)*(J² - 2Ji ∂/∂γ)
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
-        return ke.ravel()
+        return ke.reshape(x.shape)
 
 
     # N.B. This section *must* be kept in sync with Hx above
@@ -731,8 +730,7 @@ if __name__ == '__main__':
     # wavefunctions in case we need to do a restart.
     with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
         conv, e_approx, evecs = lib.davidson1(
-            # FIXME: need to batch Hx
-            lambda xs: np.asarray([ H @ x for x in xs ]),
+            H.Hx,
             guess,
             #H.diag,
             H.preconditioner,
