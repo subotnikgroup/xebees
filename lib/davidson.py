@@ -1,3 +1,6 @@
+import xp
+# N.B. 2D and later code uses numpy for loading and interpolating. 1D
+# code also uses numpy for building and applying the preconditioner
 import numpy as np
 from os import sysconf
 from debug import timer, timer_ctx
@@ -61,14 +64,15 @@ def get_interpolated_guess(guessfile, axes, method='cubic'):
         return guess
     else:
         print("Attempting to interpolate guesses on new grid!")
-        return list(map(
+        return xp.asarray(list(map(
             lambda g: interpolate_guess(g.reshape(H.shape),
                                         H.axes,
                                         axes,
                                         method=method).ravel(),
-            guess))
+            guess)))
 
 
+# FIXME: Interpolator only works on CPU with numpy backend; explore GPU options?
 def interpolate_guess(psi, axes, axes_target, method='cubic'):
      # Create interpolator
     interpolator = RegularGridInterpolator(axes, psi, method=method,
@@ -88,7 +92,7 @@ def interpolate_guess(psi, axes, axes_target, method='cubic'):
 
 def eye_lazy(N):
     for i in range(N):
-        col = np.zeros(N)
+        col = xp.zeros(N)
         col[i] = 1.0
         yield col
 
@@ -96,10 +100,10 @@ def eye_lazy(N):
 def phase_match(U):
     N, _, M = U.shape
 
-    if np.iscomplexobj(U):
-        phase = lambda x, y: np.exp(-1j*np.angle(np.dot(x.conj(), y)))
+    if xp.iscomplexobj(U):
+        phase = lambda x, y: xp.exp(-1j*xp.angle(xp.dot(x.conj(), y)))
     else:
-        phase = lambda x, y: np.sign(np.dot(x, y))
+        phase = lambda x, y: xp.sign(xp.dot(x, y))
 
     for i in range(1,N):
         for n in range(M):

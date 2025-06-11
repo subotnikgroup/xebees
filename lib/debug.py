@@ -1,10 +1,10 @@
-import numpy as np
+import xp
 from time import perf_counter as time
 from functools import wraps
 from contextlib import contextmanager
 
 def prms(A,B, label=""):
-    print(label, np.sqrt(np.mean((A-B)**2)))
+    print(label, xp.sqrt(xp.mean((A-B)**2)))
 
 @contextmanager
 def timer_ctx(label=""):
