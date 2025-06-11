@@ -3,7 +3,6 @@ import jax
 import jax.numpy as jnp
 jax.config.update('jax_enable_x64', True)
 
-import numpy as np
 from numpy.fft import fft, fftshift
 from scipy.integrate import simpson
 from scipy.sparse.linalg import lobpcg
@@ -20,6 +19,9 @@ import operator
 
 import os, sys 
 sys.path.append(os.path.abspath("lib"))
+
+import xp
+import numpy as np  # only use this for reading and writing objects
 
 import linalg_helper as lib
 #from pyscf import lib
@@ -63,7 +65,7 @@ class Hamiltonian:
         self.g_2 = args.g_2
 
         self.J   = args.J
-        self.dtype = np.float64 if self.J == 0 else np.complex128
+        self.dtype = xp.float64 if self.J == 0 else xp.complex128
 
         # Potential function selection
         if not hasattr(args, "potential"):
@@ -75,10 +77,10 @@ class Hamiltonian:
             self.M_1 *= AMU_TO_AU
             self.M_2 *= AMU_TO_AU
 
-        self.mu   = np.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
+        self.mu   = xp.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
-        self.aa   = np.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
+        self.aa   = xp.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
         self._Vfunc, extent_func = {
             'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb),
             'borgis': (potentials.borgis, potentials.extents_borgis),
@@ -108,10 +110,10 @@ class Hamiltonian:
         # to have Nr-1 points, but the confusion this would cause
         # would be intolerable. This behavior is required because we
         # have terms that go like 1/r.
-        self.r     = np.linspace(r_max    /args.Nr, r_max, args.Nr)
-        self.r_lab = np.linspace(r_max_lab/args.Nr, r_max_lab, args.Nr)
-        self.R     = np.linspace(*R_range,     args.NR)
-        self.R_lab = np.linspace(*R_range_lab, args.NR)
+        self.r     = xp.linspace(r_max    /args.Nr, r_max, args.Nr)
+        self.r_lab = xp.linspace(r_max_lab/args.Nr, r_max_lab, args.Nr)
+        self.R     = xp.linspace(*R_range,     args.NR)
+        self.R_lab = xp.linspace(*R_range_lab, args.NR)
 
         # require Ng to be even
         if args.Ng % 2 != 0:
@@ -120,23 +122,23 @@ class Hamiltonian:
         # N.B.: It is essential that we not include the endpoint in
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
-        self.g = np.linspace(0, 2*np.pi, args.Ng, endpoint=False)
+        self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
 
         self.axes = (self.R, self.r, self.g)
 
-        self.R_grid, self.r_grid, self.g_grid = np.meshgrid(self.R, self.r, self.g, indexing='ij')
+        self.R_grid, self.r_grid, self.g_grid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
         
         self.shape = self.Vgrid.shape
-        self.size = np.prod(self.shape)
+        self.size = xp.prod(self.shape)
 
         dR = self.R[1] - self.R[0]
         dr = self.r[1] - self.r[0]
         dg = self.g[1] - self.g[0]
 
-        self.P  = np.fft.fftshift(np.fft.fftfreq(args.NR, dR)) * 2 * np.pi
-        self.p  = np.fft.fftshift(np.fft.fftfreq(args.Nr, dr)) * 2 * np.pi
-        self.pg = np.fft.fftshift(np.fft.fftfreq(args.Ng, dg)) * 2 * np.pi
+        self.P  = xp.fft.fftshift(xp.fft.fftfreq(args.NR, dR)) * 2 * xp.pi
+        self.p  = xp.fft.fftshift(xp.fft.fftfreq(args.Nr, dr)) * 2 * xp.pi
+        self.pg = xp.fft.fftshift(xp.fft.fftfreq(args.Ng, dg)) * 2 * xp.pi
 
         # FIXME: the representations of the operators we build are
         # 'dumb' in the sense that they do not know how to apply
@@ -152,7 +154,7 @@ class Hamiltonian:
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
         #self.ddR2, _ = KE_Borisov(self.R, bare=True)
-        self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False) + np.diag(1/4/self.R**2)
+        self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False) + xp.diag(1/4/self.R**2)
         self.ddr2, _ = KE_Borisov(self.r, bare=True)
         
         self.ddr_lab2, _ = KE_Borisov(self.r_lab, bare=True)
@@ -195,10 +197,10 @@ class Hamiltonian:
         # Lock the object and protect arrays from writing
         for key in self.__slots__:
             if (hasattr(self, key) and
-                isinstance(member := super().__getattribute__(key), np.ndarray)):
+                isinstance(member := super().__getattribute__(key), xp.ndarray)):
                 member.flags.writeable = False
 
-        self._hash = np.random.randint(2**63)  # self._make_hash()
+        self._hash = xp.random.randint(2**63)  # self._make_hash()
         self._locked = True
 
     def V(self, R, r, gamma):
@@ -207,13 +209,13 @@ class Hamiltonian:
         M_1 = self.M_1
         M_2 = self.M_2
 
-        kappa2 = r*R*np.cos(gamma)
+        kappa2 = r*R*xp.cos(gamma)
 
         r1e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
         r2e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
 
-        r1e = np.sqrt(np.where(r1e2 < 0, 0, r1e2))
-        r2e = np.sqrt(np.where(r2e2 < 0, 0, r2e2))
+        r1e = xp.sqrt(xp.where(r1e2 < 0, 0, r1e2))
+        r2e = xp.sqrt(xp.where(r2e2 < 0, 0, r2e2))
         
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
@@ -252,20 +254,16 @@ class Hamiltonian:
 
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
-        # ke = sum(np.diag(op).reshape(
-        #         [self.shape[i] if i == axis else 1 for i in range(3)]
-        #     )
-        #     for axis, op in [(0, self.ddR2), (1, self.ddr2)])
-        ke  = np.zeros(self.shape)
-        ke += np.diag(self.ddR2)[:, None, None]
-        ke += np.diag(self.ddr2)[None, :, None]
-        ke += (self.Rinv2 + self.rinv2) * np.diag(self.ddg2)[None, None, :]
+        ke  = xp.zeros(self.shape)
+        ke += xp.diag(self.ddR2)[:, None, None]
+        ke += xp.diag(self.ddr2)[None, :, None]
+        ke += (self.Rinv2 + self.rinv2) * xp.diag(self.ddg2)[None, None, :]
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
             ke = self.Rinv2 * (
                 self.J**2 +
-                2*self.J*np.ones(self.shape) * np.diag(self.ddg1)[None, None, :]
+                2*self.J*xp.ones(self.shape) * xp.diag(self.ddg1)[None, None, :]
             )
 
         # mass portion of KE
@@ -280,7 +278,7 @@ class Hamiltonian:
     # @partial(jax.jit, static_argnums=0) fashion will break; not sure why.
 
     def _make_guess_naive(self, min_guess):
-        guesses = np.exp(-(self.Vgrid - np.min(self.Vgrid))**2/27.211).ravel()
+        guesses = xp.exp(-(self.Vgrid - xp.min(self.Vgrid))**2/27.211).ravel()
         return guesses
 
     @partial(jax.jit, static_argnums=0)
@@ -300,11 +298,11 @@ class Hamiltonian:
         print("Building BO spectrum")
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
-        Ad_n  = np.zeros((NR, Nelec))
-        Ad_vn = np.zeros((NR, Nelec))
+        Ad_n  = xp.zeros((NR, Nelec))
+        Ad_vn = xp.zeros((NR, Nelec))
 
         def diag_Hel(i, Ad_n=Ad_n):
-            Ad_n[i] = np.linalg.eigvalsh(self.build_Hel(i))
+            Ad_n[i] = xp.linalg.eigvalsh(self.build_Hel(i))
 
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
@@ -313,8 +311,8 @@ class Hamiltonian:
                 total=NR, desc="Building electronic surfaces"))
 
         def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn):
-            Hbo = -1/(2*self.mu)*(self.ddR2) + np.diag(Ad_n[:,i])
-            Ad_vn[:,i] = np.linalg.eigvalsh(Hbo)
+            Hbo = -1/(2*self.mu)*(self.ddR2) + xp.diag(Ad_n[:,i])
+            Ad_vn[:,i] = xp.linalg.eigvalsh(Hbo)
 
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
@@ -322,7 +320,7 @@ class Hamiltonian:
                 total=Nelec, desc="Building vibrational states"))
 
         for i in range(nroots):
-            with np.printoptions(linewidth=np.inf):
+            with xp.printoptions(linewidth=xp.inf):
                 print(f"BO state {i} spectrum:", Ad_vn[:nroots,i])
         return (Ad_vn, Ad_n)  # energies are Ad_vn[v,n]
 
@@ -331,13 +329,13 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        U_n   = np.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
-        U_v   = np.zeros((Nelec, NR, NR))
-        Ad_n  = np.zeros((NR, Nelec))
-        Ad_vn = np.zeros((NR, Nelec))
+        U_n   = xp.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
+        U_v   = xp.zeros((Nelec, NR, NR))
+        Ad_n  = xp.zeros((NR, Nelec))
+        Ad_vn = xp.zeros((NR, Nelec))
 
         def diag_Hel(i, Ad_n=Ad_n, U_n=U_n):
-            Ad_n[i], U_n[i] = np.linalg.eigh(self.build_Hel(i))
+            Ad_n[i], U_n[i] = xp.linalg.eigh(self.build_Hel(i))
 
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
@@ -347,8 +345,8 @@ class Hamiltonian:
         phase_match(U_n)
 
         def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn, U_v=U_v):
-            Hbo = -1/(2*self.mu)*self.ddR2 + np.diag(Ad_n[:,i])
-            Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
+            Hbo = -1/(2*self.mu)*self.ddR2 + xp.diag(Ad_n[:,i])
+            Ad_vn[:,i], U_v[i] = xp.linalg.eigh(Hbo)
 
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
@@ -368,40 +366,40 @@ class Hamiltonian:
         Nelec = Nr*Ng
 
         if Ridx is None:
-            Ridx = np.arange(NR)
+            Ridx = xp.arange(NR)
         else:
-            Ridx = np.atleast_1d(Ridx)
+            Ridx = xp.atleast_1d(Ridx)
             NR,  = Ridx.shape
 
         # Hel = -1/2/μ · Te + V
         # Te  =  ∂²/∂r² + 1/4/r² + (1/r²)(∂²/∂γ²) + (1/R²)(∂²/∂γ²) - (1/R²)(J² + J2i(∂/∂γ))
         # N.B. self.ddr2 = ∂²/∂r² + 1/4/r²
-        Hel = np.empty((NR, Nelec, Nelec), self.dtype)
+        Hel = xp.empty((NR, Nelec, Nelec), self.dtype)
 
         # build *bare* Te first
         # R-independent terms: ∂²/∂r² + (1/r²)(∂²/∂γ² + 1/4)
         Hel[:] = (
-            np.kron(self.ddr2, np.eye(Ng)) +            # ∂²/∂r² + 1/4/r²
-            np.kron(np.diag(1 / self.r**2), self.ddg2)  # (1/r²)(∂²/∂γ²)
+            xp.kron(self.ddr2, xp.eye(Ng)) +            # ∂²/∂r² + 1/4/r²
+            xp.kron(xp.diag(1 / self.r**2), self.ddg2)  # (1/r²)(∂²/∂γ²)
         )
 
         # R-dependent terms: (1/R²)(∂²/∂γ²)
         Rinv2 = (1 / self.R**2)[Ridx, None, None]  # (1/R²), ready for broadcasting
-        Hel += Rinv2 * np.kron(np.eye(Nr), self.ddg2)[None]  # 1/R² (∂²/∂γ²)
+        Hel += Rinv2 * xp.kron(xp.eye(Nr), self.ddg2)[None]  # 1/R² (∂²/∂γ²)
 
         # J terms: -(1/R²)(J² + J2i(∂/∂γ))
         if self.J != 0:
             Hel -= (
-                np.kron(self.J * np.eye(Nr), 2j * self.ddg1) [None, :, :] + # J2i(∂/∂γ)
-                (self.J**2 * np.eye(Nelec))[None] # J²
+                xp.kron(self.J * xp.eye(Nr), 2j * self.ddg1) [None, :, :] + # J2i(∂/∂γ)
+                (self.J**2 * xp.eye(Nelec))[None] # J²
             )  * Rinv2  # -(1/R²)
 
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
-        Hel[:, np.arange(Nelec), np.arange(Nelec)] +=(  # extract diagonal at every R
-            np.reshape(self.Vgrid[Ridx], (NR, Nelec))         # + V
+        Hel[:, xp.arange(Nelec), xp.arange(Nelec)] +=(  # extract diagonal at every R
+            xp.reshape(self.Vgrid[Ridx], (NR, Nelec))         # + V
         )
 
-        return np.squeeze(Hel)
+        return xp.squeeze(Hel)
 
     # FIXME: why is this slower than the explicitly threaded version above?
     def _build_preconditioner_BO(self):
@@ -411,18 +409,18 @@ class Hamiltonian:
 
         Hel = self.build_Hel()
         #FIXME: something like this enhanced preconditioning in some cases, maybe?
-        #Hel[:] += -np.kron(np.diag(1 / self.r**2), np.eye(Ng)/4)/2/self.mu
-        Ad_n, U_n = np.linalg.eigh(Hel)
+        #Hel[:] += -xp.kron(xp.diag(1 / self.r**2), xp.eye(Ng)/4)/2/self.mu
+        Ad_n, U_n = xp.linalg.eigh(Hel)
         phase_match(U_n)
 
         NR, Nelec, _ = Hel.shape
 
         print("Building U_v")
-        Hbo = np.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+        Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
         Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
-        Hbo[:, np.arange(NR), np.arange(NR)] += Ad_n.T # V_n
+        Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
 
-        Ad_vn, U_v = np.linalg.eigh(Hbo)
+        Ad_vn, U_v = xp.linalg.eigh(Hbo)
         Ad_vn = Ad_vn.T
         phase_match(U_v)
 
@@ -437,10 +435,10 @@ class Hamiltonian:
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         # BO states are like: U_n[:,:,n]
         # vib states are like: U_v[n,:,v]
-        s = int(np.ceil(np.sqrt(min_guess)))
+        s = int(xp.ceil(xp.sqrt(min_guess)))
 
         guesses = [
-            (U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel()
+            (U_n[:,:,n] * U_v[n,:,v,xp.newaxis]).ravel()
             for n in range(s) for v in range(s)
         ]
 
@@ -520,24 +518,24 @@ class Hamiltonian:
         threadctl = ThreadpoolController()
         threadctl.limit(limits=1)
 
-        j_full = fftshift(np.arange(Ng)-Ng//2)
-        COS = np.cos(2*j_full[:,None] * self.g)
-        V1 = simpson(self.Vgrid[:,:,:], dx=dg, axis=-1)/np.pi/2
+        j_full = fftshift(xp.arange(Ng)-Ng//2)
+        COS = xp.cos(2*j_full[:,None] * self.g)
+        V1 = simpson(self.Vgrid[:,:,:], dx=dg, axis=-1)/xp.pi/2
 
         # V1 is V2(j==0)
         # IF debugging
-        #V2 = simpson(self.Vgrid[:,:,None,:] * COS[None,None,:,:], dx=dg, axis=-1)/np.pi/2
-        #assert(np.allclose(V1, V2[:,:,np.squeeze(np.where(j_full == 0)).item()]))
+        #V2 = simpson(self.Vgrid[:,:,None,:] * COS[None,None,:,:], dx=dg, axis=-1)/xp.pi/2
+        #assert(xp.allclose(V1, V2[:,:,xp.squeeze(xp.where(j_full == 0)).item()]))
 
-        Ad = np.zeros((NR, Nr, Ng))
-        U  = np.zeros((NR, Nr, Ng, Nr))
+        Ad = xp.zeros((NR, Nr, Ng))
+        U  = xp.zeros((NR, Nr, Ng, Nr))
 
         def diag_H0(args, Ad=Ad, U=U):
             Ri, (ji, j) = args
             H_el = -(
-                self.ddr2 + np.diag(j**2/self.r**2 + (self.J-j)**2/self.R[Ri]**2)
-            )/2/self.mu + np.diag(V1[Ri])
-            Ad[Ri, :, ji], U[Ri, :, ji, :] = np.linalg.eigh(H_el)
+                self.ddr2 + xp.diag(j**2/self.r**2 + (self.J-j)**2/self.R[Ri]**2)
+            )/2/self.mu + xp.diag(V1[Ri])
+            Ad[Ri, :, ji], U[Ri, :, ji, :] = xp.linalg.eigh(H_el)
 
 
         # Presumably because of gated access, this tops out pretty fast at ~
@@ -573,18 +571,18 @@ class Hamiltonian:
                 #     raise RuntimeError(f"invalid reference: {current(0)}, {reference(0)}")
 
                 # actually match the phase
-                if np.sum(U[current] * U[reference]) < 0:
+                if xp.sum(U[current] * U[reference]) < 0:
                     U[current] *= -1
 
         # yolo
         #oddjs = j_full%2 == 1
         #U[:, :, oddjs, :] = 0
         #U = fft(U, axis=2)
-        #assert(np.mean(np.abs(U.imag)) < 1e-12)
+        #assert(xp.mean(xp.abs(U.imag)) < 1e-12)
         #U = U.real
 
-        U = np.fft.ifft(U, axis=2)
-        assert(np.mean(np.abs(U.imag)) < 1e-12)
+        U = xp.fft.ifft(U, axis=2)
+        assert(xp.mean(xp.abs(U.imag)) < 1e-12)
         U = U.real
 
         Ad.flags.writeable = False
@@ -596,10 +594,10 @@ class Hamiltonian:
         Ad, U, *_ = self._preconditioner_data
         NR, Nr, Ng = self.shape
         # States are U[R, :, Ng//2 + j, n]
-        s = int(np.ceil(np.sqrt(min_guess)))
+        s = int(xp.ceil(xp.sqrt(min_guess)))
         guesses = [
-            np.copy(np.broadcast_to(
-                U[:, :, Ng//2 + j, i][:, :, np.newaxis],
+            xp.copy(xp.broadcast_to(
+                U[:, :, Ng//2 + j, i][:, :, xp.newaxis],
                 self.shape
             )).ravel() for i in range(s) for j in range(s)]
 
@@ -611,9 +609,9 @@ class Hamiltonian:
         Ad, U, *_ = self._preconditioner_data
         diagd = Ad - (e - 1e-5)
 
-        dx_t = np.einsum("Rrgi,Rrg->Rig", U, dx_, optimize=True)
+        dx_t = xp.einsum("Rrgi,Rrg->Rig", U, dx_, optimize=True)
         tr_t = dx_t / diagd
-        tr_ = np.einsum('Rigr,Rig->Rrg', U, tr_t, optimize=True)
+        tr_ = xp.einsum('Rigr,Rig->Rrg', U, tr_t, optimize=True)
 
         return tr_.ravel()
 
@@ -621,7 +619,7 @@ class Hamiltonian:
     # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
     def _make_hash(self):
         def recursive_hash(obj):
-            if isinstance(obj, np.ndarray):
+            if isinstance(obj, xp.ndarray):
                 if obj.flags.writeable:
                     raise ValueError("Refusing to hash mutable array")
                 return hash((obj.shape, obj.dtype, obj.tobytes()))
@@ -672,9 +670,9 @@ def parse_args():
         prog='3body-2D',
         description="computes the lowest k eigenvalues of a 3-body potential in 2D")
 
-    class NumpyArrayAction(ap.Action):
+    class ArrayAction(ap.Action):
         def __call__(self, parser, namespace, values, option_string=None):
-            setattr(namespace, self.dest, np.array(values, dtype=float))
+            setattr(namespace, self.dest, xp.array(values, dtype=float))
 
     parser.add_argument('-k', metavar='num_eigenvalues', default=5, type=int)
     parser.add_argument('-t', metavar="num_threads", default=16, type=int)
@@ -688,7 +686,7 @@ def parse_args():
     parser.add_argument('-g', dest="Ng", metavar="Ng", default=158, type=int)
     parser.add_argument('--potential', choices=['soft_coulomb', 'borgis'],
                         default='soft_coulomb')
-    parser.add_argument('--extent', metavar="X", action=NumpyArrayAction,
+    parser.add_argument('--extent', metavar="X", action=ArrayAction,
                         nargs=3, help="Rmin Rmax rmax, in Bohr "
                         "(typically set automatically)")
     parser.add_argument('--exact_diagonalization', action='store_true')
@@ -708,6 +706,9 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     print(args)
+
+    # you can only select the backend once and it must be before you use any xp functions
+    xp.backend = 'numpy'
 
     threadctl = ThreadpoolController()
     threadctl.limit(limits=args.t)
@@ -741,7 +742,7 @@ if __name__ == '__main__':
 
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
-    with timer_ctx(f"Davidson of size {np.prod(H.shape)}"):
+    with timer_ctx(f"Davidson of size {xp.prod(H.shape)}"):
         conv, e_approx, evecs = lib.davidson1(
             H.Hx,
             guess,
@@ -757,7 +758,7 @@ if __name__ == '__main__':
 
     #guess quality
     #for i, (e,g) in enumerate(zip(evecs, guess)):
-    #    print(i, np.abs(np.vdot(e, g))**2 / (np.vdot(e, e) * np.vdot(g, g)))
+    #    print(i, xp.abs(xp.vdot(e, g))**2 / (xp.vdot(e, e) * xp.vdot(g, g)))
 
     print("Davidson:", e_approx)
     print(conv)
@@ -767,7 +768,7 @@ if __name__ == '__main__':
         print("Wrote eigenvectors to", args.evecs)
 
     if args.bo_spectrum:
-        e_bo = np.sort(Ad_vn.flatten())
+        e_bo = xp.sort(Ad_vn.flatten())
         ex = e_approx[1] - e_approx[0]
         bo = e_bo[1] - e_bo[0]
         print("exact, bo, error:", ex, bo, (bo-ex)/ex)

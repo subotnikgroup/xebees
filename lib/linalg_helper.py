@@ -20,8 +20,7 @@
 # Heavily modified by Vale Cofer-Shabica <vale.cofershabica@gmail.com>, 2025
 #
 
-import numpy as np
-
+import xp
 from sys import stdout
 from pyscf.lib import logger
 
@@ -91,9 +90,9 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
     Examples:
 
     >>> from pyscf import lib
-    >>> a = np.random.random((10,10))
+    >>> a = xp.random.random((10,10))
     >>> a = a + a.T
-    >>> aop = lambda xs: [np.dot(a,x) for x in xs]
+    >>> aop = lambda xs: [xp.dot(a,x) for x in xs]
     >>> precond = lambda dx, e, x0: dx/(a.diagonal()-e)
     >>> x0 = a[0]
     >>> e, c = lib.davidson(aop, x0, precond, nroots=2)
@@ -107,14 +106,14 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         log = logger.Logger(stdout, verbose)
 
     if tol_residual is None:
-        tol_residual = np.sqrt(tol)
+        tol_residual = xp.sqrt(tol)
 
     log.debug1('tol %g  tol_residual %g', tol, tol_residual)
 
     if not callable(precond):
         precond = make_diag_precond(precond)
 
-    x0 = np.atleast_2d(x0)
+    x0 = xp.atleast_2d(x0)
     Nelem = x0[0].size
 
     max_cycle = min(max_cycle, Nelem)
@@ -130,18 +129,18 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
                max_cycle, max_space, Nelem, required_memory, max_memory, allow_resize)
 
     # FIXME: aop(x0) is a wasted calculation
-    dtype = np.result_type(aop(x0), x0)
+    dtype = xp.result_type(aop(x0), x0)
     log.debug("dtype=%s", dtype)
     
     if not allow_resize:
-        xs = np.empty((max_space, Nelem), dtype=dtype)
-        ax = np.empty((max_space, Nelem), dtype=dtype)
+        xs = xp.empty((max_space, Nelem), dtype=dtype)
+        ax = xp.empty((max_space, Nelem), dtype=dtype)
 
     fresh_start = True
-    heff = np.zeros((max_space,max_space), dtype=dtype)
+    heff = xp.zeros((max_space,max_space), dtype=dtype)
     e = None
     v = None
-    conv = np.zeros(nroots, dtype=bool)
+    conv = xp.zeros(nroots, dtype=bool)
     emin = None
 
     _tic("init")
@@ -149,8 +148,8 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         _tic("cycle")
         if fresh_start:
             if allow_resize:
-                xs = np.empty((0, Nelem), dtype=dtype)
-                ax = np.empty((0, Nelem), dtype=dtype)
+                xs = xp.empty((0, Nelem), dtype=dtype)
+                ax = xp.empty((0, Nelem), dtype=dtype)
 
             space = 0
             xt = _qr(x0)
@@ -174,8 +173,8 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         axt = aop(xt)
 
         if allow_resize:
-            xs = np.concat((xs, xt))
-            ax = np.concat((ax, axt))
+            xs = xp.concat((xs, xt))
+            ax = xp.concat((ax, axt))
         else:
             nxt = len(xt)
             xs[space:space+nxt] = xt
@@ -189,7 +188,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         _fill_heff_hermitian(heff, ax[:space], xt, axt)
         _tic("heff")
         
-        e, v = np.linalg.eigh(heff[:space,:space])
+        e, v = xp.linalg.eigh(heff[:space,:space])
         e = e[:nroots]
         v = v[:,:nroots]
         _tic("diag heff")
@@ -209,8 +208,8 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
             
         x0 = _from_subspace(v, xs[:space])
         xt = _from_subspace(v, ax[:space]) - e[:,None]*x0
-        dx_norm = np.linalg.norm(xt, axis=1)
-        conv = (np.abs(de) < tol) & (dx_norm < tol_residual)
+        dx_norm = xp.linalg.norm(xt, axis=1)
+        conv = (xp.abs(de) < tol) & (dx_norm < tol_residual)
         _tic("outer")
         
         for k, ek in enumerate(e):
@@ -218,7 +217,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
                 log.debug('root %d converged  |r|=%4.3g  e=%s  max|de|=%4.3g',
                           k, dx_norm[k], ek, de[k])
         
-        ide = np.argmax(abs(de))
+        ide = xp.argmax(abs(de))
 
         if all(conv):
             log.debug('converged %d %d  |r|=%4.3g  e=%s  max|de|=%4.3g',
@@ -226,7 +225,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
             break
 
         # remove subspace linear dependencies
-        keep = ~conv & (dx_norm > np.sqrt(lindep))
+        keep = ~conv & (dx_norm > xp.sqrt(lindep))
         xt = xt[keep]
 
         if len(xt) == 0:
@@ -237,14 +236,14 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         _tic("lindep")
 
         # N.B. If we use the jitted preconditioner, this takes longer the first time through
-        xt = np.asarray([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
+        xt = xp.asarray([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
 
         # With a properly batched preconditioner, and when under jax,
         # we get major stalls after converging an eigenpair. why?
         
         #xt = precond(xt, e[0], x0[keep])
         _tic("precond")
-        norms = np.linalg.norm(xt, axis=1)
+        norms = xp.linalg.norm(xt, axis=1)
         xt /= norms[:, None]
 
         xt, norm_min = _orthonormalize_xt(xt, xs[:space], lindep)
@@ -286,12 +285,12 @@ def make_diag_precond(diag, level_shift=1e-3):
 
 
 def _qr(X):
-    return (np.linalg.qr(X.T)[0]).T
+    return (xp.linalg.qr(X.T)[0]).T
 
 
 def _from_subspace(v, xs):
-    v = np.atleast_2d(v)
-    x0 = np.einsum('ik,ij->kj', v, xs, optimize=True)
+    v = xp.atleast_2d(v)
+    x0 = xp.einsum('ik,ij->kj', v, xs, optimize=True)
 
     return x0
 
@@ -303,15 +302,15 @@ def _sort_elast(elast, conv_last, vlast, v, log):
     of the current iterations.
     """
     head, nroots = vlast.shape
-    ovlp = abs(np.dot(v[:head].conj().T, vlast))
-    mapping = np.argmax(ovlp, axis=1)
-    found = np.any(ovlp > .5, axis=1)
+    ovlp = abs(xp.dot(v[:head].conj().T, vlast))
+    mapping = xp.argmax(ovlp, axis=1)
+    found = xp.any(ovlp > .5, axis=1)
 
     if log.verbose >= logger.DEBUG:
-        ordering_diff = (mapping != np.arange(len(mapping)))
+        ordering_diff = (mapping != xp.arange(len(mapping)))
         if any(ordering_diff & found):
             log.debug('Old state -> New state')
-            for i in np.where(ordering_diff)[0]:
+            for i in xp.where(ordering_diff)[0]:
                 log.debug('  %3d     ->   %3d ', mapping[i], i)
 
     conv = conv_last[mapping]
@@ -331,7 +330,7 @@ def _orthonormalize_xt(xt, xs, threshold):
     xt -= (proj.T @ xs)  # shape: (nvecs, ndim)
 
     # Compute norms
-    norms = np.linalg.norm(xt, axis=1)
+    norms = xp.linalg.norm(xt, axis=1)
     keep = norms**2 > threshold
 
     # Normalize and select
