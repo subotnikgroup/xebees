@@ -11,3 +11,4 @@ dependencies:
   - tqdm=4.67.1
   - threadpoolctl=3.6.0
   - line_profiler
+  - cupy
