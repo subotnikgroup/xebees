@@ -15,19 +15,43 @@ def get_stencil_coefficients(stencil_size, derivative_order):
     
     return xp.linalg.solve(A, b)
 
+# def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
+#     stencil = get_stencil_coefficients(stencil_size, order) / dx**order
+#     if cyclic:
+#         stencil_k = xp.zeros(N, dtype=xp.complex128)
+#         stencil_k[0:stencil_size] = stencil
+#         stencil_k = xp.fft.fft(stencil_k)
+ 
+#         T = xp.asarray(
+#             [snd.convolve(e, stencil, mode='wrap') for e in xp.eye(N)]
+#         #    [ xp.fft.ifft(stencil_k*xp.fft.fft(e)).real for e in xp.eye(N)]
+    
+#         )
+#         #T = xp.fft.ifft(stencil_k*xp.fft.fft(xp.eye(N))).real
+
+#     else:
+#         T = xp.array(
+#             [xp.convolve(e, stencil, mode='same') for e in xp.eye(N)]
+#         )
+
+#     if not bare:
+#         T *= -1 / (2 * mass)
+
+#     return T
+
 def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
     stencil = get_stencil_coefficients(stencil_size, order) / dx**order
     if cyclic:
+        center = stencil_size // 2
+        
         stencil_k = xp.zeros(N, dtype=xp.complex128)
-        stencil_k[0:stencil_size] = stencil
+        stencil_k[:stencil_size] = stencil
+        stencil_k = xp.roll(stencil_k, -center)  # Center the kernel
         stencil_k = xp.fft.fft(stencil_k)
- 
-        T = xp.asarray(
-            [snd.convolve(e, stencil, mode='wrap') for e in xp.eye(N)]
-        #    [ xp.fft.ifft(stencil_k*xp.fft.fft(e)).real for e in xp.eye(N)]
-    
+
+        T =  xp.asarray(
+            [xp.fft.ifft(stencil_k * xp.fft.fft(e)).real for e in xp.eye(N)]
         )
-        #T = xp.fft.ifft(stencil_k*xp.fft.fft(xp.eye(N))).real
 
     else:
         T = xp.array(
@@ -38,6 +62,7 @@ def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
         T *= -1 / (2 * mass)
 
     return T
+
 
 def KE_FFT(N, P, R, mass): 
     Tp = xp.diag(P**2 / (2 * mass))

@@ -1,4 +1,14 @@
 #!/usr/bin/env python
+
+# Why is the standard eigen_solver so slow??
+#   cupyx.cusolver.syevj?
+#   cuDSS
+# why do we use so much memory when we have cupynumeric in the conda environment?
+# what do we need to do to support the jax.numpy backend?
+# memory concerns
+# vectorize phase_matching
+# nvtx and timing annotations
+
 import jax
 import jax.numpy as jnp
 jax.config.update('jax_enable_x64', True)
@@ -361,6 +371,7 @@ class Hamiltonian:
 
         return (Ad_vn, U_n, U_v, Ad_n)
 
+    # NR x (NrNg) x (NrNg)
     def build_Hel(self, Ridx=None):
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
@@ -407,11 +418,19 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        Hel = self.build_Hel()
+        if xp.backend == 'cupy':
+            from cupyx.profiler import time_range as timer_ctx
+        else:
+            from debug import timer_ctx
+        
+        with timer_ctx("Build Hel"):
+            Hel = self.build_Hel()
         #FIXME: something like this enhanced preconditioning in some cases, maybe?
         #Hel[:] += -xp.kron(xp.diag(1 / self.r**2), xp.eye(Ng)/4)/2/self.mu
-        Ad_n, U_n = xp.linalg.eigh(Hel)
-        phase_match(U_n)
+        with timer_ctx("Diag  Hel"):
+            Ad_n, U_n = xp.linalg.eigh(Hel)
+        with timer_ctx("Phase match U_n"):
+            phase_match(U_n)
 
         NR, Nelec, _ = Hel.shape
 
@@ -694,6 +713,7 @@ def parse_args():
     parser.add_argument('--preconditioner', choices=['naive', 'V1', 'BO', 'BO-int'],
                         default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
+    parser.add_argument('--backend', default='numpy')
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
@@ -708,8 +728,7 @@ if __name__ == '__main__':
     print(args)
 
     # you can only select the backend once and it must be before you use any xp functions
-    xp.backend = 'numpy'
-    #xp.backend = 'cupy'
+    xp.backend = args.backend
 
     threadctl = ThreadpoolController()
     threadctl.limit(limits=args.t)

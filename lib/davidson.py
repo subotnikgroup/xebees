@@ -105,6 +105,7 @@ def phase_match(U):
     else:
         phase = lambda x, y: xp.sign(xp.dot(x, y))
 
+    # FIXME: rewrite in vectorized format
     for i in range(1,N):
         for n in range(M):
             U[i,:,n] *= phase(U[i-1,:,n], U[i,:,n])
