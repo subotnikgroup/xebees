@@ -130,7 +130,7 @@ class Hamiltonian:
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
         
         self.shape = self.Vgrid.shape
-        self.size = xp.prod(self.shape)
+        self.size = xp.prod(xp.asarray(self.shape))
 
         dR = self.R[1] - self.R[0]
         dr = self.r[1] - self.r[0]
@@ -181,7 +181,7 @@ class Hamiltonian:
         self.args = args
             
         builder, self.preconditioner, self.make_guess = {
-            'BO':     (self._build_preconditioner_BO_threaded, self._preconditioner_BO,    self._make_guess_BO),
+            'BO':     (self._build_preconditioner_BO, self._preconditioner_BO_batch,    self._make_guess_BO),
             'BO-int': (self._build_preconditioner_BO_interp, self._preconditioner_BO_interp,    self._make_guess_BO_interp),
             'V1':     (self._build_preconditioner_V1, self._preconditioner_V1,    self._make_guess_V1),
             'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
@@ -200,7 +200,7 @@ class Hamiltonian:
                 isinstance(member := super().__getattribute__(key), xp.ndarray)):
                 member.flags.writeable = False
 
-        self._hash = xp.random.randint(2**63)  # self._make_hash()
+        self._hash = np.random.randint(2**63)  # self._make_hash()
         self._locked = True
 
     def V(self, R, r, gamma):
@@ -224,27 +224,27 @@ class Hamiltonian:
     def __matmul__(self, other):
         return self.Hx(other).reshape(other.shape)
 
-    @partial(jax.jit, static_argnums=0)
+    #@partial(jax.jit, static_argnums=0)
     def Hx(self, x):
         return self.Tx(x) + (x.reshape((-1,) + self.shape) * self.Vgrid).reshape(x.shape)
 
-    @partial(jax.jit, static_argnums=0)
+    #@partial(jax.jit, static_argnums=0)
     def Tx(self, x):
         xa = x.reshape((-1,) + self.shape)
-        ke = jnp.empty_like(xa)
+        ke = np.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
-        ke += jnp.einsum('BRrg,RS->BSrg', xa, self.ddR2)  # ∂²/∂R²
-        ke += jnp.einsum('BRrg,rs->BRsg', xa, self.ddr2)  # ∂²/∂r²
+        ke += xp.einsum('BRrg,RS->BSrg', xa, self.ddR2)  # ∂²/∂R²
+        ke += xp.einsum('BRrg,rs->BRsg', xa, self.ddr2)  # ∂²/∂r²
 
         #  ∂²/∂γ² + 1/4 terms
-        keg  = jnp.einsum('BRrg,gh->BRrh', xa, self.ddg2)  # ∂²/∂γ²
+        keg  = xp.einsum('BRrg,gh->BRrh', xa, self.ddg2)  # ∂²/∂γ²
         ke += (self.Rinv2 + self.rinv2)*keg                # (1/R² + 1/r²) (∂²/∂γ²)
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
             keg  = xa*self.J**2                                          #  J²
-            keg += 2j*self.J*jnp.einsum('BRrg,gh->BRrh', xa, self.ddg1)  #  J² + 2Ji ∂/∂γ
+            keg += 2j*self.J*xp.einsum('BRrg,gh->BRrh', xa, self.ddg1)  #  J² + 2Ji ∂/∂γ
             ke -= self.Rinv2*keg                                 # (1/R²)*(J² - 2Ji ∂/∂γ)
 
         # mass portion of KE
@@ -281,7 +281,7 @@ class Hamiltonian:
         guesses = xp.exp(-(self.Vgrid - xp.min(self.Vgrid))**2/27.211).ravel()
         return guesses
 
-    @partial(jax.jit, static_argnums=0)
+    #@partial(jax.jit, static_argnums=0)
     def _preconditioner_naive(self, dx, e, x0):
         diagd = self.diag - (e - 1e-5)
         return dx/diagd
@@ -444,7 +444,7 @@ class Hamiltonian:
 
         return guesses
 
-    @partial(jax.jit, static_argnums=0)
+    #@partial(jax.jit, static_argnums=0)
     def _preconditioner_BO(self, dx, e, x0):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         diagd = Ad_vn - (e - 1e-5)
@@ -467,21 +467,21 @@ class Hamiltonian:
         #tr_vn = dx_vn / diagd
         #tr_ = jnp.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
 
-        tr_ = jnp.einsum(
+        tr_ = xp.einsum(
             'Rij,jRq,qj,jmq,mpj,mp->Ri',
             U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, optimize=True
         )
         
         return tr_.ravel()
 
-    @partial(jax.jit, static_argnums=0)
+    #@partial(jax.jit, static_argnums=0)
     def _preconditioner_BO_batch(self, dx, e, _):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         diagd = Ad_vn - (e - 1e-5)
         NR, Nr, Ng = self.shape
         dx_ = dx.reshape((-1, NR, Nr*Ng))
 
-        tr_ = jnp.einsum(
+        tr_ = xp.einsum(
             'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
             U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, optimize=True
         )
@@ -709,6 +709,7 @@ if __name__ == '__main__':
 
     # you can only select the backend once and it must be before you use any xp functions
     xp.backend = 'numpy'
+    #xp.backend = 'cupy'
 
     threadctl = ThreadpoolController()
     threadctl.limit(limits=args.t)
@@ -742,7 +743,7 @@ if __name__ == '__main__':
 
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
-    with timer_ctx(f"Davidson of size {xp.prod(H.shape)}"):
+    with timer_ctx(f"Davidson of size {H.size}"):
         conv, e_approx, evecs = lib.davidson1(
             H.Hx,
             guess,

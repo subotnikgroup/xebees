@@ -236,12 +236,12 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         _tic("lindep")
 
         # N.B. If we use the jitted preconditioner, this takes longer the first time through
-        xt = xp.asarray([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
+        #xt = xp.asarray([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
 
         # With a properly batched preconditioner, and when under jax,
         # we get major stalls after converging an eigenpair. why?
         
-        #xt = precond(xt, e[0], x0[keep])
+        xt = precond(xt, e[0], x0[keep])
         _tic("precond")
         norms = xp.linalg.norm(xt, axis=1)
         xt /= norms[:, None]

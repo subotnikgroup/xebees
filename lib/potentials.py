@@ -40,7 +40,7 @@ def _extents_log_factory(mu12ref, lower, upper, decimals=3):
         lo = lo_int(logm)
         up = up_int(logm)
 
-        return np.round([lo, up, up], decimals)
+        return xp.asarray(np.round([lo, up, up], decimals))
     return extents
 
 
