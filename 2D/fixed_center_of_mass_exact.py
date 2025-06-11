@@ -476,6 +476,19 @@ class Hamiltonian:
         
         return tr_.ravel()
 
+    @partial(jax.jit, static_argnums=0)
+    def _preconditioner_BO_batch(self, dx, e, _):
+        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
+        diagd = Ad_vn - (e - 1e-5)
+        NR, Nr, Ng = self.shape
+        dx_ = dx.reshape((-1, NR, Nr*Ng))
+
+        tr_ = jnp.einsum(
+            'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
+            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, optimize=True
+        )
+
+        return tr_.reshape(dx.shape)
 
     def _preconditioner_BO_interp(self, dx, e, x0):
         return

@@ -100,6 +100,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
     >>> len(e)
     2
     """
+    _tic("start")
     if isinstance(verbose, logger.Logger):
         log = verbose
     else:
@@ -132,10 +133,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
     dtype = np.result_type(aop(x0), x0)
     log.debug("dtype=%s", dtype)
     
-    if allow_resize:
-        xs = np.empty((0, Nelem), dtype=dtype)
-        ax = np.empty((0, Nelem), dtype=dtype)
-    else:
+    if not allow_resize:
         xs = np.empty((max_space, Nelem), dtype=dtype)
         ax = np.empty((max_space, Nelem), dtype=dtype)
 
@@ -146,11 +144,13 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
     conv = np.zeros(nroots, dtype=bool)
     emin = None
 
+    _tic("init")
     for icyc in range(max_cycle):
+        _tic("cycle")
         if fresh_start:
             if allow_resize:
-                xs = np.empty((0, Nelem))
-                ax = np.empty((0, Nelem))
+                xs = np.empty((0, Nelem), dtype=dtype)
+                ax = np.empty((0, Nelem), dtype=dtype)
 
             space = 0
             xt = _qr(x0)
@@ -166,10 +166,11 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
                                f'{lindep}), the diagonalization solver is not able '
                                'to find eigenvectors.')
                     raise RuntimeError(msg)
-
+            _tic("fresh_start")
         elif len(xt) > 1:
             xt = _qr(xt)[:max_trial]
-
+            _tic("qr")
+            
         axt = aop(xt)
 
         if allow_resize:
@@ -186,11 +187,13 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         conv_last = conv
 
         _fill_heff_hermitian(heff, ax[:space], xt, axt)
-
+        _tic("heff")
+        
         e, v = np.linalg.eigh(heff[:space,:space])
         e = e[:nroots]
         v = v[:,:nroots]
-
+        _tic("diag heff")
+        
         if not fresh_start:
             elast, conv_last = _sort_elast(elast, conv_last, vlast, v, log)
 
@@ -202,12 +205,14 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
             de = e
         else:
             de = e - elast
-
+        _tic("bookkeeping")
+            
         x0 = _from_subspace(v, xs[:space])
         xt = _from_subspace(v, ax[:space]) - e[:,None]*x0
         dx_norm = np.linalg.norm(xt, axis=1)
         conv = (np.abs(de) < tol) & (dx_norm < tol_residual)
-
+        _tic("outer")
+        
         for k, ek in enumerate(e):
             if conv[k] and not conv_last[k]:
                 log.debug('root %d converged  |r|=%4.3g  e=%s  max|de|=%4.3g',
@@ -229,8 +234,16 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
                       dx_norm)
             conv = dx_norm < tol_residual
             break
+        _tic("lindep")
 
+        # N.B. If we use the jitted preconditioner, this takes longer the first time through
         xt = np.asarray([precond(xt_, e[0], x0_) for xt_, x0_ in zip(xt, x0[keep])])
+
+        # With a properly batched preconditioner, and when under jax,
+        # we get major stalls after converging an eigenpair. why?
+        
+        #xt = precond(xt, e[0], x0[keep])
+        _tic("precond")
         norms = np.linalg.norm(xt, axis=1)
         xt /= norms[:, None]
 
@@ -264,11 +277,13 @@ def make_diag_precond(diag, level_shift=1e-3):
     # For diagonal matrix A, precond (Ax-x*e)/(diag(A)-e) is not able to
     # generate linearly independent basis (see PySCF issue 1362). Use level_shift to
     # break the correlation between Ax-x*e and diag(A)-e.
+    # FIXME: need to make sure this is batched too
     def precond(dx, e, *args):
         diagd = diag - (e - level_shift)
         diagd[abs(diagd)<1e-8] = 1e-8
         return dx/diagd
     return precond
+
 
 def _qr(X):
     return (np.linalg.qr(X.T)[0]).T
@@ -345,3 +360,11 @@ def _fill_heff_hermitian(heff, ax, xt, axt):
     heff[:row0, row0:row1] = block_B.T.conj()
 
     return heff
+
+__lasttime = None
+def _tic(label):
+    global __lasttime
+    printing = False
+    if printing and __lasttime:
+        print(f"EEElapsed {label}", perf_counter() - __lasttime)
+    __lasttime = perf_counter()
