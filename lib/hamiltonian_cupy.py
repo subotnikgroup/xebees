@@ -19,12 +19,12 @@ def get_stencil_coefficients(stencil_size, derivative_order):
 def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
     stencil = get_stencil_coefficients(stencil_size, order) / dx**order
     if cyclic:
-        stencil_k = cp.zeros(N)
+        stencil_k = cp.zeros(N, dtype=complex)
         stencil_k[0:stencil_size] = stencil
         stencil_k = cp.fft.fft(stencil_k)
         T = cp.array(
             #[snd.convolve(e, stencil, mode='wrap') for e in np.eye(N)]
-            [ cp.fft.ifft(stencil_k* cp.fft.fft(e)) for e in cp.eye(N)]
+            [ cp.fft.ifft(stencil_k* cp.fft.fft(e)).real for e in cp.eye(N)]
         )
 
     else:

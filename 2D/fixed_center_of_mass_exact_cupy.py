@@ -235,7 +235,7 @@ class Hamiltonian:
     # @partial(jax.jit, static_argnums=0)
     def Tx(self, x):
         xa = x.reshape(self.shape)
-        ke = cp.zeros(self.shape, dtype=complex)
+        ke = cp.zeros(self.shape, dtype=self.dtype)
 
         # Radial Kinetic Energy terms, easy
         ke += cp.einsum('Rrg,RS->Srg', xa, self.ddR2)  # ∂²/∂R²
@@ -262,7 +262,7 @@ class Hamiltonian:
         #         [self.shape[i] if i == axis else 1 for i in range(3)]
         #     )
         #     for axis, op in [(0, self.ddR2), (1, self.ddr2)])
-        ke  = cp.zeros(self.shape, dtype=complex)
+        ke  = cp.zeros(self.shape, dtype=self.dtype)
         ke += cp.diag(self.ddR2)[:, None, None]
         ke += cp.diag(self.ddr2)[None, :, None]
         ke += (self.Rinv2 + self.rinv2) * cp.diag(self.ddg2)[None, None, :]
@@ -306,8 +306,8 @@ class Hamiltonian:
         print("Building BO spectrum")
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
-        Ad_n  = np.zeros((NR, Nelec))
-        Ad_vn = np.zeros((NR, Nelec))
+        Ad_n  = cp.zeros((NR, Nelec), dtype=self.dtype)
+        Ad_vn = cp.zeros((NR, Nelec), dtype=self.dtype)
 
         def diag_Hel(i, Ad_n=Ad_n):
             Ad_n[i] = np.linalg.eigvalsh(self.build_Hel(i))
@@ -337,13 +337,13 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        U_n   = np.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
-        U_v   = np.zeros((Nelec, NR, NR))
-        Ad_n  = np.zeros((NR, Nelec))
-        Ad_vn = np.zeros((NR, Nelec))
+        U_n   = cp.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
+        U_v   = cp.zeros((Nelec, NR, NR))
+        Ad_n  = cp.zeros((NR, Nelec))
+        Ad_vn = cp.zeros((NR, Nelec))
 
         def diag_Hel(i, Ad_n=Ad_n, U_n=U_n):
-            Ad_n[i], U_n[i] = np.linalg.eigh(self.build_Hel(i))
+            Ad_n[i], U_n[i] = cp.linalg.eigh(self.build_Hel(i))
 
         threadctl = ThreadpoolController()
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
@@ -353,8 +353,8 @@ class Hamiltonian:
         phase_match(U_n)
 
         def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn, U_v=U_v):
-            Hbo = -1/(2*self.mu)*self.ddR2 + np.diag(Ad_n[:,i])
-            Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
+            Hbo = -1/(2*self.mu)*self.ddR2 + cp.diag(Ad_n[:,i])
+            Ad_vn[:,i], U_v[i] = cp.linalg.eigh(Hbo)
 
         with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
             list(tqdm(
@@ -374,40 +374,40 @@ class Hamiltonian:
         Nelec = Nr*Ng
 
         if Ridx is None:
-            Ridx = np.arange(NR)
+            Ridx = cp.arange(NR)
         else:
-            Ridx = np.atleast_1d(Ridx)
+            Ridx = cp.atleast_1d(Ridx)
             NR,  = Ridx.shape
 
         # Hel = -1/2/μ · Te + V
         # Te  =  ∂²/∂r² + 1/4/r² + (1/r²)(∂²/∂γ²) + (1/R²)(∂²/∂γ²) - (1/R²)(J² + J2i(∂/∂γ))
         # N.B. self.ddr2 = ∂²/∂r² + 1/4/r²
-        Hel = np.empty((NR, Nelec, Nelec), self.dtype)
+        Hel = cp.empty((NR, Nelec, Nelec),dtype=self.dtype)#self.dtype)
 
         # build *bare* Te first
         # R-independent terms: ∂²/∂r² + (1/r²)(∂²/∂γ² + 1/4)
         Hel[:] = (
-            np.kron(self.ddr2, np.eye(Ng)) +            # ∂²/∂r² + 1/4/r²
-            np.kron(np.diag(1 / self.r**2), self.ddg2)  # (1/r²)(∂²/∂γ²)
+            cp.kron(self.ddr2, cp.eye(Ng)) +            # ∂²/∂r² + 1/4/r²
+            cp.kron(cp.diag(1 / self.r**2), self.ddg2)  # (1/r²)(∂²/∂γ²)
         )
 
         # R-dependent terms: (1/R²)(∂²/∂γ²)
         Rinv2 = (1 / self.R**2)[Ridx, None, None]  # (1/R²), ready for broadcasting
-        Hel += Rinv2 * np.kron(np.eye(Nr), self.ddg2)[None]  # 1/R² (∂²/∂γ²)
+        Hel += Rinv2 * cp.kron(cp.eye(Nr), self.ddg2)[None]  # 1/R² (∂²/∂γ²)
 
         # J terms: -(1/R²)(J² + J2i(∂/∂γ))
         if self.J != 0:
             Hel -= (
-                np.kron(self.J * np.eye(Nr), 2j * self.ddg1) [None, :, :] + # J2i(∂/∂γ)
-                (self.J**2 * np.eye(Nelec))[None] # J²
+                cp.kron(self.J * cp.eye(Nr), 2j * self.ddg1) [None, :, :] + # J2i(∂/∂γ)
+                (self.J**2 * cp.eye(Nelec))[None] # J²
             )  * Rinv2  # -(1/R²)
 
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
-        Hel[:, np.arange(Nelec), np.arange(Nelec)] +=(  # extract diagonal at every R
-            np.reshape(self.Vgrid[Ridx], (NR, Nelec))         # + V
+        Hel[:, cp.arange(Nelec), cp.arange(Nelec)] +=(  # extract diagonal at every R
+            cp.reshape(self.Vgrid[Ridx], (NR, Nelec))         # + V
         )
 
-        return np.squeeze(Hel)
+        return cp.squeeze(Hel)
 
     # FIXME: why is this slower than the explicitly threaded version above?
     def _build_preconditioner_BO(self):
@@ -418,17 +418,17 @@ class Hamiltonian:
         Hel = self.build_Hel()
         #FIXME: something like this enhanced preconditioning in some cases, maybe?
         #Hel[:] += -np.kron(np.diag(1 / self.r**2), np.eye(Ng)/4)/2/self.mu
-        Ad_n, U_n = np.linalg.eigh(Hel)
+        Ad_n, U_n = cp.linalg.eigh(Hel)
         phase_match(U_n)
 
         NR, Nelec, _ = Hel.shape
 
         print("Building U_v")
-        Hbo = np.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+        Hbo = cp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
         Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
-        Hbo[:, np.arange(NR), np.arange(NR)] += Ad_n.T # V_n
+        Hbo[:, cp.arange(NR), cp.arange(NR)] += Ad_n.T # V_n
 
-        Ad_vn, U_v = np.linalg.eigh(Hbo)
+        Ad_vn, U_v = cp.linalg.eigh(Hbo)
         Ad_vn = Ad_vn.T
         phase_match(U_v)
 
@@ -443,10 +443,10 @@ class Hamiltonian:
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         # BO states are like: U_n[:,:,n]
         # vib states are like: U_v[n,:,v]
-        s = int(np.ceil(np.sqrt(min_guess)))
+        s = int(cp.ceil(cp.sqrt(min_guess)))
 
         guesses = [
-            (U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel()
+            (U_n[:,:,n] * U_v[n,:,v,cp.newaxis]).ravel()
             for n in range(s) for v in range(s)
         ]
 
@@ -475,7 +475,7 @@ class Hamiltonian:
         #tr_vn = dx_vn / diagd
         #tr_ = jnp.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
 
-        tr_ = jnp.einsum(
+        tr_ = cp.einsum(
             'Rij,jRq,qj,jmq,mpj,mp->Ri',
             U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, optimize=True
         )
