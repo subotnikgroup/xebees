@@ -1,6 +1,6 @@
 import xp
 from scipy.special import factorial
-import scipy.signal as ssg
+#import scipy.signal as ssg
 import scipy.ndimage as snd
 from debug import timer
 
@@ -18,13 +18,20 @@ def get_stencil_coefficients(stencil_size, derivative_order):
 def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
     stencil = get_stencil_coefficients(stencil_size, order) / dx**order
     if cyclic:
-        T = xp.array(
+        stencil_k = xp.zeros(N, dtype=xp.complex128)
+        stencil_k[0:stencil_size] = stencil
+        stencil_k = xp.fft.fft(stencil_k)
+ 
+        T = xp.asarray(
             [snd.convolve(e, stencil, mode='wrap') for e in xp.eye(N)]
+        #    [ xp.fft.ifft(stencil_k*xp.fft.fft(e)).real for e in xp.eye(N)]
+    
         )
+        #T = xp.fft.ifft(stencil_k*xp.fft.fft(xp.eye(N))).real
 
     else:
         T = xp.array(
-            [ssg.convolve(e, stencil, mode='same') for e in xp.eye(N)]
+            [xp.convolve(e, stencil, mode='same') for e in xp.eye(N)]
         )
 
     if not bare:
@@ -134,21 +141,26 @@ def KE_ColbertMiller_ab(N, dx, mass=None, bare=False):
     return T
 
 
-def KE_FFT_cutoff(N, dx, ecut=30, mass=None, bare=False, cyclic=True):
+def KE_FFT_cutoff(N, dx, ecut=xp.inf, mass=None, bare=False, cyclic=True, order=2):
     if not cyclic:
         raise RuntimeError("Noncyclic KE not implemented; think grid doubling!")
 
-    #kgrid = xp.fft.fftshift(xp.fft.fftfreq(N, dx)) * 2 * xp.pi
     kgrid = xp.fft.fftfreq(N, dx) * 2 * xp.pi
     k2 = [k**2 for k in kgrid]
-
+    # NB: note cut off will only be applied to order=2 derivatives!
     k2cut = xp.minimum(k2, ecut*xp.ones(N))
 
     T = xp.zeros((N,N))
     for i in range(1,N+1):
         bi = xp.zeros(N)
         bi[i-1]= 1
-        bk = k2cut*xp.fft.fft(bi)
+        if order==2:
+            bk = k2cut*xp.fft.fft(bi)
+        else if order==1:
+            bk = (0+1j)*kgrid*xp.fft.fft(bi)
+        else:
+            raise RuntimeError("order=1,2 are only valid orders")
+
         T[:,i-1] = xp.fft.ifft(bk).real
 
     if bare:
