@@ -176,7 +176,6 @@ def solve_BO_surfaces(Tr, V):
 def solve_BOv(TR, Tr, V):
     return np.linalg.eigvalsh(TR + np.diag(solve_BO_surface(Tr,V)))
 
-
 #@timer
 def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2):
     """
