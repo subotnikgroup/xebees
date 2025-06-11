@@ -176,12 +176,12 @@ def solve_BO_surfaces(Tr, V):
 def solve_BOv(TR, Tr, V):
     return np.linalg.eigvalsh(TR + np.diag(solve_BO_surface(Tr,V)))
 
-@timer
+#@timer
 def Gamma_etf(R,r,g,pr,pg,M_1,M_2):
     """
     Gamma operator
     """
-    print("building etf")
+    #print("building etf")
     mu12 = M_1*M_2/(M_1+M_2)
     sigma = 1
     Ng = len(pg)
@@ -206,9 +206,9 @@ def Gamma_etf(R,r,g,pr,pg,M_1,M_2):
     
     return gamma1R, gamma1t, gamma2R, gamma2t
 
-@timer
+#@timer
 def Gamma_erf(R,r,g,pr,pg,M_1,M_2):
-    print("building erf")
+    #print("building erf")
 
     mu12 = M_1*M_2/(M_1+M_2)
     sigma = 1
