@@ -1,4 +1,4 @@
-import numpy as np
+import xp
 from scipy.special import factorial
 import scipy.signal as ssg
 import scipy.ndimage as snd
@@ -9,22 +9,22 @@ def get_stencil_coefficients(stencil_size, derivative_order):
         raise ValueError("Stencil size must be odd.")
     
     half_size = stencil_size // 2
-    A = np.vander(np.arange(-half_size, half_size + 1), increasing=True).T
-    b = np.zeros(stencil_size)
+    A = xp.vander(xp.arange(-half_size, half_size + 1), increasing=True).T
+    b = xp.zeros(stencil_size)
     b[derivative_order] = factorial(derivative_order)
     
-    return np.linalg.solve(A, b)
+    return xp.linalg.solve(A, b)
 
 def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
     stencil = get_stencil_coefficients(stencil_size, order) / dx**order
     if cyclic:
-        T = np.array(
-            [snd.convolve(e, stencil, mode='wrap') for e in np.eye(N)]
+        T = xp.array(
+            [snd.convolve(e, stencil, mode='wrap') for e in xp.eye(N)]
         )
 
     else:
-        T = np.array(
-            [ssg.convolve(e, stencil, mode='same') for e in np.eye(N)]
+        T = xp.array(
+            [ssg.convolve(e, stencil, mode='same') for e in xp.eye(N)]
         )
 
     if not bare:
@@ -33,8 +33,8 @@ def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
     return T
 
 def KE_FFT(N, P, R, mass): 
-    Tp = np.diag(P**2 / (2 * mass))
-    exp_RP = np.exp(1j * np.outer(P, R))
+    Tp = xp.diag(P**2 / (2 * mass))
+    exp_RP = xp.exp(1j * xp.outer(P, R))
     
     return (exp_RP.T.conj() @ Tp @ exp_RP) / N
 
@@ -47,39 +47,39 @@ def KE_Borisov(x, tol=1e-6, mass=None, bare=False, order=2):
 
     N = len(x)
     x_max = x[-1]
-    J = np.gradient(x) * N / x_max
+    J = xp.gradient(x) * N / x_max
 
 
-    bound = lambda a, b: np.arange(a,b+1)
-    al = lambda k: np.where((k == 0) | (k == N), 1/np.sqrt(2), 1)
+    bound = lambda a, b: xp.arange(a,b+1)
+    al = lambda k: xp.where((k == 0) | (k == N), 1/xp.sqrt(2), 1)
 
     # Helper function to pre-compute sine and cosine matrices (Asin & Acos above)
     def DTT(N, func):
         k = bound(0, N)
         m = bound(1, N)
-        return func(np.outer(2*m-1,k) * np.pi/N/2)
+        return func(xp.outer(2*m-1,k) * xp.pi/N/2)
 
-    COS = DTT(N, np.cos)
-    SIN = DTT(N, np.sin)
+    COS = DTT(N, xp.cos)
+    SIN = DTT(N, xp.sin)
 
-    Ac = COS.T * al(bound(0,N))[:,np.newaxis]
+    Ac = COS.T * al(bound(0,N))[:,xp.newaxis]
     As = (SIN * al(bound(0,N))).T
-    Acv = COS * al(bound(0,N))[np.newaxis, :] * (2/N)
-    Asv = SIN * al(bound(0,N))[np.newaxis, :] * (2/N)
+    Acv = COS * al(bound(0,N))[xp.newaxis, :] * (2/N)
+    Asv = SIN * al(bound(0,N))[xp.newaxis, :] * (2/N)
 
-    F = np.copy(x)
+    F = xp.copy(x)
 
-    b = 1/np.sqrt(F * J)
+    b = 1/xp.sqrt(F * J)
     R = F / J
-    k = np.arange(N+1) * np.pi / x[-1]
+    k = xp.arange(N+1) * xp.pi / x[-1]
 
     if order == 2:  # L should be symmetric
         L = -b[:,None] * Acv * k @ As * R @ Asv * k @ Ac * b
-        deviation = np.mean(np.abs(L-L.T))
+        deviation = xp.mean(xp.abs(L-L.T))
         L = (L + L.T)/2
     elif order == 1:  # iL is Hermitian
         L = b[:,None] * (Acv * k @ As - Asv * k @ Ac) * b
-        deviation = np.mean(np.abs(L+L.T))
+        deviation = xp.mean(xp.abs(L+L.T))
         L = (L - L.T)/2
     else:
         raise RuntimeError(f"Borisov derivatives of order {order} not implemented!")
@@ -94,13 +94,13 @@ def KE_Borisov(x, tol=1e-6, mass=None, bare=False, order=2):
     return L, J
 
 def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False):
-    T = np.zeros((N, N))
+    T = xp.zeros((N, N))
 
     # since we do not include the 0 point i->i+1; i+j-> i+j+2
     for i in range(N):
         for j in range(N):
             if i == j:
-                T[i,i] = np.pi**2/3 - 1/2/(i+1)**2
+                T[i,i] = xp.pi**2/3 - 1/2/(i+1)**2
             else:
                 T[i,j] = (-1)**(i-j) * (2/(i-j)**2 - 2/(i+j+2)**2)
 
@@ -113,18 +113,18 @@ def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False):
 
 
 def KE_ColbertMiller_ab(N, dx, mass=None, bare=False):
-    T = np.zeros((N, N))
+    T = xp.zeros((N, N))
 
     # since we do not include the 0 point i->i+1; i+j-> i+j+2
     for i in range(N):
         for j in range(N):
             if i == j:  # A6b
-                T[i,i] = (2*(N+1)**2+1)/3 - 1/np.sin(np.pi*(i+1)/(N+1))**2
+                T[i,i] = (2*(N+1)**2+1)/3 - 1/xp.sin(xp.pi*(i+1)/(N+1))**2
             else:       # A6a
-                T[i,j] = (-1)**(i-j) * (1/np.sin(np.pi*(i-j  )/2/(N+1))**2 -
-                                        1/np.sin(np.pi*(i+j+2)/2/(N+1))**2)
+                T[i,j] = (-1)**(i-j) * (1/xp.sin(xp.pi*(i-j  )/2/(N+1))**2 -
+                                        1/xp.sin(xp.pi*(i+j+2)/2/(N+1))**2)
 
-    T *= np.pi**2/(N*dx)**2/2
+    T *= xp.pi**2/(N*dx)**2/2
 
     if bare:
         T *= -1
@@ -138,18 +138,18 @@ def KE_FFT_cutoff(N, dx, ecut=30, mass=None, bare=False, cyclic=True):
     if not cyclic:
         raise RuntimeError("Noncyclic KE not implemented; think grid doubling!")
 
-    #kgrid = np.fft.fftshift(np.fft.fftfreq(N, dx)) * 2 * np.pi
-    kgrid = np.fft.fftfreq(N, dx) * 2 * np.pi
+    #kgrid = xp.fft.fftshift(xp.fft.fftfreq(N, dx)) * 2 * xp.pi
+    kgrid = xp.fft.fftfreq(N, dx) * 2 * xp.pi
     k2 = [k**2 for k in kgrid]
 
-    k2cut = np.minimum(k2, ecut*np.ones(N))
+    k2cut = xp.minimum(k2, ecut*xp.ones(N))
 
-    T = np.zeros((N,N))
+    T = xp.zeros((N,N))
     for i in range(1,N+1):
-        bi = np.zeros(N)
+        bi = xp.zeros(N)
         bi[i-1]= 1
-        bk = k2cut*np.fft.fft(bi)
-        T[:,i-1] = np.fft.ifft(bk).real
+        bk = k2cut*xp.fft.fft(bi)
+        T[:,i-1] = xp.fft.ifft(bk).real
 
     if bare:
         T *= -1
@@ -159,22 +159,22 @@ def KE_FFT_cutoff(N, dx, ecut=30, mass=None, bare=False, cyclic=True):
     return T
 
 def solve_BO_surface(Tr, V):
-    return np.array(
-       [np.linalg.eigvalsh(Tr + np.diag(v))[0] for v in V])
+    return xp.array(
+       [xp.linalg.eigvalsh(Tr + xp.diag(v))[0] for v in V])
 
 def solve_BO_surfaces(Tr, V):
-    return np.array(
-       [np.linalg.eigvalsh(Tr + np.diag(v)) for v in V]).T
+    return xp.array(
+       [xp.linalg.eigvalsh(Tr + xp.diag(v)) for v in V]).T
 
 
 # print(
 #     solve_BOv(
 #         KE(NR, dR, M),
 #         KE(Nr, dr, m),
-#         VO(*np.meshgrid(R, r, indexing='ij')
+#         VO(*xp.meshgrid(R, r, indexing='ij')
 #     )
 def solve_BOv(TR, Tr, V):
-    return np.linalg.eigvalsh(TR + np.diag(solve_BO_surface(Tr,V)))
+    return xp.linalg.eigvalsh(TR + xp.diag(solve_BO_surface(Tr,V)))
 
 #@timer
 def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2):
@@ -187,30 +187,30 @@ def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2):
     sigma = 1
     Ng = len(pg)
     Nr = len(pr)
-    kappa2 = R*r*np.cos(g)    
+    kappa2 = R*r*xp.cos(g)    
     r1e = (r)**2 + (R)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
     re2 = (r)**2 + (R)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
 
-    theta1 = np.exp(-r1e / sigma**2)
-    theta2 = np.exp(-re2 / sigma**2)
+    theta1 = xp.exp(-r1e / sigma**2)
+    theta2 = xp.exp(-re2 / sigma**2)
     partition = theta1 + theta2
     
-    t1 = np.diag((theta1/partition).ravel())
-    t2 = np.diag((theta2/partition).ravel())
+    t1 = xp.diag((theta1/partition).ravel())
+    t2 = xp.diag((theta2/partition).ravel())
 
-    px =  np.kron(pr,np.diag(np.cos(g[0,:]))) - np.kron(np.diag(1/r[:,0]),np.diag(np.sin(g[0,:]))@pg)
-    py =  np.kron(pr,np.diag(np.sin(g[0,:]))) + np.kron(np.diag(1/r[:,0]),np.diag(np.cos(g[0,:]))@pg)
+    px =  xp.kron(pr,xp.diag(xp.cos(g[0,:]))) - xp.kron(xp.diag(1/r[:,0]),xp.diag(xp.sin(g[0,:]))@pg)
+    py =  xp.kron(pr,xp.diag(xp.sin(g[0,:]))) + xp.kron(xp.diag(1/r[:,0]),xp.diag(xp.cos(g[0,:]))@pg)
     
     gammaetf1x = -0.5*(t1 @ px + px @ t1)
     gammaetf1y = -0.5*(t1 @ py + py @ t1)
     gammaetf2x = -0.5*(t2 @ px + px @ t2)
     gammaetf2y = -0.5*(t2 @ py + py @ t2)
 
-    rcosg = np.kron(np.diag(r[:,0]),np.diag(np.cos(g[0,:])))
-    rsing = np.kron(np.diag(r[:,0]),np.diag(np.sin(g[0,:])))
+    rcosg = xp.kron(xp.diag(r[:,0]),xp.diag(xp.cos(g[0,:])))
+    rsing = xp.kron(xp.diag(r[:,0]),xp.diag(xp.sin(g[0,:])))
     
-    J1 = -0.5*((rcosg-(np.eye(Nr*Ng)*R*mu12/M_1))@(t1@py+py@t1)-rsing@((t1@px+px@t1)))
-    J2 = -0.5*((rcosg+(np.eye(Nr*Ng)*R*mu12/M_2))@(t2@py+py@t2)-rsing@((t2@px+px@t2)))
+    J1 = -0.5*((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1))@(t1@py+py@t1)-rsing@((t1@px+px@t1)))
+    J2 = -0.5*((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2))@(t2@py+py@t2)-rsing@((t2@px+px@t2)))
 
     #check signs
     #flip signs because of the cross product
@@ -223,33 +223,33 @@ def inverse_weyl_transform(E, NR, R, P):
     """
     Perform the inverse Weyl transform 
     """
-    HPS = np.zeros((NR, NR), dtype=complex)
-    EPP = np.zeros((NR, NR), dtype=complex)
-    EPS_half = np.zeros((NR + 1, NR), dtype=complex)
+    HPS = xp.zeros((NR, NR), dtype=complex)
+    EPP = xp.zeros((NR, NR), dtype=complex)
+    EPS_half = xp.zeros((NR + 1, NR), dtype=complex)
     dR = R[1] - R[0]
-    R_half = np.linspace(R[0] - dR/2, R[-1] + dR/2, NR + 1)
+    R_half = xp.linspace(R[0] - dR/2, R[-1] + dR/2, NR + 1)
 
     # Build EPP
     for i in range(NR):
         for j in range(NR):
             for k in range(NR):
-                EPP[j, i] += np.exp(-1j * R[k] * P[j]) * E[k, i] / np.sqrt(NR)
+                EPP[j, i] += xp.exp(-1j * R[k] * P[j]) * E[k, i] / xp.sqrt(NR)
 
     # Build EPS_half
     for i in range(NR):
         for j in range(NR + 1):
             for k in range(NR):
-                EPS_half[j, i] += np.exp(1j * R_half[j] * P[k]) * EPP[k, i] / np.sqrt(NR)
+                EPS_half[j, i] += xp.exp(1j * R_half[j] * P[k]) * EPP[k, i] / xp.sqrt(NR)
 
     # Build HPS
     for j in range(NR):
         for q1 in range(NR):
             for q2 in range(NR):
                 if (q1 - q2) % 2 == 0:
-                    HPS[q1, q2] += (np.exp(-1j * (R[q1] - R[q2]) * P[j])
+                    HPS[q1, q2] += (xp.exp(-1j * (R[q1] - R[q2]) * P[j])
                                     * E[(q1 + q2) // 2, j] / NR)
                 else:
                     idx = (q1 + q2 + 1) // 2
-                    HPS[q1, q2] += (np.exp(-1j * (R[q1] - R[q2]) * P[j])
+                    HPS[q1, q2] += (xp.exp(-1j * (R[q1] - R[q2]) * P[j])
                                     * EPS_half[idx, j] / NR)
     return HPS
