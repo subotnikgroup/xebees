@@ -23,9 +23,13 @@ class XPBackend:
 
     @backend.setter
     def backend(self, name):
-        self._backend_name = name
-        self._backend = importlib.import_module(name)
-        print(f"[xp] backend set to {self._backend_name}")
+        try:
+            self._backend = importlib.import_module(name)
+        except Exception:
+            raise
+        else:
+            self._backend_name = name
+            print(f"[xp] backend set to {self._backend_name}")
 
     def __getattr__(self, attr):
         # Delegate attribute access to the backend module
