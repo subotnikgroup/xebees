@@ -1,7 +1,6 @@
 import xp
 from scipy.special import factorial
-#import scipy.signal as ssg
-import scipy.ndimage as snd
+import numpy
 from debug import timer
 
 def get_stencil_coefficients(stencil_size, derivative_order):
@@ -14,48 +13,27 @@ def get_stencil_coefficients(stencil_size, derivative_order):
     b[derivative_order] = factorial(derivative_order)
     return xp.linalg.solve(A, b)
 
-# def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
-#     stencil = get_stencil_coefficients(stencil_size, order) / dx**order
-#     if cyclic:
-#         stencil_k = xp.zeros(N, dtype=xp.complex128)
-#         stencil_k[0:stencil_size] = stencil
-#         stencil_k = xp.fft.fft(stencil_k)
- 
-#         T = xp.asarray(
-#             [snd.convolve(e, stencil, mode='wrap') for e in xp.eye(N)]
-#         #    [ xp.fft.ifft(stencil_k*xp.fft.fft(e)).real for e in xp.eye(N)]
-    
-#         )
-#         #T = xp.fft.ifft(stencil_k*xp.fft.fft(xp.eye(N))).real
-
-#     else:
-#         T = xp.array(
-#             [xp.convolve(e, stencil, mode='same') for e in xp.eye(N)]
-#         )
-
-#     if not bare:
-#         T *= -1 / (2 * mass)
-
-#     return T
 
 def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
     stencil = get_stencil_coefficients(stencil_size, order) / dx**order
-    if cyclic:
-        center = stencil_size // 2
-        
-        stencil_k = xp.zeros(N, dtype=xp.complex128)
-        stencil_k[:stencil_size] = stencil
-        stencil_k = xp.roll(stencil_k, -center)  # Center the kernel
-        stencil_k = xp.fft.fft(stencil_k)
+    center = stencil_size // 2
 
-        T =  xp.asarray(
-            [xp.fft.ifft(stencil_k * xp.fft.fft(e)).real for e in xp.eye(N)]
-        )
+    if cyclic:
+        fft_size = N
+        eye = xp.eye(N)
 
     else:
-        T = xp.array(
-            [xp.convolve(e, stencil, mode='same') for e in xp.eye(N)]
-        )
+        # zero-pad to next power of 2
+        fft_size = int(2 ** numpy.ceil(numpy.log2(N + stencil_size - 1)))
+        eye = xp.zeros((N, fft_size))
+        eye[xp.arange(N), xp.arange(N)] = 1.0
+
+    stencil_k = xp.zeros(fft_size, dtype=xp.complex128)
+    stencil_k[:stencil_size] = stencil
+    stencil_k = xp.roll(stencil_k, -center)
+    stencil_k = xp.fft.fft(stencil_k)
+
+    T = xp.fft.ifft(stencil_k * xp.fft.fft(eye)).real[:, :N]
 
     if not bare:
         T *= -1 / (2 * mass)
@@ -78,11 +56,14 @@ def KE_Borisov(x, tol=1e-6, mass=None, bare=False, order=2):
 
     N = len(x)
     x_max = x[-1]
-    J = xp.gradient(x) * N / x_max
+    g = xp.gradient(x)
+    g = g[0] if isinstance(g, tuple) else g
+    J = g * N / x_max
+    #J = xp.gradient(x) * N / x_max
 
 
     bound = lambda a, b: xp.arange(a,b+1)
-    al = lambda k: xp.where((k == 0) | (k == N), 1/xp.sqrt(2), 1)
+    al = lambda k: xp.where((k == 0) | (k == N), 1/numpy.sqrt(2), 1)
 
     # Helper function to pre-compute sine and cosine matrices (Asin & Acos above)
     def DTT(N, func):
@@ -98,7 +79,7 @@ def KE_Borisov(x, tol=1e-6, mass=None, bare=False, order=2):
     Acv = COS * al(bound(0,N))[xp.newaxis, :] * (2/N)
     Asv = SIN * al(bound(0,N))[xp.newaxis, :] * (2/N)
 
-    F = xp.copy(x)
+    F = x
 
     b = 1/xp.sqrt(F * J)
     R = F / J
@@ -195,11 +176,11 @@ def KE_FFT_cutoff(N, dx, ecut=xp.inf, mass=None, bare=False, cyclic=True, order=
     return T
 
 def solve_BO_surface(Tr, V):
-    return xp.array(
+    return xp.asarray(
        [xp.linalg.eigvalsh(Tr + xp.diag(v))[0] for v in V])
 
 def solve_BO_surfaces(Tr, V):
-    return xp.array(
+    return xp.asarray(
        [xp.linalg.eigvalsh(Tr + xp.diag(v)) for v in V]).T
 
 

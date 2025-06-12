@@ -9,10 +9,12 @@
 # vectorize phase_matching
 # nvtx and timing annotations
 # batchify all preconditionders
+#
+# Explore reduced precision preconditioner
 
-import jax
-import jax.numpy as jnp
-jax.config.update('jax_enable_x64', True)
+#import jax
+#import jax.numpy as jnp
+#jax.config.update('jax_enable_x64', True)
 
 from numpy.fft import fft, fftshift
 from scipy.integrate import simpson
@@ -32,14 +34,14 @@ import os, sys
 sys.path.append(os.path.abspath("lib"))
 
 import xp
-import numpy as np  # only use this for reading and writing objects
+import numpy  # only use this for reading and writing objects
 
 import linalg_helper as lib
 #from pyscf import lib
 import potentials
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
-from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
+from davidson import phase_match, phase_match_vec, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
 
@@ -88,10 +90,10 @@ class Hamiltonian:
             self.M_1 *= AMU_TO_AU
             self.M_2 *= AMU_TO_AU
 
-        self.mu   = xp.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
+        self.mu   = numpy.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
-        self.aa   = xp.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
+        self.aa   = numpy.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
         self._Vfunc, extent_func = {
             'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb),
             'borgis': (potentials.borgis, potentials.extents_borgis),
@@ -133,7 +135,8 @@ class Hamiltonian:
         # N.B.: It is essential that we not include the endpoint in
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
-        self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
+        #self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
+        self.g = xp.asarray([i*2*xp.pi/args.Ng for i in range(args.Ng)])
 
         self.axes = (self.R, self.r, self.g)
 
@@ -211,7 +214,7 @@ class Hamiltonian:
                 isinstance(member := super().__getattribute__(key), xp.ndarray)):
                 member.flags.writeable = False
 
-        self._hash = np.random.randint(2**63)  # self._make_hash()
+        self._hash = numpy.random.randint(2**63)  # self._make_hash()
         self._locked = True
 
     def V(self, R, r, gamma):
@@ -242,7 +245,7 @@ class Hamiltonian:
     #@partial(jax.jit, static_argnums=0)
     def Tx(self, x):
         xa = x.reshape((-1,) + self.shape)
-        ke = np.zeros_like(xa)
+        ke = xp.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
         ke += xp.einsum('BRrg,RS->BSrg', xa, self.ddR2)  # ∂²/∂R²
@@ -419,17 +422,35 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        if xp.backend == 'cupy':
-            from cupyx.profiler import time_range as timer_ctx
-        else:
-            from debug import timer_ctx
+        # if xp.backend == 'cupy':
+        #     from cupyx.profiler import time_range as timer_ctx
+        # else:
+        #     from debug import timer_ctx
         
         with timer_ctx("Build Hel"):
             Hel = self.build_Hel()
+
         #FIXME: something like this enhanced preconditioning in some cases, maybe?
         #Hel[:] += -xp.kron(xp.diag(1 / self.r**2), xp.eye(Ng)/4)/2/self.mu
-        with timer_ctx("Diag  Hel"):
+        # with timer_ctx("Diag  Hel"):
+        #     from cupyx.profiler import benchmark
+        #     from cupy.cuda import memory_hooks
+        #     # Profile the specific batch
+        #     with memory_hooks.DebugPrintHook():
+        #         result = benchmark(xp.linalg.eigh, (Hel,), n_repeat=5)
+        #         print(result)
+        #     Ad_n, U_n = xp.linalg.eigh(Hel)
+
+        with timer_ctx(f"Diag  Hel {xp.backend}"):
             Ad_n, U_n = xp.linalg.eigh(Hel)
+
+        # if xp.backend == 'cupy':
+        #     try:
+        #         import torch
+        #         Ad_n, U_n = torch.linalg.eigh(torch.from_dlpack(Hel))
+        #     except:
+        #         Ad_n, U_n = xp.linalg.eigh(Hel)
+
         with timer_ctx("Phase match U_n"):
             phase_match(U_n)
 
@@ -729,7 +750,14 @@ if __name__ == '__main__':
     print(args)
 
     # you can only select the backend once and it must be before you use any xp functions
-    xp.backend = args.backend
+    if xp.backend != args.backend:
+        xp.backend = args.backend
+
+    if xp.backend == 'jax.numpy':
+        import jax
+        jax.config.update('jax_enable_x64', True)
+    elif xp.backend == 'torch':
+        xp.set_default_dtype(xp.float64)
 
     threadctl = ThreadpoolController()
     threadctl.limit(limits=args.t)
@@ -745,21 +773,7 @@ if __name__ == '__main__':
     if args.bo_spectrum:
         with timer_ctx("BO spectrum"):
             Ad_vn, Ad_n = H.BO_spectrum(args.k)
-            np.savez_compressed(args.bo_spectrum, bo_spectrum=Ad_vn, bo_surfaces=Ad_n)
-
-
-    # with timer_ctx(f"LOBPCG of size {np.prod(H.shape)}"):
-    #     e_approx_lobpcg, evecs_lobpcg = lobpcg(
-    #         lambda xs: np.asarray([ H @ x for x in xs.T ]).T,
-    #         np.asarray(guess).T,
-    #         tol=1e-6,
-    #         maxiter=args.iterations,
-    #         verbosityLevel=args.verbosity,
-    #         restartControl=4,
-    #         largest=False,
-    #     )
-    # print(e_approx_lobpcg)
-    # exit()
+            numpy.savez_compressed(args.bo_spectrum, bo_spectrum=Ad_vn, bo_surfaces=Ad_n)
 
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
@@ -785,7 +799,7 @@ if __name__ == '__main__':
     print(conv)
 
     if args.evecs:
-        np.savez_compressed(args.evecs, guess=evecs, H=H)
+        numpy.savez_compressed(args.evecs, guess=evecs, H=H)
         print("Wrote eigenvectors to", args.evecs)
 
     if args.bo_spectrum:
