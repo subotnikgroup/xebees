@@ -7,7 +7,8 @@ class XPBackend:
         self._backend = None
         self.backend = self._detect_backend()
 
-    def _detect_backend(self, backends=['cupynumeric', 'cupy', 'jax.numpy', 'numpy']):
+    def _detect_backend(self, backends=['cupy', 'numpy',
+                                        'cupynumeric', 'jax.numpy', 'torch']):
         for backend in backends:
             try:
                 importlib.import_module(backend)
