@@ -1,6 +1,6 @@
-name : ps-exact
+name : test_yml
 channels: 
-  - legate
+  - legate/label/rc
   - conda-forge
 dependencies:
   - python=3.12
@@ -13,4 +13,4 @@ dependencies:
   - threadpoolctl=3.6.0
   - line_profiler
   - cupy
-  - cupynumeric
+  - cupynumeric=25.05.00.rc3
