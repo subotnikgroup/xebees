@@ -9,10 +9,9 @@ def get_stencil_coefficients(stencil_size, derivative_order):
         raise ValueError("Stencil size must be odd.")
     
     half_size = stencil_size // 2
-    A = xp.vander(xp.arange(-half_size, half_size + 1), increasing=True).T
+    A = xp.vander(xp.arange(-half_size, half_size + 1.0), increasing=True).T
     b = xp.zeros(stencil_size)
     b[derivative_order] = factorial(derivative_order)
-    
     return xp.linalg.solve(A, b)
 
 # def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
