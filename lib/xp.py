@@ -36,5 +36,18 @@ class XPBackend:
         # Delegate attribute access to the backend module
         return getattr(self._backend, attr)
 
+    # Helper functions for dealing with library inconsistencies
+    def size(self, A):
+        if self._backend_name == 'torch':
+            return A.numel()
+        else:
+            return A.size
+
+    def iscomplexobj(self, A):
+        if self._backend_name == 'torch':
+            return self._backend.is_complex(A)
+        else:
+            return self._backend.iscomplexobj(A)
+
 # Replace the module with an instance of XPBackend (a singleton)
 sys.modules[__name__] = XPBackend()

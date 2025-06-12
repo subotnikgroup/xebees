@@ -441,7 +441,7 @@ class Hamiltonian:
         #         print(result)
         #     Ad_n, U_n = xp.linalg.eigh(Hel)
 
-        with timer_ctx(f"Diag  Hel {xp.backend}"):
+        with timer_ctx(f"Diag  Hel"):
             Ad_n, U_n = xp.linalg.eigh(Hel)
 
         # if xp.backend == 'cupy':
@@ -473,10 +473,10 @@ class Hamiltonian:
         # vib states are like: U_v[n,:,v]
         s = int(numpy.ceil(numpy.sqrt(min_guess)))
 
-        guesses = [
+        guesses = xp.stack([
             (U_n[:,:,n] * U_v[n,:,v,xp.newaxis]).ravel()
             for n in range(s) for v in range(s)
-        ]
+        ])
 
         return guesses
 
@@ -505,7 +505,7 @@ class Hamiltonian:
 
         tr_ = xp.einsum(
             'Rij,jRq,qj,jmq,mpj,mp->Ri',
-            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, optimize=True
+            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_#, optimize=True
         )
         
         return tr_.ravel()
@@ -517,9 +517,10 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         dx_ = dx.reshape((-1, NR, Nr*Ng))
 
+        #FIXME: precompute optimal einsum path and provide that
         tr_ = xp.einsum(
             'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
-            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, optimize=True
+            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_#, optimize=True
         )
 
         return tr_.reshape(dx.shape)
@@ -628,11 +629,11 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         # States are U[R, :, Ng//2 + j, n]
         s = int(numpy.ceil(numpy.sqrt(min_guess)))
-        guesses = [
+        guesses = xp.stack([
             xp.copy(xp.broadcast_to(
                 U[:, :, Ng//2 + j, i][:, :, xp.newaxis],
                 self.shape
-            )).ravel() for i in range(s) for j in range(s)]
+            )).ravel() for i in range(s) for j in range(s)])
 
         return guesses
 
@@ -642,9 +643,9 @@ class Hamiltonian:
         Ad, U, *_ = self._preconditioner_data
         diagd = Ad - (e - 1e-5)
 
-        dx_t = xp.einsum("Rrgi,Rrg->Rig", U, dx_, optimize=True)
+        dx_t = xp.einsum("Rrgi,Rrg->Rig", U, dx_)#, optimize=True)
         tr_t = dx_t / diagd
-        tr_ = xp.einsum('Rigr,Rig->Rrg', U, tr_t, optimize=True)
+        tr_ = xp.einsum('Rigr,Rig->Rrg', U, tr_t)#, optimize=True)
 
         return tr_.ravel()
 

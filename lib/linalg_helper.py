@@ -21,6 +21,7 @@
 #
 
 import xp
+import numpy  # only for *scalar* math
 from sys import stdout
 from pyscf.lib import logger
 
@@ -106,7 +107,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         log = logger.Logger(stdout, verbose)
 
     if tol_residual is None:
-        tol_residual = xp.sqrt(tol)
+        tol_residual = numpy.sqrt(tol)
 
     log.debug1('tol %g  tol_residual %g', tol, tol_residual)
 
@@ -114,7 +115,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         precond = make_diag_precond(precond)
 
     x0 = xp.atleast_2d(x0)
-    Nelem = x0[0].size
+    Nelem = xp.size(x0[0])
 
     max_cycle = min(max_cycle, Nelem)
     max_space = max_space + (nroots-1) * 4
@@ -198,9 +199,9 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
 
         if elast is None:
             de = e
-        elif elast.size != e.size:
+        elif xp.size(e) != xp.size(elast):
             log.debug('Number of roots different from the previous step (%d,%d)',
-                      e.size, elast.size)
+                      xp._size(e), xp._size(elast))
             de = e
         else:
             de = e - elast
@@ -225,7 +226,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
             break
 
         # remove subspace linear dependencies
-        keep = ~conv & (dx_norm > xp.sqrt(lindep))
+        keep = ~conv & (dx_norm > numpy.sqrt(lindep))
         xt = xt[keep]
 
         if len(xt) == 0:
@@ -290,7 +291,7 @@ def _qr(X):
 
 def _from_subspace(v, xs):
     v = xp.atleast_2d(v)
-    x0 = xp.einsum('ik,ij->kj', v, xs, optimize=True)
+    x0 = xp.einsum('ik,ij->kj', v, xs)#, optimize=True)
 
     return x0
 
@@ -302,7 +303,7 @@ def _sort_elast(elast, conv_last, vlast, v, log):
     of the current iterations.
     """
     head, nroots = vlast.shape
-    ovlp = abs(xp.dot(v[:head].conj().T, vlast))
+    ovlp = xp.abs(xp.einsum('ij,jk->ik', v[:head].conj().T, vlast))
     mapping = xp.argmax(ovlp, axis=1)
     found = xp.any(ovlp > .5, axis=1)
 

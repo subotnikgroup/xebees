@@ -96,16 +96,10 @@ def eye_lazy(N):
         col[i] = 1.0
         yield col
 
-def _iscomplex(A):
-    if xp.backend == 'torch':
-        return xp.is_complex(A)
-    else:
-        return xp.iscomplexobj(A)
-
 def phase_match(U):
     N, _, M = U.shape
 
-    if _iscomplex(U):
+    if xp.iscomplexobj(U):
         phase = lambda x, y: xp.exp(-1j*xp.angle(xp.dot(x.conj(), y)))
     else:
         phase = lambda x, y: xp.sign(xp.dot(x, y))
