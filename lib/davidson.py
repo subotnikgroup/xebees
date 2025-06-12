@@ -110,6 +110,14 @@ def phase_match(U):
         for n in range(M):
             U[i,:,n] *= phase(U[i-1,:,n], U[i,:,n])
 
+
+def phase_match_vec(U):
+    if xp.iscomplexobj(U):
+        phases = xp.exp(-1j*xp.angle(xp.einsum('idm,idm->im', U[:-1].conj(), U[1:])))
+    else:
+        phases = xp.sign(xp.einsum('idm,idm->im', U[:-1], U[1:]))
+
+    U[1:] *= phases[:, xp.newaxis, :]
         
 @timer
 def build_preconditioner(TR, Tr, Vgrid, min_guess=4):
