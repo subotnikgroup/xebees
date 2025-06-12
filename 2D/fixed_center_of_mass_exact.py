@@ -207,12 +207,17 @@ class Hamiltonian:
         with timer_ctx(f"Build preconditioner {args.preconditioner}"):
             self._preconditioner_data = builder()
 
-
         # Lock the object and protect arrays from writing
-        for key in self.__slots__:
-            if (hasattr(self, key) and
-                isinstance(member := super().__getattribute__(key), xp.ndarray)):
-                member.flags.writeable = False
+        if xp.backend != 'torch':
+            def recursive_lock(obj):
+                if isinstance(obj, xp.ndarray):
+                    obj.flags.writeable=False
+                elif isinstance(obj, tuple):
+                    (recursive_lock(x) for x in obj)
+
+            for key in self.__slots__:
+                if hasattr(self, key):
+                    recursive_lock(super().__getattribute__(key))
 
         self._hash = numpy.random.randint(2**63)  # self._make_hash()
         self._locked = True
@@ -368,11 +373,6 @@ class Hamiltonian:
                 total=Nelec, desc="Building U_v"))
         phase_match(U_v)
 
-        Ad_vn.flags.writeable = False
-        Ad_n.flags.writeable  = False
-        U_n.flags.writeable   = False
-        U_v.flags.writeable   = False
-
         return (Ad_vn, U_n, U_v, Ad_n)
 
     # NR x (NrNg) x (NrNg)
@@ -389,7 +389,7 @@ class Hamiltonian:
         # Hel = -1/2/μ · Te + V
         # Te  =  ∂²/∂r² + 1/4/r² + (1/r²)(∂²/∂γ²) + (1/R²)(∂²/∂γ²) - (1/R²)(J² + J2i(∂/∂γ))
         # N.B. self.ddr2 = ∂²/∂r² + 1/4/r²
-        Hel = xp.empty((NR, Nelec, Nelec), self.dtype)
+        Hel = xp.empty((NR, Nelec, Nelec), dtype=self.dtype)
 
         # build *bare* Te first
         # R-independent terms: ∂²/∂r² + (1/r²)(∂²/∂γ² + 1/4)
@@ -465,18 +465,13 @@ class Hamiltonian:
         Ad_vn = Ad_vn.T
         phase_match(U_v)
 
-        Ad_vn.flags.writeable = False
-        Ad_n.flags.writeable  = False
-        U_n.flags.writeable   = False
-        U_v.flags.writeable   = False
-
         return (Ad_vn, U_n, U_v, Ad_n)
 
     def _make_guess_BO(self, min_guess):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         # BO states are like: U_n[:,:,n]
         # vib states are like: U_v[n,:,v]
-        s = int(xp.ceil(xp.sqrt(min_guess)))
+        s = int(numpy.ceil(numpy.sqrt(min_guess)))
 
         guesses = [
             (U_n[:,:,n] * U_v[n,:,v,xp.newaxis]).ravel()
@@ -626,16 +621,13 @@ class Hamiltonian:
         assert(xp.mean(xp.abs(U.imag)) < 1e-12)
         U = U.real
 
-        Ad.flags.writeable = False
-        U.flags.writeable  = False
-
         return (Ad, U)
 
     def _make_guess_V1(self, min_guess):
         Ad, U, *_ = self._preconditioner_data
         NR, Nr, Ng = self.shape
         # States are U[R, :, Ng//2 + j, n]
-        s = int(xp.ceil(xp.sqrt(min_guess)))
+        s = int(numpy.ceil(numpy.sqrt(min_guess)))
         guesses = [
             xp.copy(xp.broadcast_to(
                 U[:, :, Ng//2 + j, i][:, :, xp.newaxis],
@@ -658,22 +650,6 @@ class Hamiltonian:
 
     # Below here are a bunch of things related to immutability
     # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
-    def _make_hash(self):
-        def recursive_hash(obj):
-            if isinstance(obj, xp.ndarray):
-                if obj.flags.writeable:
-                    raise ValueError("Refusing to hash mutable array")
-                return hash((obj.shape, obj.dtype, obj.tobytes()))
-            elif isinstance(obj, tuple):
-                return hash(tuple(recursive_hash(x) for x in obj))
-            else:
-                return hash(obj)
-
-        return reduce(
-            operator.xor,
-            (recursive_hash(getattr(self, key)) for key in self.__slots__ if key not in ['_locked', '_hash']),
-            0)
-
     def __hash__(self):
         if not getattr(self, '_locked', False):
             raise RuntimeError("Hash called before init")
