@@ -15,15 +15,15 @@ import xp
 import nvtx
 
 from constants import *
-from hamiltonian import  KE, KE_FFT, KE_Borisov, Gamma_etf_erf,inverse_weyl_transform
+from hamiltonian import  KE, KE_FFT, KE_Borisov, inverse_weyl_transform
 from davidson import get_davidson_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
 import concurrent.futures as cf
 import potentials
 from time import perf_counter
-import cupyx.scipy.sparse.linalg as cusparse_linalg
-
+import cupyx.scipy.sparse.linalg as cpx_linalg
+import cupyx.scipy.sparse as cpx_sp
 
 
 if __name__ == '__main__':
@@ -184,11 +184,10 @@ def compute_BO(H, Nelec):
     Ad_vn = xp.zeros((NR, Nelec))
 
     def diag_Hel(i, Ad_n=Ad_n):
-        v_diag = xp.diag(H.Vgrid[i,:,:].ravel())
-        Hel = -1/(2*H.mur)*(xp.kron(H.ddr2,xp.eye(H.shape[2])) +xp.kron(xp.diag(H.rinv2), H.ddg2))
-        val, vec = xp.linalg.eigh(Hel+v_diag)
+        v_diag = cpx_sp.diags(H.Vgrid[i,:,:].ravel())
+        Hel = -1/(2*H.mur)*(cpx_sp.kron(H.ddr2,cpx_sp.eye(H.shape[2]))+cpx_sp.kron(cpx_sp.diags(H.rinv2), H.ddg2))
+        val, vec = cpx_linalg.eigsh(Hel+v_diag,return_eigenvectors=False)
         Ad_n[i] = val[:Nelec]
-        U_n[i]  = vec[:,:Nelec]
 
     threadctl = ThreadpoolController()
     with cf.ThreadPoolExecutor(max_workers=16) as ex, threadctl.limit(limits=1):
@@ -197,8 +196,9 @@ def compute_BO(H, Nelec):
             total=NR, desc="Building electronic surfaces"))
 
     def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn):
-        Hbo = -1/(2*H.mu12)*H.ddR2 + xp.diag(Ad_n[:,i])
-        Ad_vn[:,i], U_v[i] = xp.linalg.eigh(Hbo)
+        Hbo = -1/(2*H.mu12)*H.ddR2 + cpx_sp.diags(Ad_n[:,i])
+        Ad_vn[:,i] = cpx_linalg.eigsh(Hb,return_eigenvectors=Falseo)
+        #Ad_vn[:,i], U_v[i] = xp.linalg.eigh(Hbo)
 
     with cf.ThreadPoolExecutor(max_workers=16) as ex, threadctl.limit(limits=1):
         list(tqdm(
@@ -206,6 +206,54 @@ def compute_BO(H, Nelec):
             total=Nelec, desc="Building vibrational states"))
     
     return Ad_vn, U_n, U_v, Ad_n
+
+
+@nvtx.annotate("gamma_build", color="red")
+def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2,mu12,r1e,r2e):
+
+    Ng = len(pg)
+    Nr = len(pr)
+
+    theta1 = xp.exp(-r1e)
+    theta2 = xp.exp(-r2e)
+    partition = theta1 + theta2
+
+    cosgamma = xp.cos(g)
+    singamma = xp.sin(g)
+    invr = 1/r[:,0]
+
+    t1 = cpx_sp.diags((theta1/partition).ravel())
+    t2 = cpx_sp.diags((theta2/partition).ravel())
+
+    px =  cpx_sp.kron(pr,cpx_sp.diags(cosgamma[0,:])) - cpx_sp.kron(cpx_sp.diags(invr),cpx_sp.diags(singamma[0,:]).dot(pg))
+    py =  cpx_sp.kron(pr,cpx_sp.diags(singamma[0,:])) + cpx_sp.kron(cpx_sp.diags(invr),cpx_sp.diags(cosgamma[0,:]).dot(pg))
+    
+    t1px = t1.dot(px)
+    pxt1 = px.dot(t1)
+    t2px = t2.dot(px)
+    pxt2 = px.dot(t2)
+    t1py = t1.dot(py)
+    pyt1 = py.dot(t1)
+    t2py = t2.dot(py)
+    pyt2 = py.dot(t2)
+
+    gammaetf1x = -0.5*(t1px + pxt1)
+    gammaetf1y = -0.5*(t1py + pyt1)
+    gammaetf2x = -0.5*(t2px + pxt2)
+    gammaetf2y = -0.5*(t2py + pyt2)
+
+    rcosg = cpx_sp.diags((r*cosgamma).ravel())
+    rsing = cpx_sp.diags((r*singamma).ravel())
+
+    J1 = -0.5*((rcosg-(cpx_sp.eye(Nr*Ng)*R*mu12/M_1)).dot(t1py+pyt1)-rsing.dot(t1px+pxt1))
+    J2 = -0.5*((rcosg+(cpx_sp.eye(Nr*Ng)*R*mu12/M_2)).dot(t2py+pyt2)-rsing.dot(t2px+pxt2))
+
+    #check signs
+    #flip signs because of the cross product
+    gammaerf1y = 1/R*(J1+J2)
+    gammaerf2y = -1/R*(J1+J2)
+
+    return gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y, gammaerf1y, gammaerf2y
 
 def compute_EPS(info):
     i, k, H, args, GammatotR, Gammatotth, GammasqtotR, Gammasqtotth, Hel, v_diag = info
@@ -269,23 +317,23 @@ if __name__ == '__main__':
     start_script = perf_counter()
     with nvtx.annotate("Building Hel no V", color="cyan"):
         t0 = perf_counter()
-        Hel=-1/(2*H.mur)*(xp.kron(H.ddr2,xp.eye(H.shape[2])) + xp.kron(xp.diag(H.rinv2), H.ddg2)) 
+        Hel = -1/(2*H.mur)*(cpx_sp.kron(H.ddr2,cpx_sp.eye(H.shape[2]))+cpx_sp.kron(cpx_sp.diags(H.rinv2), H.ddg2))
         #print("Building Hel no V time: ", perf_counter() - t0)
-
 
 
     for i in range(H.shape[0]):
 
-        v_diag = xp.diag(H.Vgrid[i,:,:].ravel())
+        v_diag = cpx_sp.diags(H.Vgrid[i,:,:].ravel())
         
         with nvtx.annotate("Building r1e", color="gray"):
             t0 = perf_counter()
             r1e, r2e = H.V(H.R[i], H.r_grid, H.g_grid, spitvals=True)
-            #print("Building r1e time: ", perf_counter() - t0)
             
         gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y, gammaerf1y, gammaerf2y = Gamma_etf_erf(H.R[i],H.r_grid,H.g_grid,H.ddr1,H.ddg1,H.M_1,H.M_2,H.mu12,r1e,r2e)
+        #print(gammaetf1x.toarray())
         
-       
+        #print(type(gammaetf1x), type(gammaetf1y), type(gammaetf2x), type(gammaetf2y), type(gammaerf1y), type(gammaerf2y))
+        
         with nvtx.annotate("gamma_construct", color="green"):
             M_1 = H.M_1
             M_2 = H.M_2
@@ -295,34 +343,20 @@ if __name__ == '__main__':
             gamma1y = gammaetf1y+gammaerf1y
             gamma2y = gammaetf2y+gammaerf2y
 
-            gammasq1x = xp.dot(gamma1x,gamma1x)
-            gammasq2x = xp.dot(gamma2x,gamma2x)
-            gammasq1y = xp.dot(gamma1y,gamma1y)
-            gammasq2y = xp.dot(gamma2y,gamma2y)
+            gammasq1x = gamma1x@gamma1x
+            gammasq2x = gamma2x@gamma2x
+            gammasq1y = gamma1y@gamma1y
+            gammasq2y = gamma2y@gamma2y
 
             Gammatotx = (M_2*gamma1x-M_1*gamma2x)/(M_1+M_2)
             Gammatoty = (M_2*gamma1y-M_1*gamma2y)/(M_1+M_2)  
 
-            Gammasqtotx = ((M_2**2*gammasq1x)+(M_1**2*gammasq2x)-(M_1*M_2*xp.dot(gamma1x,gamma2x))-(M_1*M_2*xp.dot(gamma2x,gamma1x)))/(M_1+M_2)**2
-            Gammasqtoty = ((M_2**2*gammasq1y)+(M_1**2*gammasq2y)-(M_1*M_2*xp.dot(gamma1y,gamma2y))-(M_1*M_2*xp.dot(gamma2y,gamma1y)))/(M_1+M_2)**2      
+            Gammasqtotx = ((M_2**2*gammasq1x)+(M_1**2*gammasq2x)-(M_1*M_2*gamma1x@gamma2x)-(M_1*M_2*gamma2x@gamma1x))/(M_1+M_2)**2
+            Gammasqtoty = ((M_2**2*gammasq1y)+(M_1**2*gammasq2y)-(M_1*M_2*gamma1y@gamma2y)-(M_1*M_2*gamma2y@gamma1y))/(M_1+M_2)**2      
             
-            #print("Execution time gamma construct: ", perf_counter() - t0)
-            
+        #print(type(Gammasqtotx),type(Gammasqtoty))   
         index_pairs = [(i, k, H, args, Gammatotx, Gammatoty, Gammasqtotx, Gammasqtoty, Hel, v_diag) for k in range(H.shape[0])]
 
-        #threadctl = ThreadpoolController()
-        #blasthreads = args.t
-
-        #blasthreads x max_workers =< args.t =< 48
-        #with cf.ThreadPoolExecutor(max_workers=16) as ex, threadctl.limit(limits=1):
-        #    results = list(tqdm(
-        #        ex.map(compute_EPS, index_pairs),
-        #        total=H.shape[0], desc="Building EPS"))
-
-        #for k,val in results:
-        #    EPS[i, k] = val
-
-        #k, eps_vals = compute_EPS(index_pairs)
 
         for j in range(H.shape[0]):
             print(i,j)
@@ -330,8 +364,10 @@ if __name__ == '__main__':
                 t0 = perf_counter()
                 Gammamat = -1j*Gammatotx*H.P[j]/H.mu12 -1j*Gammatoty*(H.J/H.R[i])/H.mu12    
                 Htot = Hel+v_diag+Gammamat
-                #print("Building Hel time: ", perf_counter() - t0)
-               
+                #print(type(Htot))
+
+            Htot_new = xp.copy(Htot.toarray())
+
             with nvtx.annotate("eigh", color="blue"):
                 t0 = perf_counter()
 
@@ -339,36 +375,38 @@ if __name__ == '__main__':
                     try:
                         print("cupy detected; trying diagonalization with torch backend")
                         import torch
-                        vals, vecs = torch.linalg.eigh(torch.from_dlpack(Hel))
+                        vals, vecs = torch.linalg.eigh(torch.from_dlpack(Htot_new))
                         e_approx, U_n = xp.asarray(vals), xp.asarray(vecs)
                     except ModuleNotFoundError:
                         print("failed; using cupy")
-                        e_approx, U_n = xp.linalg.eigh(Hel)
+                        e_approx, U_n = xp.linalg.eigh(Htot_new)
                 else:
                     #Ad_n, U_n = xp.linalg.eigh(Hel)
-                    e_approx = xp.linalg.eigvalsh(Htot)
-                #print(e_approx)
-                
-                #e_approx = cusparse_linalg.eigsh(Htot, k=5, which='SA', return_eigenvectors=False)
-                #print("diff",e_approx_orig[0]-e_approx[0])
-                #print("eigh time: ", perf_counter() - t0)
-            
+                    e_approx = xp.linalg.eigvalsh(Htot_new)
+                          
+            #with nvtx.annotate("eigh", color="blue"):
+            #    t0 = perf_counter()
+            #    Htot_new = xp.copy(Htot.toarray())
+            #    e_approx = cpx_linalg.eigsh(Htot,return_eigenvectors=False)
+            #    e_approx = cpx_linalg.eigsh(Htot,which='SA',return_eigenvectors=False)
+            #    #print(e_approx)
+            #    #e_approx = xp.linalg.eigvalsh(Htot_new)
+            #    print("e_approx",e_approx)
+                         
             eps_val = e_approx[0] + 0.5 * H.P[j]**2 / H.mu12 + 0.5 * (H.J/H.R[i])**2 /H.mu12
-
+            
             EPS[i,j] = eps_val
-
     np.savez("EPS.npz", EPS=EPS, R=H.R, P=H.P)
-    print("Wrote eigenvectors to", "EPS.npz")
+
     end_script = perf_counter()  
 
-    print("Cupy time",end_script-start_script)
-
+    print("Sparse time",end_script-start_script)     
+    
     HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
 
     with nvtx.annotate("final eigh", color="purple"):
         t0 = perf_counter()
         EPSv, psiPSv = xp.linalg.eigh(HPS)
-        
         #print("final eigh time: ", perf_counter() - t0)
     
     print("EPSv",EPSv)
