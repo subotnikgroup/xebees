@@ -97,6 +97,24 @@ def eye_lazy(N):
         yield col
 
 def phase_match(U):
+    N, *_ = U.shape
+
+    if xp.iscomplexobj(U):
+        # FIXME: This probably isn't right
+        for i in range(1, N):
+            dots = xp.einsum('dm,dm->m', U[i - 1].conj(), U[i])
+            phases = xp.ones_like(dots)
+            mask = xp.abs(dots) >= 1e-12
+            phases[mask] = xp.exp(-1j * xp.angle(dots[mask]))
+            U[i] *= phases[xp.newaxis, :]
+    else:
+        for i in range(1, N):
+            dots = xp.einsum('dm,dm->m', U[i - 1], U[i])
+            signs = xp.sign(dots)
+            U[i] *= signs[xp.newaxis, :]
+
+
+def phase_match_orig(U):
     N, _, M = U.shape
 
     if xp.iscomplexobj(U):
