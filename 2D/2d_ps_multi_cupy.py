@@ -4,7 +4,6 @@ import numpy as np
 from sys import stderr
 import argparse as ap
 from pathlib import Path
-#from pyscf import lib as pyscflib
 import jax
 import jax.numpy as jnp
 from functools import partial
@@ -334,7 +333,6 @@ if __name__ == '__main__':
                
             with nvtx.annotate("eigh", color="blue"):
                 t0 = perf_counter()
-
                 if xp.backend == 'cupy':
                     try:
                         print("cupy detected; trying diagonalization with torch backend")
@@ -347,6 +345,7 @@ if __name__ == '__main__':
                 else:
                     #Ad_n, U_n = xp.linalg.eigh(Hel)
                     e_approx = xp.linalg.eigvalsh(Htot)
+
                 #print(e_approx)
                 
                 #e_approx = cusparse_linalg.eigsh(Htot, k=5, which='SA', return_eigenvectors=False)
@@ -368,8 +367,7 @@ if __name__ == '__main__':
     with nvtx.annotate("final eigh", color="purple"):
         t0 = perf_counter()
         EPSv, psiPSv = xp.linalg.eigh(HPS)
-        
-        #print("final eigh time: ", perf_counter() - t0)
+        print("final eigh time: ", perf_counter() - t0)
     
     print("EPSv",EPSv)
 

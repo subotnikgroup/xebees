@@ -124,7 +124,6 @@ def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False):
 
     return T / dx**2
 
-
 def KE_ColbertMiller_ab(N, dx, mass=None, bare=False):
     T = xp.zeros((N, N))
 
@@ -252,27 +251,25 @@ def inverse_weyl_transform(E, NR, R, P):
     dR = R[1] - R[0]
     R_half = xp.linspace(R[0] - dR/2, R[-1] + dR/2, NR + 1)
 
-    # Build EPP
-    for i in range(NR):
-        for j in range(NR):
-            for k in range(NR):
-                EPP[j, i] += xp.exp(-1j * R[k] * P[j]) * E[k, i] / xp.sqrt(NR)
+    q1_idx, q2_idx = xp.meshgrid(xp.arange(NR), xp.arange(NR), indexing='ij')
+    mid_idx = (q1_idx + q2_idx) // 2
+    mask = ((q1_idx - q2_idx) % 2 == 0)
+    
+    mask2 = ((q1_idx - q2_idx) % 2 == 1)
+    mid_idx2 = (q1_idx + q2_idx + 1) // 2
+    
+    R_diff = R[q1_idx][:, :, None] - R[q2_idx][:, :, None]   # (NR, NR, 1) - (NR, NR, 1) * P[j] → broadcast over j
+    phase = xp.exp(-1j * R_diff * P[None, None, :])          # shape (NR, NR, NR)
 
-    # Build EPS_half
-    for i in range(NR):
-        for j in range(NR + 1):
-            for k in range(NR):
-                EPS_half[j, i] += xp.exp(1j * R_half[j] * P[k]) * EPP[k, i] / xp.sqrt(NR)
+    # E[mid_idx, j] → shape (NR, NR, NR)
+    E_mid = E[mid_idx, :]  # shape (NR, NR, NR)
+    E_mid2 = EPS_half[mid_idx2, :] 
 
-    # Build HPS
-    for j in range(NR):
-        for q1 in range(NR):
-            for q2 in range(NR):
-                if (q1 - q2) % 2 == 0:
-                    HPS[q1, q2] += (xp.exp(-1j * (R[q1] - R[q2]) * P[j])
-                                    * E[(q1 + q2) // 2, j] / NR)
-                else:
-                    idx = (q1 + q2 + 1) // 2
-                    HPS[q1, q2] += (xp.exp(-1j * (R[q1] - R[q2]) * P[j])
-                                    * EPS_half[idx, j] / NR)
+    # Einsum contraction over j
+    HPS_part1 = xp.einsum('qpj,qpj->qp', phase, E_mid) / NR
+    HPS_part2 = xp.einsum('qpj,qpj->qp', phase, E_mid2) / NR
+
+    # Apply parity mask
+    HPS = mask*HPS_part1+mask2*HPS_part2
+
     return HPS
