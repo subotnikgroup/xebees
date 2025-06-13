@@ -354,10 +354,11 @@ def _fill_heff_hermitian(heff, ax, xt, axt):
     block_A = xt @ axt.T.conj()  # shape (nrow, nrow)
     heff[row0:row1, row0:row1] = (block_A + block_A.T.conj()) / 2
 
-    # === Block B: off-diagonal (row0 x nrow), symmetric ===
-    block_B = xt @ ax[:row0].T.conj()  # shape (nrow, row0)
-    heff[row0:row1, :row0] = block_B
-    heff[:row0, row0:row1] = block_B.T.conj()
+    if row0 > 0: # cupynumeric requires this test
+        # === Block B: off-diagonal (row0 x nrow), symmetric ===
+        block_B = xt @ ax[:row0].T.conj()  # shape (nrow, row0)
+        heff[row0:row1, :row0] = block_B
+        heff[:row0, row0:row1] = block_B.T.conj()
 
     return heff
 
