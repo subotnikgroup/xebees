@@ -2,6 +2,7 @@ import xp
 from scipy.special import factorial
 import numpy
 from debug import timer
+import nvtx
 
 def get_stencil_coefficients(stencil_size, derivative_order):
     if stencil_size % 2 == 0:
@@ -193,49 +194,54 @@ def solve_BO_surfaces(Tr, V):
 def solve_BOv(TR, Tr, V):
     return xp.linalg.eigvalsh(TR + xp.diag(solve_BO_surface(Tr,V)))
 
-#@timer
-def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2):
-    """
-    Gamma operator
-    """
-    #print("building etf")
-    
-    mu12 = M_1*M_2/(M_1+M_2)
-    sigma = 1
+@nvtx.annotate("gamma_build", color="red")
+def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2,mu12,r1e,r2e):
+
     Ng = len(pg)
     Nr = len(pr)
-    kappa2 = R*r*xp.cos(g)    
-    r1e = (r)**2 + (R)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
-    re2 = (r)**2 + (R)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
 
-    theta1 = xp.exp(-r1e / sigma**2)
-    theta2 = xp.exp(-re2 / sigma**2)
+    theta1 = xp.exp(-r1e)
+    theta2 = xp.exp(-r2e)
     partition = theta1 + theta2
-    
+
+    cosgamma = xp.cos(g)
+    singamma = xp.sin(g)
+    invr = 1/r[:,0]
+
     t1 = xp.diag((theta1/partition).ravel())
     t2 = xp.diag((theta2/partition).ravel())
 
-    px =  xp.kron(pr,xp.diag(xp.cos(g[0,:]))) - xp.kron(xp.diag(1/r[:,0]),xp.diag(xp.sin(g[0,:]))@pg)
-    py =  xp.kron(pr,xp.diag(xp.sin(g[0,:]))) + xp.kron(xp.diag(1/r[:,0]),xp.diag(xp.cos(g[0,:]))@pg)
+    px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),xp.dot(xp.diag(singamma[0,:]),pg))
+    py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),xp.dot(xp.diag(cosgamma[0,:]),pg))
     
-    gammaetf1x = -0.5*(t1 @ px + px @ t1)
-    gammaetf1y = -0.5*(t1 @ py + py @ t1)
-    gammaetf2x = -0.5*(t2 @ px + px @ t2)
-    gammaetf2y = -0.5*(t2 @ py + py @ t2)
+    t1px = xp.dot(t1,px)
+    pxt1 = xp.dot(px,t1)
+    t2px = xp.dot(t2,px)
+    pxt2 = xp.dot(px,t2)
+    t1py = xp.dot(t1,py)
+    pyt1 = xp.dot(py,t1)
+    t2py = xp.dot(t2,py)
+    pyt2 = xp.dot(py,t2)
 
-    rcosg = xp.kron(xp.diag(r[:,0]),xp.diag(xp.cos(g[0,:])))
-    rsing = xp.kron(xp.diag(r[:,0]),xp.diag(xp.sin(g[0,:])))
-    
-    J1 = -0.5*((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1))@(t1@py+py@t1)-rsing@((t1@px+px@t1)))
-    J2 = -0.5*((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2))@(t2@py+py@t2)-rsing@((t2@px+px@t2)))
+    gammaetf1x = -0.5*(t1px + pxt1)
+    gammaetf1y = -0.5*(t1py + pyt1)
+    gammaetf2x = -0.5*(t2px + pxt2)
+    gammaetf2y = -0.5*(t2py + pyt2)
+
+    rcosg = xp.diag((r*cosgamma).ravel())
+    rsing = xp.diag((r*singamma).ravel())
+
+    J1 = -0.5*(xp.dot((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1)),(t1py+pyt1))-xp.dot(rsing,((t1px+pxt1))))
+    J2 = -0.5*(xp.dot((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2)),(t2py+pyt2))-xp.dot(rsing,((t2px+pxt2))))
 
     #check signs
     #flip signs because of the cross product
     gammaerf1y = 1/R*(J1+J2)
     gammaerf2y = -1/R*(J1+J2)
-    
+
     return gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y, gammaerf1y, gammaerf2y
 
+@nvtx.annotate("inverse_weyl_transform", color="pink")
 def inverse_weyl_transform(E, NR, R, P):
     """
     Perform the inverse Weyl transform 
