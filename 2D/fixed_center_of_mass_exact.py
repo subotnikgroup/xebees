@@ -441,15 +441,21 @@ class Hamiltonian:
         #         print(result)
         #     Ad_n, U_n = xp.linalg.eigh(Hel)
 
-        with timer_ctx(f"Diag  Hel"):
-            Ad_n, U_n = xp.linalg.eigh(Hel)
+        #with timer_ctx(f"Diag  Hel"):
+        #    Ad_n, U_n = xp.linalg.eigh(Hel)
 
-        # if xp.backend == 'cupy':
-        #     try:
-        #         import torch
-        #         Ad_n, U_n = torch.linalg.eigh(torch.from_dlpack(Hel))
-        #     except:
-        #         Ad_n, U_n = xp.linalg.eigh(Hel)
+        with timer_ctx(f"Diag  Hel"):
+            if xp.backend == 'cupy':
+                try:
+                    print("cupy detected; trying diagonalization with torch backend")
+                    import torch
+                    vals, vecs = torch.linalg.eigh(torch.from_dlpack(Hel))
+                    Ad_n, U_n = xp.asarray(vals), xp.asarray(vecs)
+                except ModuleNotFoundError:
+                    print("failed; using cupy")
+                    Ad_n, U_n = xp.linalg.eigh(Hel)
+            else:
+                Ad_n, U_n = xp.linalg.eigh(Hel)
 
         with timer_ctx("Phase match U_n"):
             phase_match(U_n)
