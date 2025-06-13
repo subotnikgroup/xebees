@@ -422,7 +422,7 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        # if xp.backend == 'cupy':
+        # if xp.backend == 'cupy' or xp.backend == 'cupynumeric':
         #     from cupyx.profiler import time_range as timer_ctx
         # else:
         #     from debug import timer_ctx
@@ -445,32 +445,53 @@ class Hamiltonian:
         #    Ad_n, U_n = xp.linalg.eigh(Hel)
 
         #FIXME: fast phase matching broken with torch U_n
-        with timer_ctx(f"Diag  Hel"):
-            if False and xp.backend == 'cupy':
-                try:
-                    print("cupy detected; trying diagonalization with torch backend")
-                    import torch
-                    vals, vecs = torch.linalg.eigh(torch.from_dlpack(Hel))
-                    Ad_n, U_n = xp.asarray(vals), xp.asarray(vecs)
-                except ModuleNotFoundError:
-                    print("failed; using cupy")
-                    Ad_n, U_n = xp.linalg.eigh(Hel)
-            else:
-                Ad_n, U_n = xp.linalg.eigh(Hel)
+        # with timer_ctx(f"Diag  Hel"):
+        #     if xp.backend == 'cupy':
+        #         try:
+        #             print("cupy detected; trying diagonalization with torch backend")
+        #             import torch
+        #             vals, vecs = torch.linalg.eigh(torch.from_dlpack(Hel))
+        #             Ad_n, U_n = xp.asarray(vals), xp.asarray(vecs)
+        #         except ModuleNotFoundError:
+        #             print("failed; using cupy")
+        #             Ad_n, U_n = xp.linalg.eigh(Hel)
+        #     else:
+        #         Ad_n, U_n = xp.linalg.eigh(Hel)
 
+        if xp.backend == 'cupy':
+            try:
+                print("cupy detected; trying diagonalization with torch backend")
+                import torch
+            except ModuleNotFoundError:
+                print("failed; using cupy")
+                batch_eigh = xp.linalg.eigh
+            else:
+                def torch_eigh(H):
+                    vals, vecs = torch.linalg.eigh(torch.from_dlpack(H))
+                    return xp.asarray(vals), xp.asarray(vecs)
+                batch_eigh = torch_eigh
+        else:
+            batch_eigh = xp.linalg.eigh
+
+        with timer_ctx(f"Diag  Hel"):
+            Ad_n, U_n = batch_eigh(Hel)  # xp.linalg.eigh(Hel)
+                
         with timer_ctx("Phase match U_n"):
-            phase_match(U_n)
+            phase_match_orig(U_n) #phase_match(U_n)
 
         NR, Nelec, _ = Hel.shape
 
-        print("Building U_v")
-        Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
-        Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
-        Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
+        with timer_ctx("Build Hbo"):
+            Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+            Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
+            Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
 
-        Ad_vn, U_v = xp.linalg.eigh(Hbo)
-        Ad_vn = Ad_vn.T
-        phase_match(U_v)
+        with timer_ctx("Diag  Hbo"):
+            Ad_vn, U_v = batch_eigh(Hbo)  # xp.linalg.eigh(Hbo)
+            Ad_vn = Ad_vn.T
+
+        with timer_ctx("Phase match U_v"):
+            phase_match_orig(U_v) # phase_match(U_v)
 
         return (Ad_vn, U_n, U_v, Ad_n)
 
