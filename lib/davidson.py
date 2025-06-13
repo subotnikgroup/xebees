@@ -4,7 +4,7 @@ import xp
 import numpy as np
 from os import sysconf
 from debug import timer, timer_ctx
-from pyscf import lib
+import linalg_helper as lib
 from scipy.interpolate import RegularGridInterpolator
 #import linalg_helper as lib
 
@@ -269,7 +269,6 @@ def solve_davidson(TR, Tr, Vgrid,
         nroots=num_state,
         max_cycle=iterations,
         verbose=verbosity,
-        follow_state=False,
         max_space=max_subspace,
         max_memory=get_davidson_mem(0.75),
         tol=1e-12,
