@@ -23,7 +23,7 @@
 import xp
 import numpy  # only for *scalar* math
 from sys import stdout
-from pyscf.lib import logger
+import logger
 
 from debug import timer, timer_ctx
 from time import perf_counter
