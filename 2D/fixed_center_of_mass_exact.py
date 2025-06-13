@@ -41,7 +41,7 @@ import linalg_helper as lib
 import potentials
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
-from davidson import phase_match, phase_match_vec, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
+from davidson import phase_match, phase_match_orig, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
 
@@ -444,8 +444,9 @@ class Hamiltonian:
         #with timer_ctx(f"Diag  Hel"):
         #    Ad_n, U_n = xp.linalg.eigh(Hel)
 
+        #FIXME: fast phase matching broken with torch U_n
         with timer_ctx(f"Diag  Hel"):
-            if xp.backend == 'cupy':
+            if False and xp.backend == 'cupy':
                 try:
                     print("cupy detected; trying diagonalization with torch backend")
                     import torch
