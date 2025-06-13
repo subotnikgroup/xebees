@@ -252,14 +252,18 @@ wheels = [
 ]
 
 [[package]]
-name = "cupy"
+name = "cupy-cuda12x"
 version = "13.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastrlock" },
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/20/ca/951248eb2554b075b251349968fbb4977c9986088ea17ffc3bfb449046ca/cupy-13.4.1.tar.gz", hash = "sha256:9654730da3f7122ba3fe99ce951247e299f3f9c23449a884ba9914444845f0cd", size = 3498639, upload-time = "2025-03-21T07:26:13.127Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/6d/a5e08d225b1664b400fb4a87262878d315267c310b93d43efd5b7b0b1f64/cupy_cuda12x-13.4.1-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:a714db3dae534b9d869951366ae2431f3e72036b07827927ffccd24076507ca8", size = 118354020, upload-time = "2025-03-21T07:25:10.378Z" },
+    { url = "https://files.pythonhosted.org/packages/56/58/5bfc83265455ff783d5be65451392a6920a90fe8996a091006ba02512848/cupy_cuda12x-13.4.1-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:06103dd2dc2ff7f36c67d2d01cb658befd68da350fae78a0e113fbab6895755f", size = 105273045, upload-time = "2025-03-21T07:25:17.966Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/e9/abc5ae5d8f6e05fb44c83105f8663d46c1bdfc9d0039fbaf21e79f51a985/cupy_cuda12x-13.4.1-cp312-cp312-win_amd64.whl", hash = "sha256:7d73a32b3b49311cf384f2dd9c686cc9244435b2288d628568af6a77262964ad", size = 82066008, upload-time = "2025-03-21T07:25:24.372Z" },
+]
 
 [[package]]
 name = "cutensor-cu12"
@@ -328,13 +332,14 @@ name = "exact-grid-quantum"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "cupy" },
+    { name = "cupy-cuda12x" },
     { name = "jax" },
     { name = "line-profiler" },
     { name = "matplotlib" },
     { name = "notebook" },
     { name = "numpy" },
     { name = "nvidia-cupynumeric" },
+    { name = "nvtx" },
     { name = "threadpoolctl" },
     { name = "torch" },
     { name = "tqdm" },
@@ -342,13 +347,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cupy", specifier = ">=13.4.1" },
+    { name = "cupy-cuda12x", specifier = ">=13.4.1" },
     { name = "jax" },
     { name = "line-profiler", specifier = ">=4.2.0" },
     { name = "matplotlib" },
     { name = "notebook" },
     { name = "numpy" },
     { name = "nvidia-cupynumeric", specifier = ">=25.3.2" },
+    { name = "nvtx", specifier = ">=0.2.12" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
     { name = "torch", specifier = ">=2.7.1" },
     { name = "tqdm", specifier = ">=4.67.1" },
@@ -1340,6 +1346,17 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/9a/fff8376f8e3d084cd1530e1ef7b879bb7d6d265620c95c1b322725c694f4/nvidia_nvtx_cu12-12.6.77-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:b90bed3df379fa79afbd21be8e04a0314336b8ae16768b58f2d34cb1d04cd7d2", size = 89276, upload-time = "2024-11-20T17:38:27.621Z" },
     { url = "https://files.pythonhosted.org/packages/9e/4e/0d0c945463719429b7bd21dece907ad0bde437a2ff12b9b12fee94722ab0/nvidia_nvtx_cu12-12.6.77-py3-none-manylinux2014_x86_64.whl", hash = "sha256:6574241a3ec5fdc9334353ab8c479fe75841dbe8f4532a8fc97ce63503330ba1", size = 89265, upload-time = "2024-10-01T17:00:38.172Z" },
+]
+
+[[package]]
+name = "nvtx"
+version = "0.2.12"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/05/160dc24b6cd1e21e5b00d55a46abac5802ed7c15c675e6ce25febad2b0d7/nvtx-0.2.12.tar.gz", hash = "sha256:b871fae9b80b004e624b5755291799794287016fa6a0c8fd0fb3255393ae3bc8", size = 110848, upload-time = "2025-05-26T10:32:33.824Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/e4/944e63039a0d652c843ecffb42700e2b4f596b745ac9ac6ebed937f1bce5/nvtx-0.2.12-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9ea22a86eca22fd52e3c2905654182da1fcebea6f0107e87d7dc4ec6871604ca", size = 539647, upload-time = "2025-05-25T08:52:12.911Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/7b/6e25716c92039a3ecc2f6f4e1380b5492b0d23af78ea862cb84e8ffe0d7b/nvtx-0.2.12-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9a279d880c27ec8c72632a0685456c170e7b12da2839c861ee461c121692aea6", size = 543614, upload-time = "2025-05-25T08:44:44.678Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/96/eb1078d7509b72e3e4b6dd7ff12a698951e81dcc5f20a3ad7f35d7455700/nvtx-0.2.12-cp312-cp312-win_amd64.whl", hash = "sha256:2f93e07add2544a85c202b3c710945b54b3abb6660a6a7e447395cb024938b35", size = 98894, upload-time = "2025-05-25T08:42:59.068Z" },
 ]
 
 [[package]]

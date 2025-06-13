@@ -1,6 +1,7 @@
 name : ps-exact
-channels: 
-  - legate/label/rc
+channels:
+  - legate/label/experimental 
+#  - legate/label/rc
   - pytorch
   - conda-forge
 dependencies:
@@ -13,7 +14,9 @@ dependencies:
   - threadpoolctl=3.6.0
   - line_profiler
   - cupy
-  - cupynumeric=25.05.00.rc3
+  - nvtx
+#  - cupynumeric=25.05.00.rc3
+  - cupynumeric
   - pytorch-cuda
   - pytorch
   - torchvision
