@@ -3,7 +3,6 @@ name = "exact-grid-quantum"
 version = "0.1.0"
 requires-python = ">=3.12, <3.13"
 dependencies = [
-    "pyscf",
     "numpy",
     "jax",
     "matplotlib", # For running Jupyter notebooks
@@ -11,6 +10,9 @@ dependencies = [
     "tqdm>=4.67.1",
     "threadpoolctl>=3.6.0",
     "line-profiler>=4.2.0",
+    "cupy>=13.4.1",
+    "nvidia-cupynumeric>=25.3.2",
+    "torch>=2.7.1",
 ]
 
 [tool.setuptools.packages.find]
