@@ -30,7 +30,7 @@ from itertools import product
 from functools import reduce, partial
 import operator
 
-import os, sys 
+import os, sys
 sys.path.append(os.path.abspath("lib"))
 
 import xp
@@ -142,7 +142,7 @@ class Hamiltonian:
 
         self.R_grid, self.r_grid, self.g_grid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
-        
+
         self.shape = self.Vgrid.shape
         self.size = xp.prod(xp.asarray(self.shape))
 
@@ -170,7 +170,7 @@ class Hamiltonian:
         #self.ddR2, _ = KE_Borisov(self.R, bare=True)
         self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False) + xp.diag(1/4/self.R**2)
         self.ddr2, _ = KE_Borisov(self.r, bare=True)
-        
+
         self.ddr_lab2, _ = KE_Borisov(self.r_lab, bare=True)
         self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False)
 
@@ -190,10 +190,10 @@ class Hamiltonian:
 
 
         if not hasattr(args, "preconditioner"):
-            args.preconditioner = 'naive'        
+            args.preconditioner = 'naive'
 
         self.args = args
-            
+
         builder, self.preconditioner, self.make_guess = {
             'BO':     (self._build_preconditioner_BO, self._preconditioner_BO_batch,    self._make_guess_BO),
             'BO-int': (self._build_preconditioner_BO_interp, self._preconditioner_BO_interp,    self._make_guess_BO_interp),
@@ -235,7 +235,7 @@ class Hamiltonian:
 
         r1e = xp.sqrt(xp.where(r1e2 < 0, 0, r1e2))
         r2e = xp.sqrt(xp.where(r2e2 < 0, 0, r2e2))
-        
+
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
 
@@ -317,63 +317,29 @@ class Hamiltonian:
         print("Building BO spectrum")
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
-        Ad_n  = xp.zeros((NR, Nelec))
-        Ad_vn = xp.zeros((NR, Nelec))
 
-        def diag_Hel(i, Ad_n=Ad_n):
-            Ad_n[i] = xp.linalg.eigvalsh(self.build_Hel(i))
+        if xp.backend == 'numpy':
+            threadctl = ThreadpoolController()
+            with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+                result = ex.map(lambda i: (i, xp.linalg.eigvalsh(self.build_Hel(i))), range(NR))
+                Ad_n  = xp.zeros((NR, Nelec))
+                for i, a in result:
+                    Ad_n[i] = a
+        else:
+            Ad_n = xp.linalg.eigvalsh(self.build_Hel())
 
-        threadctl = ThreadpoolController()
-        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
-            list(tqdm(
-                ex.map(diag_Hel, range(NR)),
-                total=NR, desc="Building electronic surfaces"))
+        Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+        Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
+        Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
 
-        def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn):
-            Hbo = -1/(2*self.mu)*(self.ddR2) + xp.diag(Ad_n[:,i])
-            Ad_vn[:,i] = xp.linalg.eigvalsh(Hbo)
-
-        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
-            list(tqdm(
-                ex.map(diag_Hbo, range(Nelec)),
-                total=Nelec, desc="Building vibrational states"))
+        Ad_vn = xp.linalg.eigvalsh(Hbo)  # xp.linalg.eigh(Hbo)
+        Ad_vn = Ad_vn.T
 
         for i in range(nroots):
             with xp.printoptions(linewidth=xp.inf):
                 print(f"BO state {i} spectrum:", Ad_vn[:nroots,i])
         return (Ad_vn, Ad_n)  # energies are Ad_vn[v,n]
 
-
-    def _build_preconditioner_BO_threaded(self):
-        NR, Nr, Ng = self.shape
-        Nelec = Nr*Ng
-
-        U_n   = xp.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
-        U_v   = xp.zeros((Nelec, NR, NR))
-        Ad_n  = xp.zeros((NR, Nelec))
-        Ad_vn = xp.zeros((NR, Nelec))
-
-        def diag_Hel(i, Ad_n=Ad_n, U_n=U_n):
-            Ad_n[i], U_n[i] = xp.linalg.eigh(self.build_Hel(i))
-
-        threadctl = ThreadpoolController()
-        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
-            list(tqdm(
-                ex.map(diag_Hel, range(NR)),
-                total=NR, desc="Building U_n"))
-        phase_match(U_n)
-
-        def diag_Hbo(i, Ad_n=Ad_n, Ad_vn=Ad_vn, U_v=U_v):
-            Hbo = -1/(2*self.mu)*self.ddR2 + xp.diag(Ad_n[:,i])
-            Ad_vn[:,i], U_v[i] = xp.linalg.eigh(Hbo)
-
-        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex, threadctl.limit(limits=1):
-            list(tqdm(
-                ex.map(diag_Hbo, range(Nelec)),
-                total=Nelec, desc="Building U_v"))
-        phase_match(U_v)
-
-        return (Ad_vn, U_n, U_v, Ad_n)
 
     # NR x (NrNg) x (NrNg)
     def build_Hel(self, Ridx=None):
@@ -411,12 +377,12 @@ class Hamiltonian:
 
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
         Hel[:, xp.arange(Nelec), xp.arange(Nelec)] +=(  # extract diagonal at every R
-            xp.reshape(self.Vgrid[Ridx], (NR, Nelec))         # + V
+            xp.reshape(self.Vgrid[Ridx], (NR, Nelec))   # + V
         )
 
         return xp.squeeze(Hel)
 
-    # FIXME: why is this slower than the explicitly threaded version above?
+
     def _build_preconditioner_BO(self):
         print("Building U_n")
         NR, Nr, Ng = self.shape
@@ -426,7 +392,7 @@ class Hamiltonian:
         #     from cupyx.profiler import time_range as timer_ctx
         # else:
         #     from debug import timer_ctx
-        
+
         with timer_ctx("Build Hel"):
             Hel = self.build_Hel()
 
@@ -441,41 +407,32 @@ class Hamiltonian:
         #         print(result)
         #     Ad_n, U_n = xp.linalg.eigh(Hel)
 
-        #with timer_ctx(f"Diag  Hel"):
-        #    Ad_n, U_n = xp.linalg.eigh(Hel)
-
-        #FIXME: fast phase matching broken with torch U_n
-        # with timer_ctx(f"Diag  Hel"):
-        #     if xp.backend == 'cupy':
-        #         try:
-        #             print("cupy detected; trying diagonalization with torch backend")
-        #             import torch
-        #             vals, vecs = torch.linalg.eigh(torch.from_dlpack(Hel))
-        #             Ad_n, U_n = xp.asarray(vals), xp.asarray(vecs)
-        #         except ModuleNotFoundError:
-        #             print("failed; using cupy")
-        #             Ad_n, U_n = xp.linalg.eigh(Hel)
-        #     else:
-        #         Ad_n, U_n = xp.linalg.eigh(Hel)
-
+        batch_eigh = xp.linalg.eigh
         if xp.backend == 'cupy':
             try:
                 print("cupy detected; trying diagonalization with torch backend")
                 import torch
             except ModuleNotFoundError:
-                print("failed; using cupy")
-                batch_eigh = xp.linalg.eigh
+                print("torch not found; using cupy")
             else:
                 def torch_eigh(H):
                     vals, vecs = torch.linalg.eigh(torch.from_dlpack(H))
                     return xp.asarray(vals), xp.asarray(vecs)
                 batch_eigh = torch_eigh
-        else:
-            batch_eigh = xp.linalg.eigh
 
         with timer_ctx(f"Diag  Hel"):
-            Ad_n, U_n = batch_eigh(Hel)  # xp.linalg.eigh(Hel)
-                
+            if xp.backend == 'numpy':
+                threadctl = ThreadpoolController()
+                with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+                    result = ex.map(lambda i: (i, xp.linalg.eigh(self.build_Hel(i))), range(NR))
+                    U_n   = xp.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
+                    Ad_n  = xp.zeros((NR, Nelec))
+                    for i, (a, u) in result:
+                        Ad_n[i] = a
+                        U_n[i]  = u
+            else:
+                Ad_n, U_n = batch_eigh(Hel)
+
         with timer_ctx("Phase match U_n"):
             phase_match_orig(U_n) #phase_match(U_n)
 
@@ -517,10 +474,10 @@ class Hamiltonian:
         diagd = Ad_vn - (e - 1e-5)
         NR, Nr, Ng = self.shape
         dx_ = dx.reshape((NR, Nr*Ng))
-        
+
         # YOLO: truncate it
         # Nelec=(3*Nr*Ng)//4
-        
+
         # Ad_vn_t = Ad_vn[:, :Nelec]
         # diagd_t = Ad_vn_t - (e - 1e-5)
         # U_n_t = U_n[:,:, :Nelec]
@@ -530,15 +487,11 @@ class Hamiltonian:
         #     U_n_t, U_v_t, 1.0 / diagd_t, U_v_t, U_n_t, dx_, optimize=True
         # )
 
-        #dx_vn = jnp.einsum('nji,jqn,jq->in', U_v, U_n, dx_, optimize=True)
-        #tr_vn = dx_vn / diagd
-        #tr_ = jnp.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
-
         tr_ = xp.einsum(
             'Rij,jRq,qj,jmq,mpj,mp->Ri',
             U_n, U_v, 1.0 / diagd, U_v, U_n, dx_#, optimize=True
         )
-        
+
         return tr_.ravel()
 
     #@partial(jax.jit, static_argnums=0)
@@ -562,7 +515,7 @@ class Hamiltonian:
 
     def _preconditioner_BO_interp(self, dx, e, x0):
         return
-    
+
     def _build_preconditioner_BO_interp(self):
         args = self.args
         args.NR //= 2
@@ -573,16 +526,16 @@ class Hamiltonian:
         H = Hamiltonian(args)
         Ad_vn, U_n, U_v, *_ = H._preconditioner_data
         print(Ad_vn.shape, U_n.shape, U_v.shape)
-        
+
         exit()
         # pseudo-code...
-        # H_coarse = 
-        
+        # H_coarse =
+
         return
-    
+
     def _make_guess_BO_interp(self, min_guess):
         return
-    
+
     def _build_preconditioner_V1(self, min_guess=4):
         NR, Nr, Ng = self.shape
         dg = self.g[1] - self.g[0]
