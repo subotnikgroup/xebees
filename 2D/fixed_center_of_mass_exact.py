@@ -493,7 +493,10 @@ class Hamiltonian:
         with timer_ctx("Phase match U_v"):
             phase_match_orig(U_v) # phase_match(U_v)
 
-        return (Ad_vn, U_n, U_v, Ad_n)
+        pc = (Ad_vn, U_n, U_v, Ad_n)
+        size = sum([x.nbytes for x in pc]) / 1024**2
+        print(f"Preconditioner requires {int(size)}MB.")
+        return pc
 
     def _make_guess_BO(self, min_guess):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
