@@ -816,9 +816,11 @@ if __name__ == '__main__':
 
     if args.bo_spectrum:
         e_bo = xp.sort(Ad_vn.flatten())
-        ex = e_approx[1] - e_approx[0]
         bo = e_bo[1] - e_bo[0]
-        print("exact, bo, error:", ex, bo, (bo-ex)/ex)
+        print("BO gap", bo)
+        if all(conv):
+            ex = e_approx[1] - e_approx[0]
+            print("exact, bo, error:", ex, bo, (bo-ex)/ex)
 
     if args.save is not None:
         if all(conv):
