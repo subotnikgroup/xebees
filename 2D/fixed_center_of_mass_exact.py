@@ -318,13 +318,22 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
+        Nelec_thresh = 2e4
+        memory_constrained = Nelec > Nelec_thresh
+
+        print(f"memory constraint threshold = {Nelec_thresh}, {memory_constrained}")
+
         if xp.backend == 'numpy':
             threadctl = ThreadpoolController()
             with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
-                result = ex.map(lambda i: (i, xp.linalg.eigvalsh(self.build_Hel(i))), range(NR))
-                Ad_n  = xp.zeros((NR, Nelec))
+                result = list(tqdm(ex.map(lambda i: (i, xp.linalg.eigvalsh(self.build_Hel(i))), range(NR)), total=NR))
+                Ad_n = xp.zeros((NR, Nelec))
                 for i, a in result:
                     Ad_n[i] = a
+        elif memory_constrained:
+            Ad_n  = xp.zeros((NR, Nelec))
+            for i in tqdm(range(NR)):
+                Ad_n[i] = xp.linalg.eigvalsh(self.build_Hel(i))
         else:
             Ad_n = xp.linalg.eigvalsh(self.build_Hel())
 
