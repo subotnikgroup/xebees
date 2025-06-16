@@ -10,9 +10,10 @@ dependencies = [
     "tqdm>=4.67.1",
     "threadpoolctl>=3.6.0",
     "line-profiler>=4.2.0",
-    "cupy>=13.4.1",
     "nvidia-cupynumeric>=25.3.2",
     "torch>=2.7.1",
+    "cupy-cuda12x>=13.4.1",
+    "nvtx>=0.2.12",
 ]
 
 [tool.setuptools.packages.find]
