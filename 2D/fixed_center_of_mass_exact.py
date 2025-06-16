@@ -318,7 +318,7 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        mem_thresh = 1e6
+        mem_thresh = 1e5
         memory_constrained = self.size > mem_thresh
 
         print(f"memory constraint threshold = {mem_thresh}, {memory_constrained}")
