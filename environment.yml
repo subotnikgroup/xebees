@@ -7,6 +7,7 @@ dependencies:
   - python=3.12
   - numpy
   - jax
+  - opt_einsum
   - matplotlib
   - notebook
   - tqdm=4.67.1
