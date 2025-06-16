@@ -546,9 +546,13 @@ class Hamiltonian:
         dx_ = dx.reshape((-1, NR, Nr*Ng))
 
         #FIXME: precompute optimal einsum path and provide that
+        kwargs = dict(optimize=True)
+        if xp.backend == 'torch':
+            kwargs = {}
+
         tr_ = xp.einsum(
             'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
-            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_#, optimize=True
+            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, **kwargs
         )
 
         return tr_.reshape(dx.shape)
