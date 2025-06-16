@@ -318,10 +318,10 @@ class Hamiltonian:
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
 
-        Nelec_thresh = 2e4
-        memory_constrained = Nelec > Nelec_thresh
+        mem_thresh = 1e6
+        memory_constrained = self.size > mem_thresh
 
-        print(f"memory constraint threshold = {Nelec_thresh}, {memory_constrained}")
+        print(f"memory constraint threshold = {mem_thresh}, {memory_constrained}")
 
         if xp.backend == 'numpy':
             threadctl = ThreadpoolController()
