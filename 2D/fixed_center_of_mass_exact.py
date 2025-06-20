@@ -41,7 +41,7 @@ import linalg_helper as lib
 import potentials
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
-from davidson import phase_match, phase_match_orig, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
+from davidson import phase_match, phase_match_mem_constrained, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
 
@@ -323,6 +323,18 @@ class Hamiltonian:
 
         print(f"memory constraint threshold = {mem_thresh}, {memory_constrained}")
 
+        batch_eigvalsh = xp.linalg.eigvalsh
+        if xp.backend == 'cupy':
+            try:
+                print("cupy detected; trying diagonalization with torch backend")
+                import torch
+            except ModuleNotFoundError:
+                print("torch not found; using cupy")
+            else:
+                def torch_eigvalsh(H):
+                    return xp.asarray(torch.linalg.eigvalsh(torch.from_dlpack(H)))
+                batch_eigvalsh = torch_eigvalsh
+
         if xp.backend == 'numpy':
             threadctl = ThreadpoolController()
             with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
@@ -333,9 +345,9 @@ class Hamiltonian:
         elif memory_constrained:
             Ad_n  = xp.zeros((NR, Nelec))
             for i in tqdm(range(NR)):
-                Ad_n[i] = xp.linalg.eigvalsh(self.build_Hel(i))
+                Ad_n[i] = batch_eigvalsh(self.build_Hel(i))
         else:
-            Ad_n = xp.linalg.eigvalsh(self.build_Hel())
+            Ad_n = batch_eigvalsh(self.build_Hel())
 
         Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
         Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
@@ -443,7 +455,7 @@ class Hamiltonian:
                 Ad_n, U_n = batch_eigh(Hel)
 
         with timer_ctx("Phase match U_n"):
-            phase_match_orig(U_n) #phase_match(U_n)
+            phase_match(U_n)
 
         NR, Nelec, _ = Hel.shape
 
@@ -457,7 +469,7 @@ class Hamiltonian:
             Ad_vn = Ad_vn.T
 
         with timer_ctx("Phase match U_v"):
-            phase_match_orig(U_v) # phase_match(U_v)
+            phase_match(U_v)
 
         pc = (Ad_vn, U_n, U_v, Ad_n)
         size = sum([x.nbytes for x in pc]) / 1024**2

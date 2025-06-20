@@ -96,23 +96,6 @@ def eye_lazy(N):
         col[i] = 1.0
         yield col
 
-def phase_match(U):
-    N, *_ = U.shape
-
-    if xp.iscomplexobj(U):
-        # FIXME: This probably isn't right
-        for i in range(1, N):
-            dots = xp.einsum('dm,dm->m', U[i - 1].conj(), U[i])
-            phases = xp.ones_like(dots)
-            mask = xp.abs(dots) >= 1e-12
-            phases[mask] = xp.exp(-1j * xp.angle(dots[mask]))
-            U[i] *= phases[xp.newaxis, :]
-    else:
-        for i in range(1, N):
-            dots = xp.einsum('dm,dm->m', U[i - 1], U[i])
-            signs = xp.sign(dots)
-            U[i] *= signs[xp.newaxis, :]
-
 
 def phase_match_orig(U):
     N, _, M = U.shape
@@ -127,15 +110,46 @@ def phase_match_orig(U):
         for n in range(M):
             U[i,:,n] *= phase(U[i-1,:,n], U[i,:,n])
 
+def phase_match_mem_constrained(U):
+    N, _, M = U.shape
 
-def phase_match_vec(U):
     if xp.iscomplexobj(U):
-        phases = xp.exp(-1j*xp.angle(xp.einsum('idm,idm->im', U[:-1].conj(), U[1:])))
+        # Complex case - vectorized
+        for i in range(1, N):
+            # Compute dot products for all M vectors at once
+            dots = xp.sum(U[i-1].conj() * U[i], axis=1)  # Shape: (M,)
+            phases = xp.exp(-1j * xp.angle(dots))        # Shape: (M,)
+            U[i] *= phases[None, :]                      # Broadcast to (_, M)
     else:
-        phases = xp.sign(xp.einsum('idm,idm->im', U[:-1], U[1:]))
+        # Real case - vectorized
+        for i in range(1, N):
+            # Compute dot products for all M vectors at once
+            dots = xp.sum(U[i-1] * U[i], axis=1)         # Shape: (M,)
+            signs = xp.sign(dots)                        # Shape: (M,)
+            U[i] *= signs[None, :]                       # Broadcast to (_, M)
 
-    U[1:] *= phases[:, xp.newaxis, :]
-        
+
+def phase_match(U):
+    N, _, M = U.shape
+
+    if xp.iscomplexobj(U):
+        # Compute all dot products at once: (N-1, M)
+        dots = xp.sum(U[:-1].conj() * U[1:], axis=1)
+        phases = xp.exp(-1j * xp.angle(dots))
+
+        # Apply phases cumulatively
+        for i in range(1, N):
+            U[i] *= xp.cumprod(phases[:i], axis=0)[-1][None, :]
+    else:
+        # Compute all dot products at once: (N-1, M)
+        dots = xp.sum(U[:-1] * U[1:], axis=1)
+        signs = xp.sign(dots)
+
+        # Apply signs cumulatively
+        cumulative_signs = xp.cumprod(signs, axis=0)
+        for i in range(1, N):
+            U[i] *= cumulative_signs[i-1][None, :]
+
 @timer
 def build_preconditioner(TR, Tr, Vgrid, min_guess=4):
     NR, Nr = Vgrid.shape
