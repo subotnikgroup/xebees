@@ -42,8 +42,14 @@ def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
     return T
 
 
-def KE_FFT(N, P, R, mass): 
-    Tp = xp.diag(P**2 / (2 * mass))
+def KE_FFT(N, P, R): 
+    Tp = xp.diag(-P**2)
+    exp_RP = xp.exp(1j * xp.outer(P, R))
+    
+    return (exp_RP.T.conj() @ Tp @ exp_RP) / N
+
+def gamma_grad(N, P, R): 
+    Tp = xp.diag(-1j*P)
     exp_RP = xp.exp(1j * xp.outer(P, R))
     
     return (exp_RP.T.conj() @ Tp @ exp_RP) / N
@@ -194,24 +200,89 @@ def solve_BOv(TR, Tr, V):
     return xp.linalg.eigvalsh(TR + xp.diag(solve_BO_surface(Tr,V)))
 
 @nvtx.annotate("gamma_build", color="red")
-def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2,mu12,r1e,r2e):
+def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
 
     Ng = len(pg)
     Nr = len(pr)
-
-    theta1 = xp.exp(-r1e)
-    theta2 = xp.exp(-r2e)
+    
+    theta1 = xp.exp(-r1e2)
+    theta2 = xp.exp(-r2e2)
     partition = theta1 + theta2
 
     cosgamma = xp.cos(g)
     singamma = xp.sin(g)
-    invr = 1/r[:,0]
+    invr = 1/(r[:,0])
 
     t1 = xp.diag((theta1/partition).ravel())
     t2 = xp.diag((theta2/partition).ravel())
 
-    px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),xp.dot(xp.diag(singamma[0,:]),pg))
-    py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),xp.dot(xp.diag(cosgamma[0,:]),pg))
+    #px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),xp.dot(xp.diag(singamma[0,:]),pg))
+    #py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),xp.dot(xp.diag(cosgamma[0,:]),pg))
+
+    #px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),pg)
+    #py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),pg)
+    spg = pg.copy()
+    cpg = pg.copy()
+    xp.fill_diagonal(spg, xp.diag(spg) * singamma[0,:])
+    xp.fill_diagonal(cpg, xp.diag(cpg) * cosgamma[0,:])
+
+    px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),spg)
+    py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),cpg)
+    
+    t1px = xp.dot(t1,px)
+    pxt1 = xp.dot(px,t1)
+    t2px = xp.dot(t2,px)
+    pxt2 = xp.dot(px,t2)
+    t1py = xp.dot(t1,py)
+    pyt1 = xp.dot(py,t1)
+    t2py = xp.dot(t2,py)
+    pyt2 = xp.dot(py,t2)
+
+    gammaetf1x = -0.5*(t1px + pxt1)
+    gammaetf1y = -0.5*(t1py + pyt1)
+    gammaetf2x = -0.5*(t2px + pxt2)
+    gammaetf2y = -0.5*(t2py + pyt2)
+
+    #rcosg = xp.diag((r*cosgamma).ravel())
+    #rsing = xp.diag((r*singamma).ravel())
+#
+    #J1 = -0.5*(xp.dot((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1)),(t1py+pyt1))-xp.dot(rsing,(t1px+pxt1)))
+    #J2 = -0.5*(xp.dot((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2)),(t2py+pyt2))-xp.dot(rsing,(t2px+pxt2)))
+
+    #check signs
+    #flip signs because of the cross product
+    #gammaerf1y = 1/R*(J1+J2)
+    #gammaerf2y = -1/R*(J1+J2)
+    gammaerf1y = xp.zeros([Nr*Ng,Nr*Ng])
+    gammaerf2y = xp.zeros([Nr*Ng,Nr*Ng])
+
+    return gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y, gammaerf1y, gammaerf2y
+
+
+def Gamma_etf_erf_old(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
+
+    Ng = len(pg)
+    Nr = len(pr)
+
+    theta1 = xp.exp(-r1e2)
+    theta2 = xp.exp(-r2e2)
+    partition = theta1 + theta2
+
+    cosgamma = xp.cos(g)
+    singamma = xp.sin(g)
+    invr = 1/(r[:,0])
+
+    t1 = xp.diag((theta1/partition).ravel())
+    t2 = xp.diag((theta2/partition).ravel())
+
+    #px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),xp.dot(xp.diag(singamma[0,:]),pg))
+    #py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),xp.dot(xp.diag(cosgamma[0,:]),pg))
+
+    #px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),pg)
+    #py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),pg)
+
+    px =  xp.kron(pr,xp.eye(Ng))
+    py =  xp.kron(xp.diag(invr),pg)
     
     t1px = xp.dot(t1,px)
     pxt1 = xp.dot(px,t1)
@@ -230,8 +301,8 @@ def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2,mu12,r1e,r2e):
     rcosg = xp.diag((r*cosgamma).ravel())
     rsing = xp.diag((r*singamma).ravel())
 
-    J1 = -0.5*(xp.dot((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1)),(t1py+pyt1))-xp.dot(rsing,((t1px+pxt1))))
-    J2 = -0.5*(xp.dot((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2)),(t2py+pyt2))-xp.dot(rsing,((t2px+pxt2))))
+    J1 = -0.5*(xp.dot((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1)),(t1py+pyt1))-xp.dot(rsing,(t1px+pxt1)))
+    J2 = -0.5*(xp.dot((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2)),(t2py+pyt2))-xp.dot(rsing,(t2px+pxt2)))
 
     #check signs
     #flip signs because of the cross product
@@ -242,6 +313,41 @@ def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2,mu12,r1e,r2e):
 
 @nvtx.annotate("inverse_weyl_transform", color="pink")
 def inverse_weyl_transform(E, NR, R, P):
+    """
+    Perform the inverse Weyl transform 
+    """
+    HPS = xp.zeros((NR, NR), dtype=complex)
+    EPP = xp.zeros((NR, NR), dtype=complex)
+    EPS_half = xp.zeros((NR + 1, NR), dtype=complex)
+    dR = R[1] - R[0]
+    R_half = xp.linspace(R[0] - dR/2, R[-1] + dR/2, NR + 1)
+
+    # Build EPP
+    for i in range(NR):
+        for j in range(NR):
+            for k in range(NR):
+                EPP[j, i] += xp.exp(-1j * R[k] * P[j]) * E[k, i] / xp.sqrt(NR)
+
+    # Build EPS_half
+    for i in range(NR):
+        for j in range(NR + 1):
+            for k in range(NR):
+                EPS_half[j, i] += xp.exp(1j * R_half[j] * P[k]) * EPP[k, i] / xp.sqrt(NR)
+
+    # Build HPS
+    for j in range(NR):
+        for q1 in range(NR):
+            for q2 in range(NR):
+                if (q1 - q2) % 2 == 0:
+                    HPS[q1, q2] += (xp.exp(-1j * (R[q1] - R[q2]) * P[j])
+                                    * E[(q1 + q2) // 2, j] / NR)
+                else:
+                    idx = (q1 + q2 + 1) // 2
+                    HPS[q1, q2] += (xp.exp(-1j * (R[q1] - R[q2]) * P[j])
+                                    * EPS_half[idx, j] / NR)
+    return HPS
+
+def inverse_weyl_transform_vec(E, NR, R, P):
     """
     Perform the inverse Weyl transform 
     """
