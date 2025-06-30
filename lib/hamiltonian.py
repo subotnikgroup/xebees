@@ -200,10 +200,10 @@ def solve_BOv(TR, Tr, V):
     return xp.linalg.eigvalsh(TR + xp.diag(solve_BO_surface(Tr,V)))
 
 @nvtx.annotate("gamma_build", color="red")
-def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
+def Gamma_etf_erf(R,r,g,dr,pg,M_1,M_2,mu12,r1e2,r2e2):
 
     Ng = len(pg)
-    Nr = len(pr)
+    Nr = len(dr)
     
     theta1 = xp.exp(-r1e2)
     theta2 = xp.exp(-r2e2)
@@ -216,47 +216,47 @@ def Gamma_etf_erf(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
     t1 = xp.diag((theta1/partition).ravel())
     t2 = xp.diag((theta2/partition).ravel())
 
-    #px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),xp.dot(xp.diag(singamma[0,:]),pg))
+    #pr =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),xp.dot(xp.diag(singamma[0,:]),pg))
     #py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),xp.dot(xp.diag(cosgamma[0,:]),pg))
 
-    #px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),pg)
+    #pr =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),pg)
     #py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),pg)
     spg = pg.copy()
     cpg = pg.copy()
     xp.fill_diagonal(spg, xp.diag(spg) * singamma[0,:])
     xp.fill_diagonal(cpg, xp.diag(cpg) * cosgamma[0,:])
 
-    px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),spg)
-    py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),cpg)
+    pr =  xp.kron(dr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),spg)
+    pt =  xp.kron(dr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),cpg)
     
-    t1px = xp.dot(t1,px)
-    pxt1 = xp.dot(px,t1)
-    t2px = xp.dot(t2,px)
-    pxt2 = xp.dot(px,t2)
-    t1py = xp.dot(t1,py)
-    pyt1 = xp.dot(py,t1)
-    t2py = xp.dot(t2,py)
-    pyt2 = xp.dot(py,t2)
+    t1pr = xp.dot(t1,pr)
+    prt1 = xp.dot(pr,t1)
+    t2pr = xp.dot(t2,pr)
+    prt2 = xp.dot(pr,t2)
+    t1pt = xp.dot(t1,pt)
+    ptt1 = xp.dot(pt,t1)
+    t2pt = xp.dot(t2,pt)
+    ptt2 = xp.dot(pt,t2)
 
-    gammaetf1x = -0.5*(t1px + pxt1)
-    gammaetf1y = -0.5*(t1py + pyt1)
-    gammaetf2x = -0.5*(t2px + pxt2)
-    gammaetf2y = -0.5*(t2py + pyt2)
+    gammaetf1r = -0.5*(t1pr + prt1)
+    gammaetf1t = -0.5*(t1pt + ptt1)
+    gammaetf2r = -0.5*(t2pr + prt2)
+    gammaetf2t = -0.5*(t2pt + ptt2)
 
     #rcosg = xp.diag((r*cosgamma).ravel())
     #rsing = xp.diag((r*singamma).ravel())
 #
-    #J1 = -0.5*(xp.dot((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1)),(t1py+pyt1))-xp.dot(rsing,(t1px+pxt1)))
-    #J2 = -0.5*(xp.dot((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2)),(t2py+pyt2))-xp.dot(rsing,(t2px+pxt2)))
+    #J1 = -0.5*(xp.dot((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1)),(t1pt+ptt1))-xp.dot(rsing,(t1pr+prt1)))
+    #J2 = -0.5*(xp.dot((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2)),(t2pt+ptt2))-xp.dot(rsing,(t2pr+prt2)))
 
     #check signs
     #flip signs because of the cross product
     #gammaerf1y = 1/R*(J1+J2)
     #gammaerf2y = -1/R*(J1+J2)
-    gammaerf1y = xp.zeros([Nr*Ng,Nr*Ng])
-    gammaerf2y = xp.zeros([Nr*Ng,Nr*Ng])
+    gammaerf1t = xp.zeros([Nr*Ng,Nr*Ng])
+    gammaerf2t = xp.zeros([Nr*Ng,Nr*Ng])
 
-    return gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y, gammaerf1y, gammaerf2y
+    return gammaetf1r, gammaetf1t, gammaetf2r, gammaetf2t, gammaerf1t, gammaerf2t
 
 
 def Gamma_etf_erf_old(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
@@ -275,34 +275,34 @@ def Gamma_etf_erf_old(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
     t1 = xp.diag((theta1/partition).ravel())
     t2 = xp.diag((theta2/partition).ravel())
 
-    #px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),xp.dot(xp.diag(singamma[0,:]),pg))
+    #pr =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),xp.dot(xp.diag(singamma[0,:]),pg))
     #py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),xp.dot(xp.diag(cosgamma[0,:]),pg))
 
-    #px =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),pg)
+    #pr =  xp.kron(pr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),pg)
     #py =  xp.kron(pr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),pg)
 
-    px =  xp.kron(pr,xp.eye(Ng))
-    py =  xp.kron(xp.diag(invr),pg)
+    pr =  xp.kron(pr,xp.eye(Ng))
+    pt =  xp.kron(xp.diag(invr),pg)
     
-    t1px = xp.dot(t1,px)
-    pxt1 = xp.dot(px,t1)
-    t2px = xp.dot(t2,px)
-    pxt2 = xp.dot(px,t2)
-    t1py = xp.dot(t1,py)
-    pyt1 = xp.dot(py,t1)
-    t2py = xp.dot(t2,py)
-    pyt2 = xp.dot(py,t2)
+    t1pr = xp.dot(t1,pr)
+    prt1 = xp.dot(pr,t1)
+    t2pr = xp.dot(t2,pr)
+    prt2 = xp.dot(pr,t2)
+    t1pt = xp.dot(t1,pt)
+    ptt1 = xp.dot(pt,t1)
+    t2pt = xp.dot(t2,pt)
+    ptt2 = xp.dot(pt,t2)
 
-    gammaetf1x = -0.5*(t1px + pxt1)
-    gammaetf1y = -0.5*(t1py + pyt1)
-    gammaetf2x = -0.5*(t2px + pxt2)
-    gammaetf2y = -0.5*(t2py + pyt2)
+    gammaetf1x = -0.5*(t1pr + prt1)
+    gammaetf1y = -0.5*(t1pt + ptt1)
+    gammaetf2x = -0.5*(t2pr + prt2)
+    gammaetf2y = -0.5*(t2pt + ptt2)
 
     rcosg = xp.diag((r*cosgamma).ravel())
     rsing = xp.diag((r*singamma).ravel())
 
-    J1 = -0.5*(xp.dot((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1)),(t1py+pyt1))-xp.dot(rsing,(t1px+pxt1)))
-    J2 = -0.5*(xp.dot((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2)),(t2py+pyt2))-xp.dot(rsing,(t2px+pxt2)))
+    J1 = -0.5*(xp.dot((rcosg-(xp.eye(Nr*Ng)*R*mu12/M_1)),(t1pt+ptt1))-xp.dot(rsing,(t1pr+prt1)))
+    J2 = -0.5*(xp.dot((rcosg+(xp.eye(Nr*Ng)*R*mu12/M_2)),(t2pt+ptt2))-xp.dot(rsing,(t2pr+prt2)))
 
     #check signs
     #flip signs because of the cross product

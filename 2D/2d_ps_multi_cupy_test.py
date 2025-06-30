@@ -282,30 +282,30 @@ if __name__ == '__main__':
         ival[i] = e_approx_bo[0]
 
         r1e2, r2e2 = H.V(H.R[i], H.r_grid, H.g_grid, spitvals=True)
-        gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y, gammaerf1y, gammaerf2y = Gamma_etf_erf(H.R[i],H.r_grid,H.g_grid,H.ddr1,H.ddg1,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
+        gammaetf1r, gammaetf1t, gammaetf2r, gammaetf2t, gammaerf1t, gammaerf2t = Gamma_etf_erf(H.R[i],H.r_grid,H.g_grid,H.ddr1,H.ddg1,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
         #gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y, gammaerf1y, gammaerf2y = xp.zeros([Nr*Ng,Nr*Ng]),xp.zeros([Nr*Ng,Nr*Ng]),xp.zeros([Nr*Ng,Nr*Ng]),xp.zeros([Nr*Ng,Nr*Ng]),xp.zeros([Nr*Ng,Nr*Ng]),xp.zeros([Nr*Ng,Nr*Ng])
-        gamma1x = gammaetf1x
-        gamma2x = gammaetf2x
-        gamma1y = gammaetf1y
-        gamma2y = gammaetf2y
+        gamma1r = gammaetf1r
+        gamma2r = gammaetf2r
+        gamma1t = gammaetf1t
+        gamma2t = gammaetf2t
 
-        Gammatotx = (H.M_2*gamma1x-H.M_1*gamma2x)/(H.M_1+H.M_2)
-        Gammatoty = (H.M_2*gamma1y-H.M_1*gamma2y)/(H.M_1+H.M_2)  
+        Gammatotr = (H.M_2*gamma1r-H.M_1*gamma2r)/(H.M_1+H.M_2)
+        Gammatott = (H.M_2*gamma1t-H.M_1*gamma2t)/(H.M_1+H.M_2)  
 
-        gammasq1x = xp.dot(gamma1x,gamma1x)
-        gammasq2x = xp.dot(gamma2x,gamma2x)
-        gammasq1y = xp.dot(gamma1y,gamma1y)
-        gammasq2y = xp.dot(gamma2y,gamma2y)
+        gammasq1r = xp.dot(gamma1r,gamma1r)
+        gammasq2r = xp.dot(gamma2r,gamma2r)
+        gammasq1t = xp.dot(gamma1t,gamma1t)
+        gammasq2t = xp.dot(gamma2t,gamma2t)
 
-        Gammasqtotx = ((H.M_2**2*gammasq1x)+(H.M_1**2*gammasq2x)-(H.M_1*H.M_2*xp.dot(gamma1x,gamma2x))-(H.M_1*H.M_2*xp.dot(gamma2x,gamma1x)))/(H.M_1+H.M_2)**2
-        Gammasqtoty = ((H.M_2**2*gammasq1y)+(H.M_1**2*gammasq2y)-(H.M_1*H.M_2*xp.dot(gamma1y,gamma2y))-(H.M_1*H.M_2*xp.dot(gamma2y,gamma1y)))/(H.M_1+H.M_2)**2 
+        Gammasqtotr = ((H.M_2**2*gammasq1r)+(H.M_1**2*gammasq2r)-(H.M_1*H.M_2*xp.dot(gamma1r,gamma2r))-(H.M_1*H.M_2*xp.dot(gamma2r,gamma1r)))/(H.M_1+H.M_2)**2
+        Gammasqtoty = ((H.M_2**2*gammasq1t)+(H.M_1**2*gammasq2t)-(H.M_1*H.M_2*xp.dot(gamma1t,gamma2t))-(H.M_1*H.M_2*xp.dot(gamma2t,gamma1t)))/(H.M_1+H.M_2)**2 
         
 
         for j in range(H.shape[0]):
             print("i,j",i,j,flush=True)
             
             #Gammamat = -1j*Gammatotx*(H.P[j]-1/(2*H.R[i]))/H.mu12 -1j*Gammatoty*(H.J/H.R[i])/H.mu12-(Gammasqtotx+Gammasqtoty)/(2*H.mu12)
-            Gammamat = -1j*Gammatotx*(H.P[j]-1/(2*H.R[i]))/H.mu12 -1j*Gammatoty*(H.J/H.R[i])/H.mu12           
+            Gammamat = -1j*Gammatotr*(H.P[j]-1/(2*H.R[i]))/H.mu12 -1j*Gammatott*(H.J/H.R[i])/H.mu12           
             Htotgamma = Hel+v_diag+Gammamat
             #e_approx_ps,e_wave = batch_eigh(Htotgamma)
             e_approx_ps = batch_eigvalsh(Htotgamma)
