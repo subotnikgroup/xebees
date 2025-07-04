@@ -286,16 +286,10 @@ def make_diag_precond(diag, level_shift=1e-3):
 
 
 def _qr(X):
-    # FIXME HACK: CuPyNumeric's QR decomposition has numerical
-    # instabilities; use cupy's instead.
+    # FIXME: excessive copy, https://github.com/nv-legate/cupynumeric/issues/1211
     if xp._backend_name == 'cupynumeric':
-        print("WARNING using QR decomposition from cuPy in place of cuPyNumeric")
-        import cupy as cp
-        result = cp.linalg.qr(
-             # in case cupynumeric adopts .get() in the future
-            cp.asarray(X.get() if hasattr(X, 'get') else X).T
-        )[0].T
-        return xp.asarray(result.get())  # must unwrap via get() since coming from cupy
+        print("WARNING workaround for cuPyNumeric issue 1211")
+        return (xp.linalg.qr(X.T.copy())[0]).T
     else:
         return (xp.linalg.qr(X.T)[0]).T
 
