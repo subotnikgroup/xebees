@@ -1,8 +1,10 @@
-name: ps-exact
+name: ps-exact-gh
 channels:
+  - legate/label/experimental
   - conda-forge
 dependencies:
   - python=3.12
+  - cupynumeric
   - numpy
   - jax
   - opt_einsum

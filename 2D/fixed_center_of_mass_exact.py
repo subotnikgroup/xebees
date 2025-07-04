@@ -328,8 +328,11 @@ class Hamiltonian:
             try:
                 print("cupy detected; trying diagonalization with torch backend")
                 import torch
+                torch.cuda.current_device()
             except ModuleNotFoundError:
-                print("torch not found; using cupy")
+                print("torch not found.")
+            except AssertionError:
+                print("torch not available.")
             else:
                 def torch_eigvalsh(H):
                     return xp.asarray(torch.linalg.eigvalsh(torch.from_dlpack(H)))
@@ -433,8 +436,11 @@ class Hamiltonian:
             try:
                 print("cupy detected; trying diagonalization with torch backend")
                 import torch
+                torch.cuda.current_device()
             except ModuleNotFoundError:
-                print("torch not found; using cupy")
+                print("torch not found.")
+            except AssertionError:
+                print("torch not available.")
             else:
                 def torch_eigh(H):
                     vals, vecs = torch.linalg.eigh(torch.from_dlpack(H))
