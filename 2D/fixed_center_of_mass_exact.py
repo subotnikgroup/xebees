@@ -6,9 +6,7 @@
 # why do we use so much memory when we have cupynumeric in the conda environment?
 # what do we need to do to support the jax.numpy backend?
 # memory concerns
-# vectorize phase_matching
 # nvtx and timing annotations
-# batchify all preconditionders
 #
 # Explore reduced precision preconditioner
 
@@ -195,7 +193,7 @@ class Hamiltonian:
         self.args = args
 
         builder, self.preconditioner, self.make_guess = {
-            'BO':     (self._build_preconditioner_BO, self._preconditioner_BO_batch,    self._make_guess_BO),
+            'BO':     (self._build_preconditioner_BO, self._preconditioner_BO,    self._make_guess_BO),
             'BO-int': (self._build_preconditioner_BO_interp, self._preconditioner_BO_interp,    self._make_guess_BO_interp),
             'V1':     (self._build_preconditioner_V1, self._preconditioner_V1,    self._make_guess_V1),
             'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
@@ -249,7 +247,7 @@ class Hamiltonian:
 
     #@partial(jax.jit, static_argnums=0)
     def Tx(self, x):
-        xa = x.reshape((-1,) + self.shape)
+        xa = x.reshape((-1,) + self.shape).astype(self.dtype)
         ke = xp.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
@@ -257,14 +255,14 @@ class Hamiltonian:
         ke += xp.einsum('BRrg,rs->BRsg', xa, self.ddr2)  # ∂²/∂r²
 
         #  ∂²/∂γ² + 1/4 terms
-        keg  = xp.einsum('BRrg,gh->BRrh', xa, self.ddg2)  # ∂²/∂γ²
-        ke += (self.Rinv2 + self.rinv2)*keg                # (1/R² + 1/r²) (∂²/∂γ²)
+        keg = xp.einsum('BRrg,gh->BRrh', xa, self.ddg2)  # ∂²/∂γ²
+        ke += (self.Rinv2 + self.rinv2)*keg              # (1/R² + 1/r²) (∂²/∂γ²)
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
             keg  = xa*self.J**2                                          #  J²
-            keg += 2j*self.J*xp.einsum('BRrg,gh->BRrh', xa, self.ddg1)  #  J² + 2Ji ∂/∂γ
-            ke -= self.Rinv2*keg                                 # (1/R²)*(J² - 2Ji ∂/∂γ)
+            keg += 2j*self.J*xp.einsum('BRrg,gh->BRrh', xa, self.ddg1)   #  J² + 2Ji ∂/∂γ
+            ke -= self.Rinv2*keg                                 # -(1/R²)*(J² + 2Ji ∂/∂γ)
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
@@ -280,7 +278,7 @@ class Hamiltonian:
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
-            ke = self.Rinv2 * (
+            ke += -self.Rinv2 * (
                 self.J**2 +
                 2*self.J*xp.ones(self.shape) * xp.diag(self.ddg1)[None, None, :]
             )
@@ -297,7 +295,7 @@ class Hamiltonian:
     # @partial(jax.jit, static_argnums=0) fashion will break; not sure why.
 
     def _make_guess_naive(self, min_guess):
-        guesses = xp.exp(-(self.Vgrid - xp.min(self.Vgrid))**2/27.211).ravel()
+        guesses = xp.exp(-(self.Vgrid - xp.min(self.Vgrid))**2/27.211**2).ravel()
         return guesses
 
     #@partial(jax.jit, static_argnums=0)
@@ -496,11 +494,11 @@ class Hamiltonian:
         return guesses
 
     #@partial(jax.jit, static_argnums=0)
-    def _preconditioner_BO(self, dx, e, x0):
+    def _preconditioner_BO(self, dx, e, _):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         diagd = Ad_vn - (e - 1e-5)
         NR, Nr, Ng = self.shape
-        dx_ = dx.reshape((NR, Nr*Ng))
+        dx_ = dx.reshape((-1, NR, Nr*Ng))
 
         # YOLO: truncate it
         # Nelec=(3*Nr*Ng)//4
@@ -510,23 +508,9 @@ class Hamiltonian:
         # U_n_t = U_n[:,:, :Nelec]
         # U_v_t = U_v[:Nelec, :, :]
         # tr_ = jnp.einsum(
-        #     'Rij,jRq,qj,jmq,mpj,mp->Ri',
+        #     'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
         #     U_n_t, U_v_t, 1.0 / diagd_t, U_v_t, U_n_t, dx_, optimize=True
         # )
-
-        tr_ = xp.einsum(
-            'Rij,jRq,qj,jmq,mpj,mp->Ri',
-            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_#, optimize=True
-        )
-
-        return tr_.ravel()
-
-    #@partial(jax.jit, static_argnums=0)
-    def _preconditioner_BO_batch(self, dx, e, _):
-        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
-        diagd = Ad_vn - (e - 1e-5)
-        NR, Nr, Ng = self.shape
-        dx_ = dx.reshape((-1, NR, Nr*Ng))
 
         #FIXME: precompute optimal einsum path and provide that
         kwargs = dict(optimize=True)
@@ -780,7 +764,8 @@ if __name__ == '__main__':
             verbose=args.verbosity,
             max_space=args.subspace,
             max_memory=get_davidson_mem(0.75),
-            tol=1e-12,
+            #tol=1e-12, #FIXME:DEBUG
+            tol=1e-10,
         )
 
     #guess quality
@@ -801,6 +786,9 @@ if __name__ == '__main__':
         if all(conv):
             ex = e_approx[1] - e_approx[0]
             print("exact, bo, error:", ex, bo, (bo-ex)/ex)
+    elif all(conv):
+        ex = e_approx[1] - e_approx[0]
+        print("exact gap", ex)
 
     if args.save is not None:
         if all(conv):
