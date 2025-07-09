@@ -720,15 +720,15 @@ class Hamiltonian:
 
     #@partial(jax.jit, static_argnums=0)
     def _preconditioner_V1(self, dx, e, x0):
-        dx_ = dx.reshape(self.shape)
+        dx_ = dx.reshape((-1,) + self.shape)
         Ad, U, *_ = self._preconditioner_data
         diagd = Ad - (e - 1e-5)
 
-        dx_t = xp.einsum("Rrgi,Rrg->Rig", U, dx_)#, optimize=True)
+        dx_t = xp.einsum("Rrgi,BRrg->BRig", U, dx_)#, optimize=True)
         tr_t = dx_t / diagd
-        tr_ = xp.einsum('Rigr,Rig->Rrg', U, tr_t)#, optimize=True)
+        tr_ = xp.einsum('Rigr,BRig->BRrg', U, tr_t)#, optimize=True)
 
-        return tr_.ravel()
+        return tr_.reshape(dx.shape)
 
     # Below here are a bunch of things related to immutability
     # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
