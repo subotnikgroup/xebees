@@ -54,7 +54,7 @@ else:  # mock this out for use in Jupyter Notebooks etc
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
-        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid',
+        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'g_grid',
         'axes', 'dtype', 'args',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
@@ -135,6 +135,7 @@ class Hamiltonian:
         # all over the place
         #self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
         self.g = xp.asarray([i*2*xp.pi/args.Ng for i in range(args.Ng)])
+        self.j = xp.fft.fftfreq(args.Ng)*args.Ng
 
         self.axes = (self.R, self.r, self.g)
 
@@ -193,13 +194,14 @@ class Hamiltonian:
         self.args = args
 
         builder, self.preconditioner, self.make_guess = {
-            'BO':     (self._build_preconditioner_BO, self._preconditioner_BO,    self._make_guess_BO),
-            'BO-int': (self._build_preconditioner_BO_interp, self._preconditioner_BO_interp,    self._make_guess_BO_interp),
-            'V1':     (self._build_preconditioner_V1, self._preconditioner_V1,    self._make_guess_V1),
-            'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
-            'power':  (lambda: (self.diag,),          self._preconditioner_power, self._make_guess_naive),
-            'diagbo': (self._build_preconditioner_BO, self._preconditioner_naive, self._make_guess_BO),
-            None:     (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
+            'BO':     (self._build_preconditioner_BO,        self._preconditioner_BO,        self._make_guess_BO),
+            'BO-int': (self._build_preconditioner_BO_interp, self._preconditioner_BO_interp, self._make_guess_BO_interp),
+            'jfull':  (self._build_preconditioner_jfull,     self._preconditioner_jfull,     self._make_guess_jfull),
+            'V1':     (self._build_preconditioner_V1,        self._preconditioner_V1,        self._make_guess_V1),
+            'naive':  (lambda: (self.diag,),                 self._preconditioner_naive,     self._make_guess_naive),
+            'power':  (lambda: (self.diag,),                 self._preconditioner_power,     self._make_guess_naive),
+            'diagbo': (self._build_preconditioner_BO,        self._preconditioner_naive,     self._make_guess_BO),
+            None:     (lambda: (self.diag,),                 self._preconditioner_naive,     self._make_guess_naive),
             }[args.preconditioner]
 
         with timer_ctx(f"Build preconditioner {args.preconditioner}"):
@@ -311,10 +313,13 @@ class Hamiltonian:
         tvr = self.Tx(vr) - (self.diag - self.Vgrid.ravel()) * vr
         return vr - vinv * tvr
 
-    def BO_spectrum(self, nroots=0):
+    def BO_spectrum(self, nroots=0, Hel_func=None):
         print("Building BO spectrum")
         NR, Nr, Ng = self.shape
         Nelec = Nr*Ng
+
+        if Hel_func is None:
+            Hel_func = self.build_Hel
 
         mem_thresh = 1e5
         memory_constrained = self.size > mem_thresh
@@ -339,16 +344,16 @@ class Hamiltonian:
         if xp.backend == 'numpy':
             threadctl = ThreadpoolController()
             with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
-                result = list(tqdm(ex.map(lambda i: (i, xp.linalg.eigvalsh(self.build_Hel(i))), range(NR)), total=NR))
+                result = list(tqdm(ex.map(lambda i: (i, xp.linalg.eigvalsh(Hel_func(i))), range(NR)), total=NR))
                 Ad_n = xp.zeros((NR, Nelec))
                 for i, a in result:
                     Ad_n[i] = a
         elif memory_constrained:
             Ad_n  = xp.zeros((NR, Nelec))
             for i in tqdm(range(NR)):
-                Ad_n[i] = batch_eigvalsh(self.build_Hel(i))
+                Ad_n[i] = batch_eigvalsh(Hel_func(i))
         else:
-            Ad_n = batch_eigvalsh(self.build_Hel())
+            Ad_n = batch_eigvalsh(Hel_func())
 
         Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
         Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
@@ -404,6 +409,83 @@ class Hamiltonian:
 
         return xp.squeeze(Hel)
 
+    # NR x (NrNj) x (NrNj)
+    def build_Hel_j(self, Ridx=None, Nj=None):
+        NR, Nr, Ng = self.shape
+
+        if Nj is None:
+            Nj = len(self.j)
+        elif Nj > len(self.j):
+            raise RuntimeError("Cannot use more frequencies than Ng")
+        Nelec = Nr*Nj
+
+        if Ridx is None:
+            Ridx = xp.arange(NR)
+        else:
+            Ridx = xp.atleast_1d(Ridx)
+            NR,  = Ridx.shape
+
+        # Hel = -1/2/μ · Tej + Vjj
+        # Tej =  ∂²/∂r² + 1/4/r² - j²/r² - (J - j)²/R²
+        # Vjj = <j|V(R,r)|j'> = 1/2/π ∫ dγ cos(|j-j'|γ) V(R,r,γ)
+
+        # N.B. Tej is diagonal in j
+        # N.B. Tn = ∂²/∂R² + 1/4/R²
+        # N.B. self.ddr2 = ∂²/∂r² + 1/4/r²
+        Hel = xp.empty((NR, Nelec, Nelec), dtype=self.dtype)
+
+        # build *bare* Te first (no masses, hbar)
+        # R-independent terms: ∂²/∂r² + 1/4/r² - j²/r²
+        Hel[:] = (
+            xp.kron(self.ddr2, xp.eye(Nj)) -                     # ∂²/∂r² + 1/4/r²
+            xp.kron(xp.diag(1 / self.r**2), xp.diag(self.j**2))  # -j²/r²
+        )
+
+        # R-dependent terms: -(J - j)²/R²
+        Rinv2 = (1 / self.R**2)[Ridx, None, None]  # (1/R²), ready for broadcasting
+        Hel -= Rinv2 * xp.kron(
+            xp.eye(Nr), xp.diag((self.J-self.j)**2))[None]  # -(J - j)²/R²
+
+        # Vjj = <j|V(R,r)|j'> = 1/2/π ∫ dγ cos(|j-j'|γ) V(R,r,γ)
+        COS = xp.cos(xp.abs(self.j[:, None] - self.j)[..., None] * self.g)  # cos(|j-j'|γ); shape: Nj × Nj × Ng
+        # Vjj of shape: NR × Nr × Nj × Nj
+        dg = self.g[1] - self.g[0]
+        Vjj = xp.sum(
+            COS[None,None,...] * self.Vgrid[Ridx,:,None,None,:] * dg,
+            axis=-1)/numpy.pi/2  # 1/2/π ∫ dγ cos(|j-j'|γ) V(R,r,γ)
+
+        Vj = xp.fft.ifft(self.Vgrid, axis=2).real
+        Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
+        idx =  xp.arange(Nr)[:, None]*Nj + xp.arange(Nj)
+        Hel[:, idx[:,:, None], idx[:, None, :]] += Vjj  # + Vjj
+        # FIXME: can we do this without a loop?
+        #Hel[:, idx[:,:, None], idx[:, None, :]] += xp.moveaxis(xp.asarray([xp.roll(Vj, r, axis=2) for r in xp.arange(Nj)]), 0, -1)  # + Vjj
+
+        return xp.squeeze(Hel)
+
+
+    def _build_preconditioner_jfull(self):
+        return
+
+    def _make_guess_jfull(self, min_guess):
+        guesses = xp.exp(-(self.Vgrid - xp.min(self.Vgrid))**2/27.211**2).ravel()
+        return guesses
+
+    #@partial(jax.jit, static_argnums=0)
+    def _preconditioner_jfull(self, dx, e, x0):
+        dx_ = dx.reshape((-1,) + self.shape)
+        Ad, U, *_ = self._preconditioner_data
+        diagd = Ad - (e - 1e-5)
+
+        kwargs = dict(optimize=True)
+        if xp.backend == 'torch':
+            kwargs = {}
+
+        dx_t = xp.einsum("Rrgi,BRrg->BRig", U, dx_, **kwargs)
+        tr_t = dx_t / diagd
+        tr_ = xp.einsum('Rigr,BRig->BRrg', U, tr_t, **kwargs)
+
+        return tr_.reshape(dx.shape)
 
     def _build_preconditioner_BO(self):
         print("Building U_n")
@@ -708,7 +790,7 @@ def parse_args():
                         "(typically set automatically)")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
-    parser.add_argument('--preconditioner', choices=['naive', 'V1', 'BO', 'BO-int'],
+    parser.add_argument('--preconditioner', choices=['naive', 'V1', 'BO', 'BO-int', 'jfull'],
                         default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--backend', default='numpy')
@@ -745,6 +827,12 @@ if __name__ == '__main__':
         guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
         if guess is None:
             guess = H.make_guess(args.k)
+
+    # Testing Hel_j
+    #Ev_g, En_g = H.BO_spectrum(0, Hel_func=H.build_Hel)
+    #Ev_j, En_j = H.BO_spectrum(0, Hel_func=H.build_Hel_j)
+    #prms(En_g.T[0], En_j.T[0], "En")
+    #exit()
 
     if args.bo_spectrum:
         with timer_ctx("BO spectrum"):
