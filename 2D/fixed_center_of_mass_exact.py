@@ -446,20 +446,24 @@ class Hamiltonian:
         Hel -= Rinv2 * xp.kron(
             xp.eye(Nr), xp.diag((self.J-self.j)**2))[None]  # -(J - j)²/R²
 
+        Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
+
         # Vjj = <j|V(R,r)|j'> = 1/2/π ∫ dγ cos(|j-j'|γ) V(R,r,γ)
         COS = xp.cos(xp.abs(self.j[:, None] - self.j)[..., None] * self.g)  # cos(|j-j'|γ); shape: Nj × Nj × Ng
         # Vjj of shape: NR × Nr × Nj × Nj
         dg = self.g[1] - self.g[0]
         Vjj = xp.sum(
             COS[None,None,...] * self.Vgrid[Ridx,:,None,None,:] * dg,
-            axis=-1)/numpy.pi/2  # 1/2/π ∫ dγ cos(|j-j'|γ) V(R,r,γ)
+            axis=-1)/numpy.pi/2  # 1/2/π Σ dγ cos(|j-j'|γ) V(R,r,γ)
+        H_idx =  xp.arange(Nr)[:, None]*Nj + xp.arange(Nj)
+        Hel[:, H_idx[:,:, None], H_idx[:, None, :]] += Vjj  # + Vjj
 
-        Vj = xp.fft.ifft(self.Vgrid, axis=2).real
-        Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
-        idx =  xp.arange(Nr)[:, None]*Nj + xp.arange(Nj)
-        Hel[:, idx[:,:, None], idx[:, None, :]] += Vjj  # + Vjj
-        # FIXME: can we do this without a loop?
-        #Hel[:, idx[:,:, None], idx[:, None, :]] += xp.moveaxis(xp.asarray([xp.roll(Vj, r, axis=2) for r in xp.arange(Nj)]), 0, -1)  # + Vjj
+        ## Alternative, method for building Vjj via FFt and rolling;
+        ## the above was generally faster sometimes considerably
+        # Vj = xp.fft.ifft(self.Vgrid[Ridx], axis=2).real
+        # H_idx =  xp.arange(Nr)[:, None]*Nj + xp.arange(Nj)
+        # roll_idx = (xp.arange(Nj)[:, None] - xp.arange(Nj)[None, :])
+        # Hel[:, H_idx[:,:, None], H_idx[:, None, :]] += Vj[:, :, roll_idx] # + Vjj
 
         return xp.squeeze(Hel)
 
@@ -827,12 +831,6 @@ if __name__ == '__main__':
         guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
         if guess is None:
             guess = H.make_guess(args.k)
-
-    # Testing Hel_j
-    #Ev_g, En_g = H.BO_spectrum(0, Hel_func=H.build_Hel)
-    #Ev_j, En_j = H.BO_spectrum(0, Hel_func=H.build_Hel_j)
-    #prms(En_g.T[0], En_j.T[0], "En")
-    #exit()
 
     if args.bo_spectrum:
         with timer_ctx("BO spectrum"):
