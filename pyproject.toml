@@ -25,3 +25,7 @@ where = ["lib"]
 pythonpath = [".", "lib", "2D"]
 addopts = "-v"
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore::RuntimeWarning:.*cupynumeric.*",
+    "ignore::DeprecationWarning:.*cupynumeric.*",
+]
