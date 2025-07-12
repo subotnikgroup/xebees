@@ -15,7 +15,13 @@ dependencies = [
     "cupy-cuda12x>=13.4.1",
     "nvtx>=0.2.12",
     "opt-einsum>=3.4.0",
+    "pytest>=8.0.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["lib"]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "lib", "2D"]
+addopts = "-v"
+testpaths = ["tests"]

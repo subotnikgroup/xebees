@@ -19,3 +19,4 @@ dependencies:
   - pytorch-cuda
   - pytorch
   - torchvision
+  - pytest

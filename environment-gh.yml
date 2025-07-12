@@ -20,3 +20,4 @@ dependencies:
       - nvtx
       - torch
       - torchvision
+      - pytest
