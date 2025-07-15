@@ -130,25 +130,16 @@ def phase_match_mem_constrained(U):
 
 
 def phase_match(U):
-    N, _, M = U.shape
-
     if xp.iscomplexobj(U):
-        # Compute all dot products at once: (N-1, M)
-        dots = xp.sum(U[:-1].conj() * U[1:], axis=1)
-        phases = xp.exp(-1j * xp.angle(dots))
-
-        # Apply phases cumulatively
-        for i in range(1, N):
-            U[i] *= xp.cumprod(phases[:i], axis=0)[-1][None, :]
+        overlaps = xp.sum(U[:-1].conj() * U[1:], axis=1)
+        phases = xp.exp(-1j * xp.angle(overlaps))
     else:
-        # Compute all dot products at once: (N-1, M)
-        dots = xp.sum(U[:-1] * U[1:], axis=1)
-        signs = xp.sign(dots)
+        overlaps = xp.sum(U[:-1] * U[1:], axis=1)
+        phases = xp.sign(overlaps)
 
-        # Apply signs cumulatively
-        cumulative_signs = xp.cumprod(signs, axis=0)
-        for i in range(1, N):
-            U[i] *= cumulative_signs[i-1][None, :]
+    # Apply phases cumulatively
+    cumulative_phases = xp.cumprod(phases, axis=0)
+    U[1:] *= cumulative_phases[:, None, :]
 
 @timer
 def build_preconditioner(TR, Tr, Vgrid, min_guess=4):
