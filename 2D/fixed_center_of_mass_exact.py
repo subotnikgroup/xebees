@@ -415,8 +415,12 @@ class Hamiltonian:
 
         if Nj is None:
             Nj = len(self.j)
+            j = self.j
         elif Nj > len(self.j):
             raise RuntimeError("Cannot use more frequencies than Ng")
+        else:
+            j = xp.arange(Nj*2)-Nj
+
         Nelec = Nr*Nj
 
         if Ridx is None:
@@ -438,18 +442,18 @@ class Hamiltonian:
         # R-independent terms: ∂²/∂r² + 1/4/r² - j²/r²
         Hel[:] = (
             xp.kron(self.ddr2, xp.eye(Nj)) -                     # ∂²/∂r² + 1/4/r²
-            xp.kron(xp.diag(1 / self.r**2), xp.diag(self.j**2))  # -j²/r²
+            xp.kron(xp.diag(1 / self.r**2), xp.diag(j**2))  # -j²/r²
         )
 
         # R-dependent terms: -(J - j)²/R²
         Rinv2 = (1 / self.R**2)[Ridx, None, None]  # (1/R²), ready for broadcasting
         Hel -= Rinv2 * xp.kron(
-            xp.eye(Nr), xp.diag((self.J-self.j)**2))[None]  # -(J - j)²/R²
+            xp.eye(Nr), xp.diag((self.J-j)**2))[None]  # -(J - j)²/R²
 
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
 
         # Vjj = <j|V(R,r)|j'> = 1/2/π ∫ dγ cos(|j-j'|γ) V(R,r,γ)
-        COS = xp.cos(xp.abs(self.j[:, None] - self.j)[..., None] * self.g)  # cos(|j-j'|γ); shape: Nj × Nj × Ng
+        COS = xp.cos(xp.abs(j[:, None] - j)[..., None] * self.g)  # cos(|j-j'|γ); shape: Nj × Nj × Ng
         # Vjj of shape: NR × Nr × Nj × Nj
         dg = self.g[1] - self.g[0]
         Vjj = xp.sum(
@@ -469,27 +473,95 @@ class Hamiltonian:
 
 
     def _build_preconditioner_jfull(self):
-        return
+        print("Building U_n")
+        NR, Nr, Ng = self.shape
+        Nj = Ng
+        Nelec = Nr*Nj
+
+        with timer_ctx("Build Hel"):
+            Hel = self.build_Hel_j()
+
+        batch_eigh = xp.linalg.eigh
+        if xp.backend == 'cupy':
+            try:
+                print("cupy detected; trying diagonalization with torch backend")
+                import torch
+                torch.cuda.current_device()
+            except ModuleNotFoundError:
+                print("torch not found.")
+            except AssertionError:
+                print("torch not available.")
+            else:
+                def torch_eigh(H):
+                    vals, vecs = torch.linalg.eigh(torch.from_dlpack(H))
+                    return xp.asarray(vals), xp.asarray(vecs)
+                batch_eigh = torch_eigh
+
+        with timer_ctx(f"Diag  Hel"):
+            if xp.backend == 'numpy':
+                threadctl = ThreadpoolController()
+                with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+                    result = ex.map(lambda i: (i, xp.linalg.eigh(self.build_Hel(i))), range(NR))
+                    U_n   = xp.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
+                    Ad_n  = xp.zeros((NR, Nelec))
+                    for i, (a, u) in result:
+                        Ad_n[i] = a
+                        U_n[i]  = u
+            else:
+                Ad_n, U_n = batch_eigh(Hel)
+
+        Uj = xp.zeros((Ng, Ng), dtype=xp.complex128)
+        for jidx, j in enumerate(self.j):
+            Uj[jidx] = (2*numpy.pi)**(-1/2)*xp.exp((0+1j)*j*self.g)
+
+        U_n4 = U_n.reshape((NR, Nr, Ng, Nr, Ng))
+        U_n = xp.einsum("gj,Rrjsk,kl->Rrgsl", Uj, U_n4, Uj.T).reshape((NR, Nr*Ng, Nelec))
+
+        with timer_ctx("Phase match U_n"):
+            phase_match(U_n)
+
+        NR, Nelec, _ = Hel.shape
+
+        with timer_ctx("Build Hbo"):
+            Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+            Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
+            Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
+
+        with timer_ctx("Diag  Hbo"):
+            Ad_vn, U_v = batch_eigh(Hbo)  # xp.linalg.eigh(Hbo)
+            Ad_vn = Ad_vn.T
+
+        with timer_ctx("Phase match U_v"):
+            phase_match(U_v)
+
+        pc = (Ad_vn, U_n, U_v, Ad_n)
+        size = sum([x.nbytes for x in pc]) / 1024**2
+        print(f"Preconditioner requires {int(size)}MB.")
+        return pc
 
     def _make_guess_jfull(self, min_guess):
         guesses = xp.exp(-(self.Vgrid - xp.min(self.Vgrid))**2/27.211**2).ravel()
         return guesses
 
-    #@partial(jax.jit, static_argnums=0)
+
     def _preconditioner_jfull(self, dx, e, x0):
-        dx_ = dx.reshape((-1,) + self.shape)
-        Ad, U, *_ = self._preconditioner_data
-        diagd = Ad - (e - 1e-5)
+        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
+        diagd = Ad_vn - (e - 1e-5)
+        NR, Nr, Ng = self.shape
+
+        dx_ = dx.reshape((-1, NR, Nr*Ng))
 
         kwargs = dict(optimize=True)
         if xp.backend == 'torch':
             kwargs = {}
 
-        dx_t = xp.einsum("Rrgi,BRrg->BRig", U, dx_, **kwargs)
-        tr_t = dx_t / diagd
-        tr_ = xp.einsum('Rigr,BRig->BRrg', U, tr_t, **kwargs)
+        tr_ = xp.einsum(
+            'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
+            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, **kwargs
+        ).real
 
         return tr_.reshape(dx.shape)
+
 
     def _build_preconditioner_BO(self):
         print("Building U_n")
