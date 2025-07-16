@@ -31,25 +31,7 @@ conda activate xebees
 ```
 **Note**: If you want to use GPU backends (like CuPy), you need to create the environment on a node with GPUs, like della-gpu.
 
-Whenever you login, you will need to load the anaconda module and activate your saved environment. Additionally, the module load line and conda activate line will need to be included in any SLURM scripts. An example SLURM script using a GPU, `test.qs`, looks like:
-```
-#!/bin/bash
-#SBATCH --job-name=test     # create a short name for your job
-#SBATCH --nodes=1           # node count
-#SBATCH --ntasks=1          # total number of tasks across all nodes
-#SBATCH --cpus-per-task=16  # cpu-cores per task (>1 if multi-threaded tasks)
-#SBATCH --gres=gpu:1
-#SBATCH --constraint=gpu80
-#SBATCH --mem=80G          # total memory per node
-#SBATCH --time=0:10:00      # total run time limit (HH:MM:SS)
-
-module purge
-module load anaconda3/2024.10
-conda activate xebees
-
-2D/fixed_center_of_mass_exact.py -k 10 -g_1 1.0 -g_2 1.0 -M_1 100 -M_2 100 -r 50 -g 50 -R 50  -t 1 --verbosity 9 --preconditioner "BO" --backend cupy &> log_test
-```
-You can submit the SLURM script with `sbatch test.qs`, and check the queue and get estimated job start time with `squeue -u $(USER_ID) --start`
+Whenever you login, you will need to load the anaconda module and activate your saved environment. Additionally, the module load line and conda activate line will need to be included in any SLURM scripts (see below).
 
 #### Grace Hopper chip
 We have experimental support for the Grace Hopper super-chip via anaconda; use `environment-gh.yml` instead of `environment.yml`.
@@ -116,26 +98,6 @@ exact gap 0.026784557996776148
 All eigenvalues converged
 ```
 
-## Project Structure
-
-```
-xebees/
-├── 1D/     # One-dimensional calculations
-│   ├── fixed_center_of_mass_exact.py   # 1D solver
-│   └── notebook-1D.ipynb               # examples and tutorials
-├── 2D/     # Two-dimensional calculations
-│   ├── fixed_center_of_mass_exact.py   # 2D solver
-│   ├── notebook-2D.ipynb               # examples and tutorials
-├── lib/    # Core library modules
-│   ├── xp.py                           # Backend abstraction (NumPy/CuPy/PyTorch/cuPyNumeric)
-│   ├── davidson.py                     # Davidson helper functions
-│   ├── hamiltonian.py                  # Kinetic energy operators
-│   ├── linalg_helper.py                # Iterative eigen solver
-│   └── potentials.py                   # Potential energy functions
-├── tests/  # Test suite
-└── environment*.yml       # Conda environment files
-```
-
 ## Key Parameters
 
 ### Essential Parameters
@@ -154,6 +116,28 @@ xebees/
 - **`--verbosity`**: Output detail level (0-10)
 - **`--save`**: Save resultant eigenvectors to file
 - **`--guess`**: Load initial guess from file
+
+
+## Running under SLURM
+An example SLURM script using a GPU, `test.qs`, looks like:
+```
+#!/bin/bash
+#SBATCH --job-name=test     # create a short name for your job
+#SBATCH --nodes=1           # node count
+#SBATCH --ntasks=1          # total number of tasks across all nodes
+#SBATCH --cpus-per-task=16  # cpu-cores per task (>1 if multi-threaded tasks)
+#SBATCH --gres=gpu:1
+#SBATCH --constraint=gpu80
+#SBATCH --mem=80G          # total memory per node
+#SBATCH --time=0:10:00      # total run time limit (HH:MM:SS)
+
+module purge
+module load anaconda3/2024.10
+conda activate xebees
+
+2D/fixed_center_of_mass_exact.py -k 10 -g_1 1.0 -g_2 1.0 -M_1 100 -M_2 100 -r 50 -g 50 -R 50  -t 1 --verbosity 9 --preconditioner "BO" --backend cupy &> log_test
+```
+You can submit the SLURM script with `sbatch test.qs`, and check the queue and get estimated job start time with `squeue -u $(USER_ID) --start`
 
 ## Testing
 
@@ -178,6 +162,27 @@ pytest tests/test_backends.py
 All tests should pass on a properly configured system. Common issues:
 - Some backends may not be available depending on your installation
 - GPU tests may fail if there is insufficient GPU memory available
+
+
+## Project Structure
+
+```
+xebees/
+├── 1D/     # One-dimensional calculations
+│   ├── fixed_center_of_mass_exact.py   # 1D solver
+│   └── notebook-1D.ipynb               # examples and tutorials
+├── 2D/     # Two-dimensional calculations
+│   ├── fixed_center_of_mass_exact.py   # 2D solver
+│   ├── notebook-2D.ipynb               # examples and tutorials
+├── lib/    # Core library modules
+│   ├── xp.py                           # Backend abstraction (NumPy/CuPy/PyTorch/cuPyNumeric)
+│   ├── davidson.py                     # Davidson helper functions
+│   ├── hamiltonian.py                  # Kinetic energy operators
+│   ├── linalg_helper.py                # Iterative eigen solver
+│   └── potentials.py                   # Potential energy functions
+├── tests/  # Test suite
+└── environment*.yml       # Conda environment files
+```
 
 ## Reporting Issues
 When reporting problems, include:
