@@ -32,6 +32,13 @@ class XPBackend:
             self._backend_name = name
             print(f"[xp] backend set to {self._backend_name}")
 
+        if self._backend_name == 'jax.numpy':
+            import jax
+            jax.config.update('jax_enable_x64', True)
+        elif self._backend_name == 'torch':
+            self._backend.set_default_dtype(self._backend.float64)
+
+
     def __getattr__(self, attr):
         # Delegate attribute access to the backend module
         return getattr(self._backend, attr)

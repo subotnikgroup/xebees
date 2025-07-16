@@ -249,7 +249,10 @@ class Hamiltonian:
 
     #@partial(jax.jit, static_argnums=0)
     def Tx(self, x):
-        xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
         ke = xp.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
@@ -886,12 +889,6 @@ if __name__ == '__main__':
     # you can only select the backend once and it must be before you use any xp functions
     if xp.backend != args.backend:
         xp.backend = args.backend
-
-    if xp.backend == 'jax.numpy':
-        import jax
-        jax.config.update('jax_enable_x64', True)
-    elif xp.backend == 'torch':
-        xp.set_default_dtype(xp.float64)
 
     threadctl = ThreadpoolController()
     threadctl.limit(limits=args.t)

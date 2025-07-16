@@ -15,7 +15,7 @@ from davidson import get_davidson_mem
 
 def test_backend_consistency():
     """Test that numpy, cupy, and cupynumeric backends produce the same results."""
-    backends = ['numpy', 'cupy', 'cupynumeric']
+    backends = ['numpy', 'torch', 'cupy', 'cupynumeric']
     available_backends = []
     results = {}
 

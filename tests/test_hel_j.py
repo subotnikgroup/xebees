@@ -19,6 +19,11 @@ def test_hel_j_convergence():
     expected_improvement = 50  # Expect 50x improvement
     check_states = 5           # Number of low-lying surfaces we test
 
+    try:
+        xp.backend='cupy'
+    except Exception:
+        xp.backend='numpy'
+
     base_params = {
         'g_1': 1.0, 'g_2': 1.0,
         'M_1': 100, 'M_2': 100,
