@@ -19,8 +19,8 @@ First, install uv:
 
 If you're not worried about linking to system libraries, things are very simple:
 ```
-git clone git@github.com:subotnikgroup/ps-model-exact.git
-cd ps-model-exact
+git clone git@github.com:subotnikgroup/xebees.git
+cd xebees
 uv venv
 source .venv/bin/activate
 uv pip install --editable .
@@ -47,8 +47,8 @@ If you want to link against the system libraries, you'll need to compile some of
 module purge
 module load gcc/11.3 cmake/3.24.0 openblas/0.3.10-mp
 
-git clone git@github.com:subotnikgroup/ps-model-exact.git
-cd ps-model-exact
+git clone git@github.com:subotnikgroup/xebees.git
+cd xebees
 uv venv
 source .venv/bin/activate
 MAKEFLAGS="-j48" CC=$(which gcc) CXX=$(which g++) FC=$(which gfortran) uv \
@@ -64,7 +64,7 @@ module load nsight-systems/2025.3.1  # optional, useful for profiling
 Then, create the new conda env
 ```
 conda env create -f environment.yml
-conda activate ps-exact
+conda activate xebees
 ```
 
 Now, you should be able to run our scripts in the head node on della.
@@ -83,7 +83,7 @@ example slurm script, `test.qs` looks like:
 
 module purge
 module load anaconda3/2024.10
-conda activate ps-exact
+conda activate xebees
 
 2D/fixed_center_of_mass_exact.py -k 10 -g_1 1.0 -g_2 1.0 -M_1 100 -M_2 100 -r 50 -g 50 -R 50  -t 1 --verbosity 9 --preconditioner "naive" &> log_test
 ```

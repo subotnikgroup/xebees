@@ -1,4 +1,4 @@
-name : ps-exact
+name : xebees
 channels:
   - legate/label/experimental
   - pytorch

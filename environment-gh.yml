@@ -1,4 +1,4 @@
-name: ps-exact-gh
+name: xebees-gh
 channels:
   - legate/label/experimental
   - conda-forge
