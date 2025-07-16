@@ -14,17 +14,8 @@ XEBEES runs on CPUs or GPUs via a variety of backends.
 
 ### System Requirements
 - **Python**: 3.12 (required)
-- **Memory**: Minimum 8GB RAM; 32GB+ recommended for large calculations
-- **CPU**: Any modern x86_64 processor
+- **Memory**: 32GB+ recommended for large calculations
 - **GPU**: NVIDIA GPU with CUDA support (optional but recommended for large calculations)
-- **HPC Clusters**: Optimized for SLURM-based systems
-
-### Required Dependencies
-All dependencies are automatically installed during setup, but key requirements include:
-- NumPy, JAX, PyTorch (computational backends)
-- Matplotlib, Jupyter (visualization and notebooks)
-- CuPy (GPU acceleration)
-- pytest (testing)
 
 ## Installation
 Installation from source is supported via `uv` or anaconda.
