@@ -10,15 +10,13 @@ Bradbury with contributions from Alok Kumar and Xinchun Wu.
 
 XEBEES runs on CPUs or GPUs via a variety of backends.
 
-## Prerequisites and System Requirements
-
-### System Requirements
-- **Python**: 3.12 (required)
-- **Memory**: 32GB+ recommended for large calculations
-- **GPU**: NVIDIA GPU with CUDA support (optional but recommended for large calculations)
 
 ## Installation
 Installation from source is supported via `uv` or anaconda.
+
+### System Requirements
+- **Memory**: 32GB+ recommended for large calculations
+- **GPU**: NVIDIA GPU with CUDA support (optional but recommended for large calculations)
 
 ### Conda
 On our cluster, Della, anaconda is already installed so we can use that to create a Python environment. First, load the modules:
