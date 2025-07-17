@@ -68,6 +68,10 @@ source .venv/bin/activate
 MAKEFLAGS="-j48" CC=$(which gcc) CXX=$(which g++) FC=$(which gfortran) uv \
   pip install --editable . --no-binary numpy --no-binary scipy --no-binary pyscf --no-binary jax
 ```
+If that doesn't work, try this instead:
+```
+MAKEFLAGS="-j48" CC=$(which gcc) CXX=$(which g++) FC=$(which gfortran) uv pip install --editable .
+```
 
 ## Quick Start
 
