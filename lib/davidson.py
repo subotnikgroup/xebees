@@ -1,7 +1,7 @@
 import xp
 # N.B. 2D and later code uses numpy for loading and interpolating. 1D
 # code also uses numpy for building and applying the preconditioner
-import numpy as np
+import numpy
 from os import sysconf
 from debug import timer, timer_ctx
 import linalg_helper as lib
@@ -34,8 +34,8 @@ def get_davidson_guess(guessfile, grid_dims):
         print(f"WARNING: requested guess-file, {guessfile}, does not exist!")
         return
 
-    guess = np.load(guessfile)['guess']
-    if guess.shape[1] == np.prod(grid_dims):
+    guess = numpt.load(guessfile)['guess']
+    if guess.shape[1] == numpy.prod(grid_dims):
         print("Loaded guess from", guessfile)
         return guess
     else:
@@ -51,7 +51,7 @@ def get_interpolated_guess(guessfile, axes, method='cubic'):
         return
 
     try:
-        with np.load(guessfile, allow_pickle=True) as npz:
+        with numpy.load(guessfile, allow_pickle=True) as npz:
             guess = npz['guess']
             H = npz['H'].item()
     except Exception as e:
@@ -80,8 +80,8 @@ def interpolate_guess(psi, axes, axes_target, method='cubic'):
                                            fill_value=None)  # extrapolate
 
     # Mesh for new grid
-    mesh = np.meshgrid(*axes_target, indexing='ij')
-    points = np.stack([m.ravel() for m in mesh], axis=-1)
+    mesh = numpy.meshgrid(*axes_target, indexing='ij')
+    points = numpy.stack([m.ravel() for m in mesh], axis=-1)
     shape = [len(ax) for ax in axes_target]
 
     # Interpolate
@@ -145,57 +145,49 @@ def phase_match(U):
 def build_preconditioner(TR, Tr, Vgrid, min_guess=4):
     NR, Nr = Vgrid.shape
 
-    guess = np.zeros((NR,Nr))
+    guess = xp.zeros((NR,Nr))
 
-    U_n    = np.zeros((NR,Nr,Nr))
-    U_v    = np.zeros((Nr,NR,NR))
-    Ad_n   = np.zeros((NR,Nr))
-    Ad_vn  = np.zeros((NR,Nr))
+    U_n    = xp.zeros((NR,Nr,Nr))
+    U_v    = xp.zeros((Nr,NR,NR))
+    Ad_n   = xp.zeros((NR,Nr))
+    Ad_vn  = xp.zeros((NR,Nr))
 
     # diagonalize H electronic: r->n
     for i in range(NR):
-        Hel = Tr + np.diag(Vgrid[i])
-        Ad_n[i], U_n[i] = np.linalg.eigh(Hel)
+        Hel = Tr + xp.diag(Vgrid[i])
+        Ad_n[i], U_n[i] = xp.linalg.eigh(Hel)
 
         # align phases
         if i > 0:
             for j in range(Nr):
-                if np.sum(U_n[i,:,j] * U_n[i-1,:,j]) < 0:
+                if xp.sum(U_n[i,:,j] * U_n[i-1,:,j]) < 0:
                     U_n[i,:,j] *= -1.0
 
     # diagonalize Born-Oppenheimer Hamiltonian: R->v
     for i in range(Nr):
-        Hbo = TR + np.diag(Ad_n[:,i])
-        Ad_vn[:,i], U_v[i] = np.linalg.eigh(Hbo)
+        Hbo = TR + xp.diag(Ad_n[:,i])
+        Ad_vn[:,i], U_v[i] = xp.linalg.eigh(Hbo)
 
         # align phases
         if i > 0:
             for j in range(NR):
-                if np.sum(U_v[i,:,j] * U_v[i-1,:,j]) < 0:
+                if xp.sum(U_v[i,:,j] * U_v[i-1,:,j]) < 0:
                     U_v[i,:,j] *= -1.0
 
     # BO states are like: U_n[:,:,n]
     # vib states are like: U_v[n,:,v]
     # our first guess was the ground state BO wavefuction dressed by the first vibrational state
-    # guess = U_n[:,:,0] * U_v[0,:,0,np.newaxis]
+    # guess = U_n[:,:,0] * U_v[0,:,0,xp.newaxis]
     # Now we take something like the first num_guess states
-    s = int(np.ceil(np.sqrt(min_guess)))
-    guesses = [(U_n[:,:,n] * U_v[n,:,v,np.newaxis]).ravel() for n in range(s) for v in range(s)]
+    s = int(xp.ceil(xp.sqrt(min_guess)))
+    guesses = xp.asarray([(U_n[:,:,n] * U_v[n,:,v,xp.newaxis]).ravel() for n in range(s) for v in range(s)])
 
     def precond_Rn(dx, e, x0):
-        dx_Rr = dx.reshape((NR,Nr))
-        
-        #for i in range(NR):
-        #    dx_Rn[i] = U_n[i].T @ dx_Rr[i]
-
-        dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr)
-        tr_Rn = dx_Rn / (Ad_n - e)
-        tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn)
-        
-        #for i in range(NR):
-        #    tr_Rr[i] = U_n[i] @ tr_Rn[i]
-        
-        return tr_Rr.ravel()
+        dx_ = dx.reshape((-1, NR, Nr))
+        dx_Rn = xp.einsum('Rji,BRj->BRi', U_n, dx_)
+        tr_Rn = dx_Rn / (Ad_n[None, :, :] - e)
+        tr_Rr = xp.einsum('Rij,BRj->BRi', U_n, tr_Rn)
+        return tr_Rr.reshape(dx.shape)
 
 
     # for our simple case, these contractions were no observable help and harder to read
@@ -205,42 +197,32 @@ def build_preconditioner(TR, Tr, Vgrid, min_guess=4):
     # Elimination of temporaries by merging the contractions powered by opt_einsum_fx.
     # c.f.: https://opt-einsum-fx.readthedocs.io/en/latest/api.html#opt_einsum_fx.fuse_einsums
     def precond_vn(dx, e, x0):
-        dx_Rr = dx.reshape((NR,Nr))
-
-        #dx_Rn = np.einsum('Rji,Rj->Ri', U_n, dx_Rr, optimize=True)
-        #dx_vn = np.einsum('nji,jn->in', U_v, dx_Rn, optimize=True)
-
-        dx_vn = np.einsum('nji,jqn,jq->in', U_v, U_n, dx_Rr, optimize=True)
-
-        tr_vn = dx_vn / (Ad_vn - e)
-
-        #tr_Rn = np.einsum('nij,jn->in', U_v, tr_vn, optimize=True)
-        #tr_Rr = np.einsum('Rij,Rj->Ri', U_n, tr_Rn, optimize=True)
-
-        tr_Rr = np.einsum('Rij,jRq,qj->Ri', U_n, U_v, tr_vn, optimize=True)
-
-        return tr_Rr.ravel()
+        dx_ = dx.reshape((-1, NR, Nr))
+        dx_vn = xp.einsum('nji,jqn,Bjq->Bin', U_v, U_n, dx_, optimize=True)
+        tr_vn = dx_vn / (Ad_vn[None, :, :] - e)
+        tr_Rr = xp.einsum('Rij,jRq,Bqj->BRi', U_n, U_v, tr_vn, optimize=True)
+        return tr_Rr.reshape(dx.shape)
 
     return precond_vn, guesses
 
 @timer
 def solve_exact(TR, Tr, Vgrid, num_state=10):
-    H = (np.kron(TR, np.eye(Nr)) +
-         np.kron(np.eye(NR), Tr) +
-         np.diag(Vgrid.ravel())
+    H = (xp.kron(TR, xp.eye(Nr)) +
+         xp.kron(xp.eye(NR), Tr) +
+         xp.diag(Vgrid.ravel())
     )
 
-    eigenvalues, eigenvectors = np.linalg.eigh(H)
+    eigenvalues, eigenvectors = xp.linalg.eigh(H)
     return eigenvalues[:num_state]
 
 @timer
 def solve_exact_gen(Hx, N, num_state=10):
     with timer_ctx(f"Build H of size {N}"):
-        H = np.array([
-            Hx(e) for e in np.eye(N)
+        H = xp.array([
+            Hx(e) for e in xp.eye(N)
         ])
 
-    eigenvalues, eigenvectors = np.linalg.eigh(H)
+    eigenvalues, eigenvectors = xp.linalg.eigh(H)
     return eigenvalues[:num_state]
 
 
@@ -252,23 +234,21 @@ def solve_davidson(TR, Tr, Vgrid,
                    iterations=1000,
                    max_subspace=1000,
                    guess=None,):
-    def aop_fast(x):
-        xa = x.reshape(Vgrid.shape)
-        r  = TR @ xa
-        r += xa @ (Tr)
-        r += xa * Vgrid
-        return r.ravel()
 
-    aop = lambda xs: [ aop_fast(x) for x in xs ]
+    def Hx(xs):
+        xa = xs.reshape((-1,) + Vgrid.shape)
+        r = xp.einsum('ij,bjk->bik', TR, xa)
+        r += xp.einsum('bjk,kl->bjl', xa, Tr)
+        r += xa * Vgrid[None, :, :]
+        return r.reshape(xs.shape)
 
     if guess is None:
         pc_unitary, guess = build_preconditioner(TR, Tr, Vgrid, num_state)
     else:
         pc_unitary, _ = build_preconditioner(TR, Tr, Vgrid)
 
-
     conv, eigenvalues, eigenvectors = lib.davidson1(
-        aop,
+        Hx,
         guess,
         pc_unitary,
         nroots=num_state,

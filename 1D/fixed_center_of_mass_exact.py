@@ -1,13 +1,14 @@
 #!/usr/bin/env python
-import numpy as np
+import numpy
 from sys import stderr
 import argparse as ap
 from pathlib import Path
-from pyscf import lib as pyscflib
+from threadpoolctl import ThreadpoolController
 
 import os, sys
 sys.path.append(os.path.abspath("lib"))
 
+import xp
 from constants import *
 from hamiltonian import  KE, KE_FFT
 from davidson import solve_davidson, solve_exact, get_davidson_guess
@@ -19,13 +20,13 @@ def VO(R_amu, r_amu, g_1, g_2, M_1, M_2):
     A, B, C = 2.32e5, 3.15, 2.31e4
     mu = M_1*M_2/(M_1+M_2)
 
-    D1 = g_2 * D * (    np.exp(-2*a * (r + mu/M_2*R - d))
-                    - 2*np.exp(  -a * (r + mu/M_2*R - d))
+    D1 = g_2 * D * (    xp.exp(-2*a * (r + mu/M_2*R - d))
+                    - 2*xp.exp(  -a * (r + mu/M_2*R - d))
                     + 1)
-    D2 = g_1 * D * c**2 * (    np.exp(-(2*a / c) * (mu/M_1*R - r - d))
-                           - 2*np.exp(-(  a / c) * (mu/M_1*R - r - d)))
+    D2 = g_1 * D * c**2 * (    xp.exp(-(2*a / c) * (mu/M_1*R - r - d))
+                           - 2*xp.exp(-(  a / c) * (mu/M_1*R - r - d)))
 
-    return KCALMOLE_TO_HARTREE * (D1 + D2 + A * np.exp(-B * R) - C / R**6)
+    return KCALMOLE_TO_HARTREE * (D1 + D2 + A * xp.exp(-B * R) - C / R**6)
 
 
 def parse_args():
@@ -43,6 +44,7 @@ def parse_args():
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=400, type=int)
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--verbosity', default=2, type=int)
+    parser.add_argument('--backend', default='numpy')
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
@@ -66,19 +68,19 @@ def build_terms(args):
         range_R = args.extent[:2]
         range_r = args.extent[-2:]
 
-    R = np.linspace(*range_R, args.NR) * ANGSTROM_TO_BOHR
-    r = np.linspace(*range_r, args.Nr) * ANGSTROM_TO_BOHR
+    R = xp.linspace(*range_R, args.NR) * ANGSTROM_TO_BOHR
+    r = xp.linspace(*range_r, args.Nr) * ANGSTROM_TO_BOHR
 
     dR, dr = R[1] - R[0], r[1] - r[0]
-    Vgrid = VO(*np.meshgrid(R, r, indexing='ij'), args.g_1, args.g_2, M_1, M_2)
+    Vgrid = VO(*xp.meshgrid(R, r, indexing='ij'), args.g_1, args.g_2, M_1, M_2)
 
-    P = np.fft.fftshift(np.fft.fftfreq(args.NR, dR)) * 2 * np.pi
-    p = np.fft.fftshift(np.fft.fftfreq(args.Nr, dr)) * 2 * np.pi
+    P = xp.fft.fftshift(xp.fft.fftfreq(args.NR, dR)) * 2 * xp.pi
+    p = xp.fft.fftshift(xp.fft.fftfreq(args.Nr, dr)) * 2 * xp.pi
 
     mu = M_1*M_2/(M_1+M_2)
     Tr = KE(args.Nr, dr, m)
     Tmp = KE(args.Nr, dr, (M_1+M_2))
-    TR = np.real(KE_FFT(args.NR, P, R, mu))
+    TR = -xp.real(KE_FFT(args.NR, P, R)) / (2 * mu)
 
     return TR, Tr, Tmp, Vgrid, (R,P), (r,p)
 
@@ -87,8 +89,13 @@ if __name__ == '__main__':
     args = parse_args()
     print(args)
 
+    # you can only select the backend once and it must be before you use any xp functions
+    if xp.backend != args.backend:
+        xp.backend = args.backend
+
     # set number of threads for Davidson etc.
-    pyscflib.num_threads(args.t)
+    threadctl = ThreadpoolController()
+    threadctl.limit(limits=args.t)
 
     TR, Tr, Tmp, Vgrid, *_ = build_terms(args)
 
@@ -105,7 +112,7 @@ if __name__ == '__main__':
     print(conv)
 
     if args.evecs:
-        np.savez(args.evecs, guess=evecs, V=Vgrid)
+        numpy.savez(args.evecs, guess=evecs, V=Vgrid)
         print("Wrote eigenvectors to", args.evecs)
 
 
