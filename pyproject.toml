@@ -22,7 +22,7 @@ dependencies = [
 where = ["lib"]
 
 [tool.pytest.ini_options]
-pythonpath = [".", "lib", "2D"]
+pythonpath = [".", "lib", "1D", "2D"]
 addopts = "-v"
 testpaths = ["tests"]
 filterwarnings = [
