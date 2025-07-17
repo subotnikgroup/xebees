@@ -1,1 +1,0 @@
-scratch_profiling/nsys_profile/nsys.qs
