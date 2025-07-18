@@ -332,7 +332,7 @@ def _orthonormalize_xt(xt, xs, threshold):
 
     # Project: xt_mat -= xs.T @ (xs @ xt_mat.T)
     # In detail: subtract each xi's projection onto the span of xs
-    proj = xs @ xt.T     # shape: (nbasis, nvecs)
+    proj = xs.conj() @ xt.T     # shape: (nbasis, nvecs)
     xt -= (proj.T @ xs)  # shape: (nvecs, ndim)
 
     # Compute norms
@@ -356,12 +356,12 @@ def _fill_heff_hermitian(heff, ax, xt, axt):
     row0 = row1 - nrow
 
     # === Block A: lower-right (nrow x nrow), symmetric ===
-    block_A = xt @ axt.T.conj()  # shape (nrow, nrow)
+    block_A = xt.conj() @ axt.T  # shape (nrow, nrow)
     heff[row0:row1, row0:row1] = (block_A + block_A.T.conj()) / 2
 
     if row0 > 0: # cupynumeric requires this test
         # === Block B: off-diagonal (row0 x nrow), symmetric ===
-        block_B = xt @ ax[:row0].T.conj()  # shape (nrow, row0)
+        block_B = xt.conj() @ ax[:row0].T  # shape (nrow, row0)
         heff[row0:row1, :row0] = block_B
         heff[:row0, row0:row1] = block_B.T.conj()
 

@@ -35,7 +35,6 @@ import xp
 import numpy  # only use this for reading and writing objects
 
 import linalg_helper as lib
-#from pyscf import lib
 import potentials
 from constants import *
 from hamiltonian import  KE, KE_FFT, KE_Borisov
