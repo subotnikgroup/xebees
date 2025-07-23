@@ -1,5 +1,8 @@
 import sys
 import importlib
+from functools import reduce
+from operator import mul
+
 import override
 
 class XPBackend:
@@ -120,9 +123,41 @@ def _torch_iscomplexobj(original_func, backend, backend_name, A):
 
 # Workaround for cupynumeric issue 1211
 @override.register('cupynumeric', 'linalg.qr', "Working around cupynumeric issue 1211")
-def _cupynumeric_qr_workaround(original_func, backend, backend_name, A, *args, **kwargs):
+def _cupynumeric_qr_1211(original_func, backend, backend_name, A, *args, **kwargs):
     # FIXME: excessive copy, https://github.com/nv-legate/cupynumeric/issues/1211
     return original_func(A.copy(), *args, **kwargs)
+
+# Workaround for cupynumeric issue 1216 - batched eigh memory fragmentation
+@override.register('cupynumeric', 'linalg.eigh', "Working around cupynumeric issue 1216")
+def _cupynumeric_eigh_1216(original_func, backend, backend_name, A, *args, **kwargs):
+    # FIXME: https://github.com/nv-legate/cupynumeric/issues/1216
+    # Issue occurs when M > 2**8 * NGPU and M*N*N > 2**16
+
+    # Calculate batch dimensions and matrix size
+    batch_shape = A.shape[:-2]
+    nbatches = reduce(mul, batch_shape, 1)
+
+    NGPU = 1  # Conservative; how to detect?
+    threshold = NGPU * 2**8
+
+    if A.ndim < 3 or A.size <= 2**16 or nbatches < threshold:
+        # Won't trigger bug, use original function
+        return original_func(A, *args, **kwargs)
+
+    N = A.shape[-1]
+
+    # Preallocate output arrays
+    vals = backend.empty((*batch_shape, N), backend.empty((), dtype=A.dtype).real.dtype)
+    vecs = backend.empty_like(A)
+
+    for i in range(0, nbatches, threshold):
+        sl = slice(i, min(i + threshold, nbatches))
+        val_batch, vec_batch = original_func(A.reshape(nbatches, N, N)[sl], *args, **kwargs)
+        vals.reshape(nbatches, N)[sl] = val_batch
+        vecs.reshape(nbatches, N, N)[sl] = vec_batch
+
+    return vals, vecs
+
 
 # Replace the module with an instance of XPBackend (a singleton)
 sys.modules[__name__] = XPBackend()
