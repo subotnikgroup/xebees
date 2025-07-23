@@ -118,5 +118,11 @@ def _torch_iscomplexobj(original_func, backend, backend_name, A):
     """Patch in iscomplexobj() function for torch backend."""
     return backend.is_complex(A)
 
+# Workaround for cupynumeric issue 1211
+@override.register('cupynumeric', 'linalg.qr', "Working around cupynumeric issue 1211")
+def _cupynumeric_qr_workaround(original_func, backend, backend_name, A, *args, **kwargs):
+    # FIXME: excessive copy, https://github.com/nv-legate/cupynumeric/issues/1211
+    return original_func(A.copy(), *args, **kwargs)
+
 # Replace the module with an instance of XPBackend (a singleton)
 sys.modules[__name__] = XPBackend()

@@ -286,12 +286,7 @@ def make_diag_precond(diag, level_shift=1e-3):
 
 
 def _qr(X):
-    # FIXME: excessive copy, https://github.com/nv-legate/cupynumeric/issues/1211
-    if xp._backend_name == 'cupynumeric':
-        print("WARNING workaround for cuPyNumeric issue 1211")
-        return (xp.linalg.qr(X.T.copy())[0]).T
-    else:
-        return (xp.linalg.qr(X.T)[0]).T
+    return (xp.linalg.qr(X.T)[0]).T
 
 
 def _from_subspace(v, xs):
