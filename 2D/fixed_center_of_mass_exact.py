@@ -331,21 +331,6 @@ class Hamiltonian:
 
         print(f"memory constraint threshold = {mem_thresh}, {memory_constrained}")
 
-        batch_eigvalsh = xp.linalg.eigvalsh
-        if xp.backend == 'cupy':
-            try:
-                print("cupy detected; trying diagonalization with torch backend")
-                import torch
-                torch.cuda.current_device()
-            except ModuleNotFoundError:
-                print("torch not found.")
-            except AssertionError:
-                print("torch not available.")
-            else:
-                def torch_eigvalsh(H):
-                    return xp.asarray(torch.linalg.eigvalsh(torch.from_dlpack(H)))
-                batch_eigvalsh = torch_eigvalsh
-
         if xp.backend == 'numpy':
             threadctl = ThreadpoolController()
             with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
@@ -356,9 +341,9 @@ class Hamiltonian:
         elif memory_constrained:
             Ad_n  = xp.zeros((NR, Nelec))
             for i in tqdm(range(NR)):
-                Ad_n[i] = batch_eigvalsh(Hel_func(i))
+                Ad_n[i] = xp.linalg.eigvalsh(Hel_func(i))
         else:
-            Ad_n = batch_eigvalsh(Hel_func())
+            Ad_n = xp.linalg.eigvalsh(Hel_func())
 
         Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
         Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
@@ -486,22 +471,6 @@ class Hamiltonian:
         with timer_ctx("Build Hel"):
             Hel = self.build_Hel_j()
 
-        batch_eigh = xp.linalg.eigh
-        if xp.backend == 'cupy':
-            try:
-                print("cupy detected; trying diagonalization with torch backend")
-                import torch
-                torch.cuda.current_device()
-            except ModuleNotFoundError:
-                print("torch not found.")
-            except AssertionError:
-                print("torch not available.")
-            else:
-                def torch_eigh(H):
-                    vals, vecs = torch.linalg.eigh(torch.from_dlpack(H))
-                    return xp.asarray(vals), xp.asarray(vecs)
-                batch_eigh = torch_eigh
-
         with timer_ctx(f"Diag  Hel"):
             if xp.backend == 'numpy':
                 threadctl = ThreadpoolController()
@@ -513,7 +482,7 @@ class Hamiltonian:
                         Ad_n[i] = a
                         U_n[i]  = u
             else:
-                Ad_n, U_n = batch_eigh(Hel)
+                Ad_n, U_n = xp.linalg.eigh(Hel)
 
         Uj = xp.zeros((Ng, Ng), dtype=xp.complex128)
         for jidx, j in enumerate(self.j):
@@ -533,7 +502,7 @@ class Hamiltonian:
             Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
 
         with timer_ctx("Diag  Hbo"):
-            Ad_vn, U_v = batch_eigh(Hbo)  # xp.linalg.eigh(Hbo)
+            Ad_vn, U_v = xp.linalg.eigh(Hbo)  # xp.linalg.eigh(Hbo)
             Ad_vn = Ad_vn.T
 
         with timer_ctx("Phase match U_v"):
@@ -590,22 +559,6 @@ class Hamiltonian:
         #         print(result)
         #     Ad_n, U_n = xp.linalg.eigh(Hel)
 
-        batch_eigh = xp.linalg.eigh
-        if xp.backend == 'cupy':
-            try:
-                print("cupy detected; trying diagonalization with torch backend")
-                import torch
-                torch.cuda.current_device()
-            except ModuleNotFoundError:
-                print("torch not found.")
-            except AssertionError:
-                print("torch not available.")
-            else:
-                def torch_eigh(H):
-                    vals, vecs = torch.linalg.eigh(torch.from_dlpack(H))
-                    return xp.asarray(vals), xp.asarray(vecs)
-                batch_eigh = torch_eigh
-
         with timer_ctx(f"Diag  Hel"):
             if xp.backend == 'numpy':
                 threadctl = ThreadpoolController()
@@ -617,7 +570,7 @@ class Hamiltonian:
                         Ad_n[i] = a
                         U_n[i]  = u
             else:
-                Ad_n, U_n = batch_eigh(Hel)
+                Ad_n, U_n = xp.linalg.eigh(Hel)
 
         with timer_ctx("Phase match U_n"):
             phase_match(U_n)
@@ -630,7 +583,7 @@ class Hamiltonian:
             Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
 
         with timer_ctx("Diag  Hbo"):
-            Ad_vn, U_v = batch_eigh(Hbo)  # xp.linalg.eigh(Hbo)
+            Ad_vn, U_v = xp.linalg.eigh(Hbo)  # xp.linalg.eigh(Hbo)
             Ad_vn = Ad_vn.T
 
         with timer_ctx("Phase match U_v"):
