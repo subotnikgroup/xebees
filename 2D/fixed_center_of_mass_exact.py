@@ -205,6 +205,9 @@ class Hamiltonian:
 
         with timer_ctx(f"Build preconditioner {args.preconditioner}"):
             self._preconditioner_data = builder()
+            size = sum([x.nbytes for x in self._preconditioner_data]) / 1024**2
+            print(f"Preconditioner requires {int(size)}MB.")
+
 
         # Lock the object and protect arrays from writing
         if xp.backend != 'torch':
@@ -537,8 +540,6 @@ class Hamiltonian:
             phase_match(U_v)
 
         pc = (Ad_vn, U_n, U_v, Ad_n)
-        size = sum([x.nbytes for x in pc]) / 1024**2
-        print(f"Preconditioner requires {int(size)}MB.")
         return pc
 
     def _make_guess_jfull(self, min_guess):
@@ -636,8 +637,6 @@ class Hamiltonian:
             phase_match(U_v)
 
         pc = (Ad_vn, U_n, U_v, Ad_n)
-        size = sum([x.nbytes for x in pc]) / 1024**2
-        print(f"Preconditioner requires {int(size)}MB.")
         return pc
 
     def _make_guess_BO(self, min_guess):
