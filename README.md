@@ -83,7 +83,7 @@ conda activate xebees      # for anaconda
 source .venv/bin/activate  # for uv
 
 # Run a simple 2D calculation
-python 2D/fixed_center_of_mass_exact.py -g_1 1 -g_2 1 -M_1 300 -M_2 300 -k 5 -R 21 -r 22 -g 24 --verbosity 10 --preconditioner BO
+python 2D/fixed_center_of_mass_exact_2D.py -g_1 1 -g_2 1 -M_1 300 -M_2 300 -k 5 -R 21 -r 22 -g 24 --verbosity 10 --preconditioner BO
 ```
 
 This will:
@@ -139,7 +139,7 @@ module purge
 module load anaconda3/2024.10
 conda activate xebees
 
-2D/fixed_center_of_mass_exact.py -k 10 -g_1 1.0 -g_2 1.0 -M_1 100 -M_2 100 -r 50 -g 50 -R 50  -t 1 --verbosity 9 --preconditioner "BO" --backend cupy &> log_test
+2D/fixed_center_of_mass_exact_2D.py -k 10 -g_1 1.0 -g_2 1.0 -M_1 100 -M_2 100 -r 50 -g 50 -R 50  -t 1 --verbosity 9 --preconditioner "BO" --backend cupy &> log_test
 ```
 You can submit the SLURM script with `sbatch test.qs`, and check the queue and get estimated job start time with `squeue -u $(USER_ID) --start`
 
@@ -173,10 +173,10 @@ All tests should pass on a properly configured system. Common issues:
 ```
 xebees/
 ├── 1D/     # One-dimensional calculations
-│   ├── fixed_center_of_mass_exact.py   # 1D solver
+│   ├── fixed_center_of_mass_exact_1D.py   # 1D solver
 │   └── notebook-1D.ipynb               # examples and tutorials
 ├── 2D/     # Two-dimensional calculations
-│   ├── fixed_center_of_mass_exact.py   # 2D solver
+│   ├── fixed_center_of_mass_exact_2D.py   # 2D solver
 │   ├── notebook-2D.ipynb               # examples and tutorials
 ├── lib/    # Core library modules
 │   ├── xp.py                           # Backend abstraction (NumPy/CuPy/PyTorch/cuPyNumeric)

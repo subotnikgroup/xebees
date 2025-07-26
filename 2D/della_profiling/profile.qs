@@ -10,6 +10,6 @@ module purge
 module load anaconda3/2024.10
 conda activate xebees
 
-kernprof -l fixed_center_of_mass_exact_lineprofile.py -k 10 -g_1 1.0 -g_2 1.0 -M_1 50 -M_2 100 -r 50 -g 50 -R 50  -t 1 --verbosity 9 --preconditioner "naive" &> log_profile
+kernprof -l fixed_center_of_mass_exact_2D_lineprofile.py -k 10 -g_1 1.0 -g_2 1.0 -M_1 50 -M_2 100 -r 50 -g 50 -R 50  -t 1 --verbosity 9 --preconditioner "naive" &> log_profile
 
 

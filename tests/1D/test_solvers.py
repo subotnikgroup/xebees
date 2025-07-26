@@ -10,8 +10,8 @@ from threadpoolctl import ThreadpoolController
 
 import xp
 
-import fixed_center_of_mass_exact as fcm
-import fixed_single_mass_exact as fsm
+import fixed_center_of_mass_exact_1D as fcm
+import fixed_single_mass_exact_1D as fsm
 from davidson import solve_davidson
 
 

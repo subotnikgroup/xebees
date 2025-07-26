@@ -6,7 +6,7 @@ import pytest
 from argparse import Namespace
 
 import xp
-import fixed_center_of_mass_exact as fcm2d
+import fixed_center_of_mass_exact_2D as fcm2d
 
 def test_hel_j_convergence():
     """Test that error between build_Hel and build_Hel_j decreases as

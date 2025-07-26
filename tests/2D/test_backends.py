@@ -8,7 +8,7 @@ from argparse import Namespace
 
 import xp
 import numpy
-import fixed_center_of_mass_exact as fcm2d
+import fixed_center_of_mass_exact_2D as fcm2d
 import linalg_helper as lib
 from davidson import get_davidson_mem
 
