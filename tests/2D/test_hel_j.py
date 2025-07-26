@@ -19,9 +19,8 @@ def test_hel_j_convergence():
     expected_improvement = 50  # Expect 50x improvement
     check_states = 5           # Number of low-lying surfaces we test
 
-    try:
-        xp.backend='cupy'
-    except Exception:
+    xp.backend='cupy'
+    if not xp.cuda.is_available():
         xp.backend='numpy'
 
     base_params = {

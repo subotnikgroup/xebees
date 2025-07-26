@@ -15,15 +15,20 @@ from davidson import get_davidson_mem
 
 def test_backend_consistency():
     """Test that numpy, cupy, and cupynumeric backends produce the same results."""
-    backends = ['numpy', 'torch', 'cupy', 'cupynumeric']
+    backends = [('numpy', None),
+                ('torch', None),
+                ('cupy',  lambda cp: cp.cuda.is_available()),
+                ('cupynumeric', None)]
     available_backends = []
     results = {}
 
     # Test which backends are available
-    for backend in backends:
+    for backend, precondition in backends:
         try:
             xp.backend = backend
-        except (ImportError, Exception):
+            if precondition:
+                assert precondition(m), f"precondition not satisfied for {backend}"
+        except (ImportError, Exception, AssertionError):
             print(f"Backend {backend} not available, skipping")
             continue
         else:
