@@ -114,6 +114,8 @@ def plotpsi2D_multi(psis, H, levels=None, scale='linear'):
         levels = numpy.linspace(numpy.min(Vgrid),
                                 numpy.min(Vgrid) + 0.15, 16) # 0.15 a.u. ~4 eV range
         levels = levels[-2:]
+    else:
+        levels = fromgpu(levels)
 
     N = len(psis)
     w = int(numpy.ceil(numpy.sqrt(N)))
@@ -137,7 +139,6 @@ def plotpsi2D_multi(psis, H, levels=None, scale='linear'):
         for state, (psi, ax) in enumerate(zip(psis, axs)):
             ax.cla()
             ax.contour(*numpy.meshgrid(g, r_lab, indexing='ij'), Vgrid[t,:,:].T, levels=levels)
-
             if scale == 'linear':
                 cmap = 'seismic'
                 limit = numpy.max(numpy.abs(psi))
@@ -149,7 +150,7 @@ def plotpsi2D_multi(psis, H, levels=None, scale='linear'):
                 toplimit = limit
                 lowlimit = limit - 6  # 6 orders of magnitude
 
-            ax.pcolormesh(g, r_lab, psi[t,:,:], cmap='seismic', edgecolor='face', antialiased=True, vmin=lowlimit, vmax=toplimit)#, shading='gouraud')
+            ax.pcolormesh(g, r_lab, psi[t,:,:], cmap=cmap, edgecolor='face', antialiased=True, vmin=lowlimit, vmax=toplimit)#, shading='gouraud')
             ax.text( numpy.pi/2, numpy.max(r_lab)*.75, f"R={R_lab[t]:0.03}a₀", ha='center')
             ax.text(-numpy.pi/2, numpy.max(r_lab)*.75, f"state {state}", ha='center')
 
