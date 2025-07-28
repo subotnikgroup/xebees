@@ -131,7 +131,8 @@ def plotpsi2D_multi(psis, H, levels=None, scale='linear'):
         psis = numpy.log10(psis)
 
 
-    fig, axs = plt.subplots(subplot_kw=dict(projection='polar'), nrows=h, ncols=w)
+    fig, axs = plt.subplots(subplot_kw=dict(projection='polar'),
+                            nrows=h, ncols=w)
     axs = axs.flatten()
 
     # wavefunctions as many polar slices at R

@@ -1,7 +1,7 @@
 import xp
 # we use numpy and the interpolator for the extents; which have no need of GPU
 from scipy.interpolate import PchipInterpolator
-import numpy as np
+import numpy
 from constants import *
 
 ## README ##
@@ -24,15 +24,15 @@ from constants import *
 # extents_soft_coulumb below.
 
 def _extents_log_factory(mu12ref, lower, upper, decimals=3):
-    if any(np.diff(mu12ref) < 0):
+    if any(numpy.diff(mu12ref) < 0):
         raise RuntimeError("mu12ref must be monotonic")
 
     def extents(mu12):
         if mu12 < mu12ref[0] or mu12 > mu12ref[-1]:
             print(f"WARNING: extents may be invalid for mu12 outside of [{mu12ref[0]},{mu12ref[-1]}]")
 
-        logm = np.log(mu12)
-        logmref = np.log(mu12ref)
+        logm = numpy.log(mu12)
+        logmref = numpy.log(mu12ref)
 
         up_int = PchipInterpolator(logmref, upper)
         lo_int = PchipInterpolator(logmref, lower)
@@ -40,7 +40,7 @@ def _extents_log_factory(mu12ref, lower, upper, decimals=3):
         lo = lo_int(logm)
         up = up_int(logm)
 
-        return xp.asarray(np.round([lo, up, up], decimals))
+        return xp.asarray(numpy.round([lo, up, up], decimals))
     return extents
 
 
@@ -111,9 +111,9 @@ def borgis(R_au, r1e_au, r2e_au, charges, asymmetry_param=1):
     return KCALMOLE_TO_HARTREE * (D1 + D2 + VN)
 
 extents_borgis = _extents_log_factory(
-    xp.array([1,   2,   10,  50,  1e2, 1e3, 1e4, 1e5])*AMU_TO_AU,
-             [3.5, 3.5, 3.9, 4.3, 4.0, 4.1, 4.3, 4.3],
-             [7,   6,   5.6, 5.5, 5.4, 5.2, 5.0, 5.0]
+    numpy.array([1,   2,   10,  50,  1e2, 1e3])*AMU_TO_AU,
+                [3.5, 3.5, 3.9, 4.0, 4.1, 4.2],
+                [7,   6.4, 5.9, 5.5, 5.4, 5.2]
 )
 
 

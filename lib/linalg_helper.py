@@ -221,7 +221,7 @@ def davidson1(aop, x0, precond, tol=1e-12, max_cycle=50, max_space=100,
         ide = xp.argmax(abs(de))
 
         if all(conv):
-            log.debug('converged %d %d  |r|=%4.3g  e=%s  max|de|=%4.3g',
+            log.info('converged %d %d  |r|=%4.3g  e=%s  max|de|=%4.3g',
                       icyc, space, dx_norm.max(), e, de[ide])
             break
 
