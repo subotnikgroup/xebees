@@ -75,6 +75,12 @@ def get_interpolated_guess(guessfile, axes, method='cubic'):
 # FIXME: Interpolator only works on CPU with numpy backend; explore GPU options?
 def interpolate_guess(psi, axes, axes_target, method='cubic'):
      # Create interpolator
+    if hasattr(axes[0], 'get'):
+        axes = tuple(ax.get() for ax in axes)
+
+    if hasattr(axes_target[0], 'get'):
+        axes_target = tuple(ax.get() for ax in axes_target)
+
     interpolator = RegularGridInterpolator(axes, psi, method=method,
                                            bounds_error=False,
                                            fill_value=None)  # extrapolate
