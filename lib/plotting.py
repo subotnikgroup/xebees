@@ -58,7 +58,7 @@ def plotpsi2D(psi, H, levels=None, scale='linear'):
         fromgpu(psi.reshape(H.shape)) / fromgpu(xp.sqrt(H.R_grid*H.r_grid))
     )
 
-    if numpy.iscomplexobj(psi) or scale == 'log'::
+    if numpy.iscomplexobj(psi) or scale == 'log':
         psi = numpy.abs(psi*psi.conj())
 
     if scale == 'log':
