@@ -415,7 +415,7 @@ if __name__ == '__main__':
 
         threadctl = ThreadpoolController()
         h_workers = min(args.t, H.shape[0])    
-        blasthreads = 1 # min(h_workers/args.t, 1)
+        blasthreads = max(args.t//h_workers, 1)
  
         with cf.ThreadPoolExecutor(max_workers=h_workers) as ex, threadctl.limit(limits=blasthreads):
             results = list(tqdm(
