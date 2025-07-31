@@ -22,7 +22,7 @@ module load python/3.13 conda
 conda activate xebees
 
 
-python fast_polar_cpu_erf.py -g_1 0.5 -g_2 1.0 -M_1 1e6 -M_2 ${M} -r $NR -g $NR -R $NR --potential borgis -J 10 -t $NR --evecs ${M}_polar_erf_j10.npz &> log_${M}_polar_erf_j10
+python mem_polar_cpu_erf.py -g_1 0.5 -g_2 1.0 -M_1 1e6 -M_2 ${M} -r $NR -g $NR -R $NR --potential borgis -J 10 -t $NR --evecs ${M}_polar_erf_j10.npz &> log_${M}_polar_erf_j10
 EOF
 
   echo "Generated $filename"
