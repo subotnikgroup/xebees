@@ -2,12 +2,12 @@ import xp
 from scipy.special import factorial
 import numpy
 from debug import timer
-import nvtx
+# import nvtx
 
 def get_stencil_coefficients(stencil_size, derivative_order):
     if stencil_size % 2 == 0:
         raise ValueError("Stencil size must be odd.")
-    
+
     half_size = stencil_size // 2
     A = xp.vander(xp.arange(-half_size, half_size + 1.0), increasing=True).T
     b = xp.zeros(stencil_size)
@@ -42,16 +42,16 @@ def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
     return T
 
 
-def KE_FFT(N, P, R): 
+def KE_FFT(N, P, R):
     Tp = xp.diag(-P**2)
     exp_RP = xp.exp(1j * xp.outer(P, R))
-    
+
     return (exp_RP.T.conj() @ Tp @ exp_RP) / N
 
-def gamma_grad(N, P, R): 
+def gamma_grad(N, P, R):
     Tp = xp.diag(-1j*P)
     exp_RP = xp.exp(1j * xp.outer(P, R))
-    
+
     return (exp_RP.T.conj() @ Tp @ exp_RP) / N
 
 
@@ -111,6 +111,65 @@ def KE_Borisov(x, tol=1e-6, mass=None, bare=False, order=2):
         L *= -1 / (2 * mass)
 
     return L, J
+
+def KE_Borisov_3D(x, tol=1e-6, mass=None, bare=False, order=2):
+    # A. G. Borisov, J. Chem. Phys. 114, 7770–7777 (2001)
+    # https://doi.org/10.1063/1.1358867
+    # spherical coordinate case given in equations 20-21
+
+    N = len(x)
+    x_max = x[-1]
+    g = xp.gradient(x)
+    g = g[0] if isinstance(g, tuple) else g
+    J = g * N / x_max
+    #J = xp.gradient(x) * N / x_max
+
+
+    bound = lambda a, b: xp.arange(a,b) ## change 3D
+    al = lambda k: xp.where((k == 0) | (k == N), 1/numpy.sqrt(2), 1)
+
+    # Helper function to pre-compute sine and cosine matrices (Asin & Acos above)
+    def DTT(N, func):
+        k = bound(0, N)
+        m = bound(0, N) ## change 3D
+        return func(xp.outer(2*m,k) * xp.pi/N/2)
+
+    COS = DTT(N, xp.cos)
+    SIN = DTT(N, xp.sin)
+
+    Ac = COS.T * al(bound(0,N))[:,xp.newaxis]
+    As = (SIN * al(bound(0,N))).T
+    Acv = COS * al(bound(0,N))[xp.newaxis, :] * (2/N)
+    Asv = SIN * al(bound(0,N))[xp.newaxis, :] * (2/N)
+
+    F = x
+
+    b = 1/xp.sqrt(J) ## change 3D
+    R = F / J
+    k = xp.arange(N) * xp.pi / x[-1] ## change 3D
+
+    if order == 2:  # L should be symmetric
+        # L = -b[:,None] * Acv * k @ As * R @ Asv * k @ Ac * b
+        L = -b[:,None] * Asv * k @ Ac * b**2 @ Acv * k @ As * b ## change 3D
+        deviation = xp.mean(xp.abs(L-L.T))
+        L = (L + L.T)/2
+
+    elif order == 1:  # iL is Hermitian
+        L = b[:,None] * (Acv * k @ As - Asv * k @ Ac) * b
+        deviation = xp.mean(xp.abs(L+L.T))
+        L = (L - L.T)/2
+    else:
+        raise RuntimeError(f"Borisov derivatives of order {order} not implemented!")
+
+
+    if deviation > tol:
+        raise RuntimeError("Deviation from Hermitian too large:", deviation)
+
+    if not bare:
+        L *= -1 / (2 * mass)
+
+    return L, J
+
 
 def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False):
     T = xp.zeros((N, N))
@@ -199,12 +258,12 @@ def solve_BO_surfaces(Tr, V):
 def solve_BOv(TR, Tr, V):
     return xp.linalg.eigvalsh(TR + xp.diag(solve_BO_surface(Tr,V)))
 
-@nvtx.annotate("gamma_build", color="red")
+#@nvtx.annotate("gamma_build", color="red")
 def Gamma_etf_erf(R,r,g,dr,pg,M_1,M_2,mu12,r1e2,r2e2):
 
     Ng = len(pg)
     Nr = len(dr)
-    
+
     theta1 = xp.exp(-r1e2)
     theta2 = xp.exp(-r2e2)
     partition = theta1 + theta2
@@ -228,7 +287,7 @@ def Gamma_etf_erf(R,r,g,dr,pg,M_1,M_2,mu12,r1e2,r2e2):
 
     pr =  xp.kron(dr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),spg)
     pt =  xp.kron(dr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),cpg)
-    
+
     t1pr = xp.dot(t1,pr)
     prt1 = xp.dot(pr,t1)
     t2pr = xp.dot(t2,pr)
@@ -283,7 +342,7 @@ def Gamma_etf_erf_old(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
 
     pr =  xp.kron(pr,xp.eye(Ng))
     pt =  xp.kron(xp.diag(invr),pg)
-    
+
     t1pr = xp.dot(t1,pr)
     prt1 = xp.dot(pr,t1)
     t2pr = xp.dot(t2,pr)
@@ -311,10 +370,10 @@ def Gamma_etf_erf_old(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
 
     return gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y, gammaerf1y, gammaerf2y
 
-@nvtx.annotate("inverse_weyl_transform", color="pink")
+#@nvtx.annotate("inverse_weyl_transform", color="pink")
 def inverse_weyl_transform(E, NR, R, P):
     """
-    Perform the inverse Weyl transform 
+    Perform the inverse Weyl transform
     """
     HPS = xp.zeros((NR, NR), dtype=complex)
     EPP = xp.zeros((NR, NR), dtype=complex)
@@ -349,7 +408,7 @@ def inverse_weyl_transform(E, NR, R, P):
 
 def inverse_weyl_transform_vec(E, NR, R, P):
     """
-    Perform the inverse Weyl transform 
+    Perform the inverse Weyl transform
     """
     HPS = xp.zeros((NR, NR), dtype=complex)
     EPP = xp.zeros((NR, NR), dtype=complex)
@@ -360,16 +419,16 @@ def inverse_weyl_transform_vec(E, NR, R, P):
     q1_idx, q2_idx = xp.meshgrid(xp.arange(NR), xp.arange(NR), indexing='ij')
     mid_idx = (q1_idx + q2_idx) // 2
     mask = ((q1_idx - q2_idx) % 2 == 0)
-    
+
     mask2 = ((q1_idx - q2_idx) % 2 == 1)
     mid_idx2 = (q1_idx + q2_idx + 1) // 2
-    
+
     R_diff = R[q1_idx][:, :, None] - R[q2_idx][:, :, None]   # (NR, NR, 1) - (NR, NR, 1) * P[j] → broadcast over j
     phase = xp.exp(-1j * R_diff * P[None, None, :])          # shape (NR, NR, NR)
 
     # E[mid_idx, j] → shape (NR, NR, NR)
     E_mid = E[mid_idx, :]  # shape (NR, NR, NR)
-    E_mid2 = EPS_half[mid_idx2, :] 
+    E_mid2 = EPS_half[mid_idx2, :]
 
     # Einsum contraction over j
     HPS_part1 = xp.einsum('qpj,qpj->qp', phase, E_mid) / NR
