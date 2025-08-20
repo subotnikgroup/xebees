@@ -268,15 +268,15 @@ def Gamma_etf_cart(R,x,y,ddx,ddy,M_1,M_2,mu12,r1e2,r2e2):
     gammaetf2x = -0.5*(t2px + pxt2)
     gammaetf2y = -0.5*(t2py + pyt2)
 
-    return gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y   
+    return gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y  
 
 def compute_EPS(info):
     
-    Rval, Pval, Htot_bo, gammacoeff_R, gammacoeff_theta, gammatotx, gammatoty, gammasqtotx, gammasqtoty = info
+    Rval, Pval, Htot_bo, gammacoeff_R, gammacoeff_theta, gammatotx, gammatoty, gammasqtotx, gammasqtoty, mu12 = info
     #print("i,j",Rval,Pval,flush=True)           
     
     Htot = Htot_bo[Rval]+(gammacoeff_R[Rval,Pval]*gammatotx)+(gammacoeff_theta[Rval]*gammatoty)
-    Htot_sq = Htot - gammasqtotx - gammasqtoty 
+    Htot_sq = Htot - (gammasqtotx + gammasqtoty)/(2*mu12) 
     e_approx = xp.linalg.eigvalsh(Htot)
     e_approx_sq = xp.linalg.eigvalsh(Htot_sq)   
 
@@ -406,11 +406,15 @@ if __name__ == '__main__':
         gammasq2x = xp.dot(gammaetf2x,gammaetf2x)
         gammasq1y = xp.dot(gammaetf1y,gammaetf1y)
         gammasq2y = xp.dot(gammaetf2y,gammaetf2y)
+        gamma1x2x = xp.dot(gammaetf1x,gammaetf2x)
+        gamma2x1x = xp.dot(gammaetf2x,gammaetf1x)
+        gamma1y2y = xp.dot(gammaetf1y,gammaetf2y)
+        gamma2y1y = xp.dot(gammaetf2y,gammaetf1y)
 
-        Gammasqtotx = ((H.M_2**2*gammasq1x)+(H.M_1**2*gammasq2x)-(H.M_1*H.M_2*xp.dot(gammaetf1x,gammaetf2x))-(H.M_1*H.M_2*xp.dot(gammaetf2x,gammaetf1x)))/(H.M_1+H.M_2)**2
-        Gammasqtoty = ((H.M_2**2*gammasq1y)+(H.M_1**2*gammasq2y)-(H.M_1*H.M_2*xp.dot(gammaetf1y,gammaetf2y))-(H.M_1*H.M_2*xp.dot(gammaetf2y,gammaetf1y)))/(H.M_1+H.M_2)**2 
+        Gammasqtotx = ((H.M_2**2*gammasq1x)+(H.M_1**2*gammasq2x)-(H.M_1*H.M_2*gamma1x2x)-(H.M_1*H.M_2*gamma2x1x))/(H.M_1+H.M_2)**2
+        Gammasqtoty = ((H.M_2**2*gammasq1y)+(H.M_1**2*gammasq2y)-(H.M_1*H.M_2*gamma1y2y)-(H.M_1*H.M_2*gamma2y1y))/(H.M_1+H.M_2)**2 
 
-        index_pairs = [(i, k, Htot_bo_test, gammacoeff_R, gammacoeff_theta,Gammatotx,Gammatoty,Gammasqtotx, Gammasqtoty) for k in range(NR)]
+        index_pairs = [(i, k, Htot_bo_test, gammacoeff_R, gammacoeff_theta, Gammatotx, Gammatoty, Gammasqtotx, Gammasqtoty, H.mu12) for k in range(NR)]
 
 
         threadctl = ThreadpoolController()
@@ -426,33 +430,14 @@ if __name__ == '__main__':
             EPSsq[i, k] = valsq
 
     #blasthreads x max_workers =< args.t =< 48
-    
-    EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
-    HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
-    EPSv = batch_eigvalsh(HPS)
-    print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
-
-    EPSsq += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
-    HPSsq = inverse_weyl_transform(EPSsq, H.shape[0], H.R, H.P)
-    EPSvsq = batch_eigvalsh(HPSsq)
-    print("PS vib gap sq",EPSvsq[1]-EPSvsq[0],flush=True)
 
     Hbo_new = -1/(2*H.mu12)*(H.ddR2 - xp.diag(H.J**2/H.R**2)) +xp.diag(Ad_n)
     Ad_vn_new = batch_eigvalsh(Hbo_new)
     e_bo_new = xp.sort(Ad_vn_new.flatten())
     bo_new = e_bo_new[1] - e_bo_new[0]
-    print("BO new vib gap",bo_new,flush=True)
-
-    EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
-    Helmat = xp.repeat(ival,H.shape[0],axis=1)
-    EPS_bo += Helmat   
-    EPS_bo += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
-    HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P)
-    EPSv_bo = batch_eigvalsh(HPS_bo)
-    print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
-
-    if args.evecs:
-        
+    print("BO new vib gap",bo_new,flush=True)    
+    
+    if args.evecs:        
         EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
         HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
         EPSv,EPSvwfn = xp.linalg.eigh(HPS)
@@ -462,10 +447,38 @@ if __name__ == '__main__':
         HPSsq = inverse_weyl_transform(EPSsq, H.shape[0], H.R, H.P)
         EPSvsq,EPSvsqwfn = xp.linalg.eigh(HPSsq)
         print("PS vib gap sq",EPSvsq[1]-EPSvsq[0],flush=True)
+
+        #EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
+        #Helmat = xp.repeat(ival,H.shape[0],axis=1)
+        #EPS_bo += Helmat   
+        #EPS_bo += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
+        #HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P)
+        #EPSv_bo,EPSvbowfn = xp.linalg.eigh(HPS_bo)
+        #print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
         
         numpy.savez_compressed(args.evecs, EPS=EPSvwfn, H=H.R)
         numpy.savez_compressed("SQ"+str(args.evecs), EPS=EPSvsqwfn, H=H.R)
+        numpy.savez_compressed("BO"+str(args.evecs), EPS=EPSvbowfn, H=H.R)
         print("Wrote eigenvectors to", args.evecs)
+
+    else:
+        EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
+        HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
+        EPSv = batch_eigvalsh(HPS)
+        print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
+
+        EPSsq += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
+        HPSsq = inverse_weyl_transform(EPSsq, H.shape[0], H.R, H.P)
+        EPSvsq = batch_eigvalsh(HPSsq)
+        print("PS vib gap sq",EPSvsq[1]-EPSvsq[0],flush=True)
+
+        EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
+        Helmat = xp.repeat(ival,H.shape[0],axis=1)
+        EPS_bo += Helmat   
+        EPS_bo += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
+        HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P)
+        EPSv_bo = batch_eigvalsh(HPS_bo)
+        print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
 
     end_script = perf_counter()  
     print("Numpy time",end_script-start_script,flush=True)
