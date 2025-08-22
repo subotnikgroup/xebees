@@ -159,7 +159,7 @@ class Hamiltonian:
         #temp = self.sph_transform(self.Vgrid, self.R_grid, self.r_grid, self.j, self.j, self.Oms,self.Oms )
         with timer_ctx("Build Vsph from Vgrid"):
             self.Vsph = self.buildVsph()
-            xp.savez("test_Vsph",Vsph=self.Vsph, Rgrid=self.R_grid, rgrid=self.r_grid)
+            xp.savez("test_Vsph",Vsph=self.Vsph,Vgrid=self.Vgrid, Rgrid=self.R, rgrid=self.r, g_grid=self.g, psi_grid=self.psi)
 
         exit()
 
@@ -268,6 +268,9 @@ class Hamiltonian:
         Y1 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
         Y2 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
         V_jjOmOm = xp.zeros((args.NR, args.Nr),dtype=xp.float64)
+        
+        dg = self.g[1]-self.g[0]
+        dpsi = self.psi[1]-self.psi[0]
 
         # TODO: broken vectorization for sph_harm_y... fix later
         #Y1 = sph_harm_y(j1, Om1, self.g, self.psi)
@@ -280,17 +283,17 @@ class Hamiltonian:
 
         for iR in range(args.NR):
             for ir in range(args.Nr):
-                integrand = xp.conj(Y1)*Y2*sin_gam[:,None]*Vgrid[iR,ir,:,None]
-                V_jjOmOm[iR,ir] = xp.sum(integrand).real/2./4./xp.pi # 2 for psi being 0...2pi instead of 0...pi
+                integrand = (xp.conj(Y1)*Y2).real*sin_gam[:,None]*Vgrid[iR,ir,:,:]
+                V_jjOmOm[iR,ir] = xp.sum(integrand)/4./xp.pi*dg*dpsi # 2 for psi being 0...2pi instead of 0...pi
         return V_jjOmOm 
 
     def buildVsph(self):
-        Vsph = xp.zeros((args.NR, args.Nr, args.Ng, 2*self.J+1, args.Ng, 2*self.J+1), dtype=xp.float64)
-        for iOm1 in range(2*self.J+1):
-            for iOm2 in range(2*self.J+1):
+        ''' V(R,r,j,j',Om=Om') '''
+        Vsph = xp.zeros((args.NR, args.Nr, args.Ng, args.Ng, 2*self.J+1), dtype=xp.float64)
+        for iOm in range(2*self.J+1):
                 for ij1 in range(args.Ng):
                     for ij2 in range(args.Ng):
-                        Vsph[:,:,ij1,iOm1,ij2,iOm2] = self.sph_transform(self.Vgrid, self.j[ij1], self.Oms[iOm1], self.j[ij2], self.Oms[iOm2])
+                        Vsph[:,:,ij1,ij2,iOm] = self.sph_transform(self.Vgrid, self.j[ij1], self.j[ij2], self.Oms[iOm], self.Oms[iOm])
         return Vsph
 
 
