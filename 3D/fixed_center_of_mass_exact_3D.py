@@ -156,7 +156,6 @@ class Hamiltonian:
             xp.savez("test_Vsph",Vsph=self.Vsph,Vgrid=self.Vgrid, Rgrid=self.R, rgrid=self.r, g_grid=self.g, psi_grid=self.psi)
 
         self.VOm = self.buildVOm()
-        exit()
 
         self.shape = self.Vgrid.shape
         self.size = xp.prod(xp.asarray(self.shape))
@@ -203,6 +202,12 @@ class Hamiltonian:
 
         self.diag = self.buildDiag()
 
+        xa = xp.zeros(self.size,dtype=xp.complex128)
+        xa[0] = 1
+        xa = self.Hx(xa)
+        print("test xa",self.size,self.shape, xp.any(xp.isnan(xa)))
+        print(xa)
+        print(xa.shape)
 
         if not hasattr(args, "preconditioner"):
             args.preconditioner = 'naive'
@@ -210,13 +215,8 @@ class Hamiltonian:
         self.args = args
 
         builder, self.preconditioner, self.make_guess = {
-            'BO':     (self._build_preconditioner_BO,        self._preconditioner_BO,        self._make_guess_BO),
-            'BO-int': (self._build_preconditioner_BO_interp, self._preconditioner_BO_interp, self._make_guess_BO_interp),
-            'jfull':  (self._build_preconditioner_jfull,     self._preconditioner_jfull,     self._make_guess_jfull),
-            'V1':     (self._build_preconditioner_V1,        self._preconditioner_V1,        self._make_guess_V1),
+#            'BO':     (self._build_preconditioner_BO,        self._preconditioner_BO,        self._make_guess_BO),
             'naive':  (lambda: (self.diag,),                 self._preconditioner_naive,     self._make_guess_naive),
-            'power':  (lambda: (self.diag,),                 self._preconditioner_power,     self._make_guess_naive),
-            'diagbo': (self._build_preconditioner_BO,        self._preconditioner_naive,     self._make_guess_BO),
             None:     (lambda: (self.diag,),                 self._preconditioner_naive,     self._make_guess_naive),
             }[args.preconditioner]
 
@@ -292,19 +292,25 @@ class Hamiltonian:
         return Vsph
 
     def buildVOm(self):
-        ''' Contains the Clebsch-Gordon Coeffs between Om values, tridiagonal matrix
+        ''' Contains the Clebsch-Gordon Coeffs between Om values
                 √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1)),
                 shape: Ng x (2J+1)^2 '''
         VOm = xp.zeros((args.Ng, 2*self.J+1, 2*self.J+1), dtype=xp.float64)
+
+        #NB: recall self.Om = [-J, -J+1 ...0...J-1,J]
+        # will not appear tridiagonal with this matrix element ordering!
         for i in range(2*self.J+1):
             for j in range(2*self.J+1):
-                if i == j+1:
-                    VOm[:,i,j] = xp.sqrt(self.j*(self.j+1) - self.Om[i]*(self.Om[i]+1))
+                if self.Om[i]== self.Om[j]+1:
+                    a = self.j*(self.j+1) - self.Om[i]*(self.Om[i]+1)
+                    VOm[:,i,j] = xp.sqrt(xp.maximum(xp.zeros(args.Ng),a))
                     VOm[:,i,j] *= xp.sqrt(self.J*(self.J+1) - self.Om[i]*(self.Om[i]+1))
-                elif i == j-1:
-                    VOm[:,i,j] = xp.sqrt(self.j*(self.j+1) - self.Om[i]*(self.Om[i]-1))
+                elif self.Om[i] == self.Om[j]-1:
+                    a = self.j*(self.j+1) - self.Om[i]*(self.Om[i]-1)
+                    VOm[:,i,j] = xp.sqrt(xp.maximum(xp.zeros(args.Ng),a))
                     VOm[:,i,j] *= xp.sqrt(self.J*(self.J+1) - self.Om[i]*(self.Om[i]-1))
-        print(VOm[1,:,:])
+
+        assert not xp.any(xp.isnan(VOm))
         return VOm
 
     # allows H @ x
@@ -321,7 +327,7 @@ class Hamiltonian:
         else:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
         vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, self.Vsph)
-        return vout
+        return vout.reshape(x.shape)
 
 
     #@partial(jax.jit, static_argnums=0)
@@ -337,8 +343,8 @@ class Hamiltonian:
         ke += xp.einsum('BRrjO,rs->BRsjO', xa, self.ddr2)  # ∂²/∂r²
 
         # Angular electronic ke terms: j(j+1)/r^2 + j(j+1)/R^2
-        kej = xp.einsum('BRrjO, j--> BRrjO', xa, self.j*(self.j+1))
-        ke += (self.Rinv2 + self.rinv2)*keg
+        kej = xp.einsum('BRrjO, j-> BRrjO', xa, self.j*(self.j+1))
+        ke += (self.Rinv2 + self.rinv2)*kej
 
 
         # Angular Kinetic Energy J terms
@@ -356,30 +362,30 @@ class Hamiltonian:
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
         ke  = xp.zeros(self.shape)
-        ke += xp.diag(self.ddR2)[:, None, None]
-        ke += xp.diag(self.ddr2)[None, :, None]
-        ke += (self.Rinv2 + self.rinv2) * xp.diag(self.ddg2)[None, None, :]
+        ke += xp.diag(self.ddR2)[:, None, None, None]
+        ke += xp.diag(self.ddr2)[None, :, None, None]
+        ke += (self.Rinv2 + self.rinv2) * (self.j*(self.j+1))[None, None, :,None]
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
-            ke += -self.Rinv2 * (
-                self.J**2 +
-                2*self.J*xp.ones(self.shape) * xp.diag(self.ddg1)[None, None, :]
-            )
+            ke += self.Rinv2 * (
+                self.J*(self.J+1) -2*self.Om**2)[None,None,None,:]
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
 
+        Vdiag = xp.einsum('RrjjO-> RrjO',self.Vsph)
         # Potential terms
-        diag = self.Vgrid + ke
-
+        diag = Vdiag + ke
+        
+        assert not xp.any(xp.isnan(diag))
         return diag.ravel()
 
     # FIXME: See concerns about jit-ing Hx. Currently jitting in the
     # @partial(jax.jit, static_argnums=0) fashion will break; not sure why.
 
     def _make_guess_naive(self, min_guess):
-        guesses = xp.exp(-(self.Vgrid - xp.min(self.Vgrid))**2/27.211**2).ravel()
+        guesses = xp.exp(-(self.Vsph - xp.min(self.Vsph))**2/27.211**2).ravel()
         return guesses
 
     #@partial(jax.jit, static_argnums=0)
