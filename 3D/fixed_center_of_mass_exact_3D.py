@@ -80,7 +80,6 @@ class Hamiltonian:
 
         self.J   = args.J
         self.dtype = xp.float64 if self.J == 0 else xp.complex128
-        assert (self.J >= abs(self.Om)), "abs(Om) > J not allowed!"
 
         # Potential function selection
         if not hasattr(args, "potential"):
@@ -146,16 +145,12 @@ class Hamiltonian:
         self.Om = self.Om.astype(int)
         self.psi = xp.asarray([i*2*xp.pi/(2*self.J+1) for i in range(0,2*self.J+1)])
 
-        #print("Om grid", self.Om_grid)
-        #print("psi", self.psi)
 
         self.axes = (self.R, self.r, self.g, self.psi)
 
         self.R_grid, self.r_grid, self.g_grid, self.psi_grid = xp.meshgrid(self.R, self.r, self.g, self.psi, indexing='ij')
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid) # preserve 2D structure of Vgrid in real space
 
-        #self.Vsph = self.sph_transform(self.Vgrid, self.R_grid, self.r_grid, self.j, self.Om_grid)
-        #temp = self.sph_transform(self.Vgrid, self.R_grid, self.r_grid, self.j, self.j, self.Om,self.Om )
         with timer_ctx("Build Vsph from Vgrid"):
             self.Vsph = self.buildVsph()
             xp.savez("test_Vsph",Vsph=self.Vsph,Vgrid=self.Vgrid, Rgrid=self.R, rgrid=self.r, g_grid=self.g, psi_grid=self.psi)
