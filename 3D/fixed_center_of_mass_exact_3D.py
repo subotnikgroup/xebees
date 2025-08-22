@@ -19,6 +19,10 @@ from scipy.integrate import simpson
 from scipy.sparse.linalg import lobpcg
 from scipy.interpolate import RegularGridInterpolator
 
+from scipy.special import sph_harm_y
+## TO-DO: make sph_harm_y also work from cupyx backend
+
+
 from sys import stderr
 import argparse as ap
 from pathlib import Path
@@ -53,11 +57,11 @@ else:  # mock this out for use in Jupyter Notebooks etc
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
-        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'g_grid',
+        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'g_grid','Om','Oms','psi','psi_grid',
         'axes', 'dtype', 'args',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
-        'Vgrid', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
+        'Vgrid', 'Vsph', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2'
@@ -76,6 +80,8 @@ class Hamiltonian:
 
         self.J   = args.J
         self.dtype = xp.float64 if self.J == 0 else xp.complex128
+        self.Om = args.Om
+        assert (self.J >= abs(self.Om)), "abs(Om) > J not allowed!"
 
         # Potential function selection
         if not hasattr(args, "potential"):
@@ -132,14 +138,30 @@ class Hamiltonian:
         # N.B.: It is essential that we not include the endpoint in
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
-        #self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
-        self.g = xp.asarray([i*2*xp.pi/args.Ng for i in range(args.Ng)])
+        # N.B : in 3D gamma must exist only on the interval (0,pi)! 
+        self.g = xp.asarray([i*xp.pi/args.Ng for i in range(args.Ng)])
         self.j = xp.fft.fftfreq(args.Ng)*args.Ng
+        self.j = self.j.astype(int)
 
-        self.axes = (self.R, self.r, self.g)
+        self.Oms = xp.fft.fftfreq(2*self.J +1)*(2*self.J+1)
+        self.Oms = self.Oms.astype(int)
+        self.psi = xp.asarray([i*2*xp.pi/(2*self.J+1) for i in range(0,2*self.J+1)])
 
-        self.R_grid, self.r_grid, self.g_grid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
-        self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid)
+        #print("Om grid", self.Om_grid)
+        #print("psi", self.psi)
+
+        self.axes = (self.R, self.r, self.g, self.psi)
+
+        self.R_grid, self.r_grid, self.g_grid, self.psi_grid = xp.meshgrid(self.R, self.r, self.g, self.psi, indexing='ij')
+        self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid) # preserve 2D structure of Vgrid in real space
+
+        #self.Vsph = self.sph_transform(self.Vgrid, self.R_grid, self.r_grid, self.j, self.Om_grid)
+        #temp = self.sph_transform(self.Vgrid, self.R_grid, self.r_grid, self.j, self.j, self.Oms,self.Oms )
+        with timer_ctx("Build Vsph from Vgrid"):
+            self.Vsph = self.buildVsph()
+            xp.savez("test_Vsph",Vsph=self.Vsph, Rgrid=self.R_grid, rgrid=self.r_grid)
+
+        exit()
 
         self.shape = self.Vgrid.shape
         self.size = xp.prod(xp.asarray(self.shape))
@@ -239,6 +261,37 @@ class Hamiltonian:
         r2e = xp.sqrt(xp.where(r2e2 < 0, 0, r2e2))
 
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
+
+    def sph_transform(self, Vgrid, j1, j2, Om1, Om2):
+        ''' returns (int dg dpsi sin(g) 
+                        conj(Y1(j1,Om1,g,psi)) V(r,R,g, psi=0) Y2(j2,Om2, g,psi) )''' 
+        Y1 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
+        Y2 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
+        V_jjOmOm = xp.zeros((args.NR, args.Nr),dtype=xp.float64)
+
+        # TODO: broken vectorization for sph_harm_y... fix later
+        #Y1 = sph_harm_y(j1, Om1, self.g, self.psi)
+        #Y2 = sph_harm_y(j2,Om2, self.g, self.psi)
+        for igam in range(args.Ng):
+            for ipsi in range(2*self.J+1):
+                Y1[igam, ipsi] = sph_harm_y(j1,Om1,self.g[igam], self.psi[ipsi])
+                Y2[igam, ipsi] = sph_harm_y(j2,Om2, self.g[igam], self.psi[ipsi])
+        sin_gam = xp.sin(self.g)
+
+        for iR in range(args.NR):
+            for ir in range(args.Nr):
+                integrand = xp.conj(Y1)*Y2*sin_gam[:,None]*Vgrid[iR,ir,:,None]
+                V_jjOmOm[iR,ir] = xp.sum(integrand).real/2./4./xp.pi # 2 for psi being 0...2pi instead of 0...pi
+        return V_jjOmOm 
+
+    def buildVsph(self):
+        Vsph = xp.zeros((args.NR, args.Nr, args.Ng, 2*self.J+1, args.Ng, 2*self.J+1), dtype=xp.float64)
+        for iOm1 in range(2*self.J+1):
+            for iOm2 in range(2*self.J+1):
+                for ij1 in range(args.Ng):
+                    for ij2 in range(args.Ng):
+                        Vsph[:,:,ij1,iOm1,ij2,iOm2] = self.sph_transform(self.Vgrid, self.j[ij1], self.Oms[iOm1], self.j[ij2], self.Oms[iOm2])
+        return Vsph
 
 
     # allows H @ x
@@ -809,10 +862,11 @@ def parse_args():
     parser.add_argument('-g_2', metavar='g_2', required=True, type=float)
     parser.add_argument('-M_1', required=True, type=float)
     parser.add_argument('-M_2', required=True, type=float)
-    parser.add_argument('-J', default=0, type=float)
-    parser.add_argument('-R', dest="NR", metavar="NR", default=101, type=int)
-    parser.add_argument('-r', dest="Nr", metavar="Nr", default=400, type=int)
-    parser.add_argument('-g', dest="Ng", metavar="Ng", default=158, type=int)
+    parser.add_argument('-J', default=0, type=int)
+    parser.add_argument('-Om', default=0, type=int)
+    parser.add_argument('-R', dest="NR", metavar="NR", default=80, type=int)
+    parser.add_argument('-r', dest="Nr", metavar="Nr", default=80, type=int)
+    parser.add_argument('-g', dest="Ng", metavar="Ng", default=80, type=int)
     parser.add_argument('--potential', choices=['soft_coulomb', 'borgis'],
                         default='soft_coulomb')
     parser.add_argument('--extent', metavar="X", action=ArrayAction,
