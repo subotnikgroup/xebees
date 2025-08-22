@@ -57,11 +57,11 @@ else:  # mock this out for use in Jupyter Notebooks etc
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
-        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'g_grid','Om','Oms','psi','psi_grid',
+        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'g_grid','Om','psi','psi_grid',
         'axes', 'dtype', 'args',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
-        'Vgrid', 'Vsph', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
+        'Vgrid', 'Vsph','VOm', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2'
@@ -80,7 +80,6 @@ class Hamiltonian:
 
         self.J   = args.J
         self.dtype = xp.float64 if self.J == 0 else xp.complex128
-        self.Om = args.Om
         assert (self.J >= abs(self.Om)), "abs(Om) > J not allowed!"
 
         # Potential function selection
@@ -138,13 +137,13 @@ class Hamiltonian:
         # N.B.: It is essential that we not include the endpoint in
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
-        # N.B : in 3D gamma must exist only on the interval (0,pi)! 
+        # N.B : in 3D gamma must exist only on the interval (0,pi)!
         self.g = xp.asarray([i*xp.pi/args.Ng for i in range(args.Ng)])
         self.j = xp.fft.fftfreq(args.Ng)*args.Ng
         self.j = self.j.astype(int)
 
-        self.Oms = xp.fft.fftfreq(2*self.J +1)*(2*self.J+1)
-        self.Oms = self.Oms.astype(int)
+        self.Om = xp.fft.fftfreq(2*self.J +1)*(2*self.J+1)
+        self.Om = self.Om.astype(int)
         self.psi = xp.asarray([i*2*xp.pi/(2*self.J+1) for i in range(0,2*self.J+1)])
 
         #print("Om grid", self.Om_grid)
@@ -156,11 +155,12 @@ class Hamiltonian:
         self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid) # preserve 2D structure of Vgrid in real space
 
         #self.Vsph = self.sph_transform(self.Vgrid, self.R_grid, self.r_grid, self.j, self.Om_grid)
-        #temp = self.sph_transform(self.Vgrid, self.R_grid, self.r_grid, self.j, self.j, self.Oms,self.Oms )
+        #temp = self.sph_transform(self.Vgrid, self.R_grid, self.r_grid, self.j, self.j, self.Om,self.Om )
         with timer_ctx("Build Vsph from Vgrid"):
             self.Vsph = self.buildVsph()
             xp.savez("test_Vsph",Vsph=self.Vsph,Vgrid=self.Vgrid, Rgrid=self.R, rgrid=self.r, g_grid=self.g, psi_grid=self.psi)
 
+        self.VOm = self.buildVOm()
         exit()
 
         self.shape = self.Vgrid.shape
@@ -263,12 +263,12 @@ class Hamiltonian:
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
     def sph_transform(self, Vgrid, j1, j2, Om1, Om2):
-        ''' returns (int dg dpsi sin(g) 
-                        conj(Y1(j1,Om1,g,psi)) V(r,R,g, psi=0) Y2(j2,Om2, g,psi) )''' 
+        ''' returns (int dγ dψ sin(γ)
+                        conj(Y1(j1,Ω1,γ,ψ)) V(r,R,γ, ψ=0) Y2(j2,Ω2, γ,ψ) )'''
         Y1 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
         Y2 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
         V_jjOmOm = xp.zeros((args.NR, args.Nr),dtype=xp.float64)
-        
+
         dg = self.g[1]-self.g[0]
         dpsi = self.psi[1]-self.psi[0]
 
@@ -285,17 +285,32 @@ class Hamiltonian:
             for ir in range(args.Nr):
                 integrand = (xp.conj(Y1)*Y2).real*sin_gam[:,None]*Vgrid[iR,ir,:,:]
                 V_jjOmOm[iR,ir] = xp.sum(integrand)/4./xp.pi*dg*dpsi # 2 for psi being 0...2pi instead of 0...pi
-        return V_jjOmOm 
+        return V_jjOmOm
 
     def buildVsph(self):
-        ''' V(R,r,j,j',Om=Om') '''
+        ''' V(R,r,j,j',Ω=Ω') '''
         Vsph = xp.zeros((args.NR, args.Nr, args.Ng, args.Ng, 2*self.J+1), dtype=xp.float64)
         for iOm in range(2*self.J+1):
                 for ij1 in range(args.Ng):
                     for ij2 in range(args.Ng):
-                        Vsph[:,:,ij1,ij2,iOm] = self.sph_transform(self.Vgrid, self.j[ij1], self.j[ij2], self.Oms[iOm], self.Oms[iOm])
+                        Vsph[:,:,ij1,ij2,iOm] = self.sph_transform(self.Vgrid, self.j[ij1], self.j[ij2], self.Om[iOm], self.Om[iOm])
         return Vsph
 
+    def buildVOm(self):
+        ''' Contains the Clebsch-Gordon Coeffs between Om values, tridiagonal matrix
+                √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1)),
+                shape: Ng x (2J+1)^2 '''
+        VOm = xp.zeros((args.Ng, 2*self.J+1, 2*self.J+1), dtype=xp.float64)
+        for i in range(2*self.J+1):
+            for j in range(2*self.J+1):
+                if i == j+1:
+                    VOm[:,i,j] = xp.sqrt(self.j*(self.j+1) - self.Om[i]*(self.Om[i]+1))
+                    VOm[:,i,j] *= xp.sqrt(self.J*(self.J+1) - self.Om[i]*(self.Om[i]+1))
+                elif i == j-1:
+                    VOm[:,i,j] = xp.sqrt(self.j*(self.j+1) - self.Om[i]*(self.Om[i]-1))
+                    VOm[:,i,j] *= xp.sqrt(self.J*(self.J+1) - self.Om[i]*(self.Om[i]-1))
+        print(VOm[1,:,:])
+        return VOm
 
     # allows H @ x
     def __matmul__(self, other):
@@ -303,7 +318,16 @@ class Hamiltonian:
 
     #@partial(jax.jit, static_argnums=0)
     def Hx(self, x):
-        return self.Tx(x) + (x.reshape((-1,) + self.shape) * self.Vgrid).reshape(x.shape)
+        return self.Tx(x) + self.Vx(x)
+
+    def Vx(self,x):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+        vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, self.Vsph)
+        return vout
+
 
     #@partial(jax.jit, static_argnums=0)
     def Tx(self, x):
@@ -314,18 +338,20 @@ class Hamiltonian:
         ke = xp.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
-        ke += xp.einsum('BRrg,RS->BSrg', xa, self.ddR2)  # ∂²/∂R²
-        ke += xp.einsum('BRrg,rs->BRsg', xa, self.ddr2)  # ∂²/∂r²
+        ke += xp.einsum('BRrjO,RS->BSrjO', xa, self.ddR2)  # ∂²/∂R²
+        ke += xp.einsum('BRrjO,rs->BRsjO', xa, self.ddr2)  # ∂²/∂r²
 
-        #  ∂²/∂γ² + 1/4 terms
-        keg = xp.einsum('BRrg,gh->BRrh', xa, self.ddg2)  # ∂²/∂γ²
-        ke += (self.Rinv2 + self.rinv2)*keg              # (1/R² + 1/r²) (∂²/∂γ²)
+        # Angular electronic ke terms: j(j+1)/r^2 + j(j+1)/R^2
+        kej = xp.einsum('BRrjO, j--> BRrjO', xa, self.j*(self.j+1))
+        ke += (self.Rinv2 + self.rinv2)*keg
+
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
-            keg  = xa*self.J**2                                          #  J²
-            keg += 2j*self.J*xp.einsum('BRrg,gh->BRrh', xa, self.ddg1)   #  J² + 2Ji ∂/∂γ
-            ke -= self.Rinv2*keg                                 # -(1/R²)*(J² + 2Ji ∂/∂γ)
+            keJdiag  = xa*(self.J*(self.J+1)-2*self.Om**2)     #  J(J+1)-Ω^2
+            keJoffdiag = xp.einsum('BRrjO,jOP-> BRrjP', xa, self.VOm) #√(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
+            ke += self.Rinv2*keJdiag
+            ke += self.Rinv2*keJoffdiag
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
@@ -591,230 +617,230 @@ class Hamiltonian:
         return tr_.reshape(dx.shape)
 
 
-    def _build_preconditioner_BO(self):
-        print("Building U_n")
-        NR, Nr, Ng = self.shape
-        Nelec = Nr*Ng
-
-        # if xp.backend == 'cupy' or xp.backend == 'cupynumeric':
-        #     from cupyx.profiler import time_range as timer_ctx
-        # else:
-        #     from debug import timer_ctx
-
-        with timer_ctx("Build Hel"):
-            Hel = self.build_Hel()
-
-        #FIXME: something like this enhanced preconditioning in some cases, maybe?
-        #Hel[:] += -xp.kron(xp.diag(1 / self.r**2), xp.eye(Ng)/4)/2/self.mu
-        # with timer_ctx("Diag  Hel"):
-        #     from cupyx.profiler import benchmark
-        #     from cupy.cuda import memory_hooks
-        #     # Profile the specific batch
-        #     with memory_hooks.DebugPrintHook():
-        #         result = benchmark(xp.linalg.eigh, (Hel,), n_repeat=5)
-        #         print(result)
-        #     Ad_n, U_n = xp.linalg.eigh(Hel)
-
-        with timer_ctx(f"Diag  Hel"):
-            if xp.backend == 'numpy':
-                threadctl = ThreadpoolController()
-                with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
-                    result = ex.map(lambda i: (i, xp.linalg.eigh(self.build_Hel(i))), range(NR))
-                    U_n   = xp.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
-                    Ad_n  = xp.zeros((NR, Nelec))
-                    for i, (a, u) in result:
-                        Ad_n[i] = a
-                        U_n[i]  = u
-            else:
-                Ad_n, U_n = xp.linalg.eigh(Hel)
-
-        with timer_ctx("Phase match U_n"):
-            phase_match(U_n)
-
-        NR, Nelec, _ = Hel.shape
-
-        with timer_ctx("Build Hbo"):
-            Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
-            Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
-            Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
-
-        with timer_ctx("Diag  Hbo"):
-            Ad_vn, U_v = xp.linalg.eigh(Hbo)  # xp.linalg.eigh(Hbo)
-            Ad_vn = Ad_vn.T
-
-        with timer_ctx("Phase match U_v"):
-            phase_match(U_v)
-
-        pc = (Ad_vn, U_n, U_v, Ad_n)
-        return pc
-
-    def _make_guess_BO(self, min_guess):
-        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
-        # BO states are like: U_n[:,:,n]
-        # vib states are like: U_v[n,:,v]
-        s = int(numpy.ceil(numpy.sqrt(min_guess)))
-
-        guesses = xp.stack([
-            (U_n[:,:,n] * U_v[n,:,v,xp.newaxis]).ravel()
-            for n in range(s) for v in range(s)
-        ])
-
-        return guesses
-
-    #@partial(jax.jit, static_argnums=0)
-    def _preconditioner_BO(self, dx, e, _):
-        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
-        diagd = Ad_vn - (e - 1e-5)
-        NR, Nr, Ng = self.shape
-        dx_ = dx.reshape((-1, NR, Nr*Ng))
-
-        # YOLO: truncate it
-        # Nelec=(3*Nr*Ng)//4
-
-        # Ad_vn_t = Ad_vn[:, :Nelec]
-        # diagd_t = Ad_vn_t - (e - 1e-5)
-        # U_n_t = U_n[:,:, :Nelec]
-        # U_v_t = U_v[:Nelec, :, :]
-        # tr_ = jnp.einsum(
-        #     'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
-        #     U_n_t, U_v_t, 1.0 / diagd_t, U_v_t, U_n_t, dx_, optimize=True
-        # )
-
-        #FIXME: precompute optimal einsum path and provide that
-        kwargs = dict(optimize=True)
-        if xp.backend == 'torch':
-            kwargs = {}
-
-        tr_ = xp.einsum(
-            'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
-            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, **kwargs
-        )
-
-        return tr_.reshape(dx.shape)
-
-    def _preconditioner_BO_interp(self, dx, e, x0):
-        return
-
-    def _build_preconditioner_BO_interp(self):
-        args = self.args
-        args.NR //= 2
-        args.Nr //= 2
-        args.Ng //= 2
-        args.preconditioner='BO'
-        print(args)
-        H = Hamiltonian(args)
-        Ad_vn, U_n, U_v, *_ = H._preconditioner_data
-        print(Ad_vn.shape, U_n.shape, U_v.shape)
-
-        exit()
-        # pseudo-code...
-        # H_coarse =
-
-        return
-
-    def _make_guess_BO_interp(self, min_guess):
-        return
-
-    def _build_preconditioner_V1(self, min_guess=4):
-        NR, Nr, Ng = self.shape
-        dg = self.g[1] - self.g[0]
-
-        threadctl = ThreadpoolController()
-        threadctl.limit(limits=1)
-
-        j_full = fftshift(xp.arange(Ng)-Ng//2)
-        COS = xp.cos(2*j_full[:,None] * self.g)
-        V1 = simpson(self.Vgrid[:,:,:], dx=dg, axis=-1)/xp.pi/2
-
-        # V1 is V2(j==0)
-        # IF debugging
-        #V2 = simpson(self.Vgrid[:,:,None,:] * COS[None,None,:,:], dx=dg, axis=-1)/xp.pi/2
-        #assert(xp.allclose(V1, V2[:,:,xp.squeeze(xp.where(j_full == 0)).item()]))
-
-        Ad = xp.zeros((NR, Nr, Ng))
-        U  = xp.zeros((NR, Nr, Ng, Nr))
-
-        def diag_H0(args, Ad=Ad, U=U):
-            Ri, (ji, j) = args
-            H_el = -(
-                self.ddr2 + xp.diag(j**2/self.r**2 + (self.J-j)**2/self.R[Ri]**2)
-            )/2/self.mu + xp.diag(V1[Ri])
-            Ad[Ri, :, ji], U[Ri, :, ji, :] = xp.linalg.eigh(H_el)
-
-
-        # Presumably because of gated access, this tops out pretty fast at ~
-        with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
-            list(tqdm(
-                ex.map(diag_H0, product(range(NR),enumerate(j_full))),
-                total=NR*Ng, desc="Building Preconditioner", delay=3))
-
-        # Align phases by iterating over Nr eigen vectors at each Ri, ji
-        for Ri, ji in tqdm(product(range(NR),
-                                   range(Ng)),
-                           total=NR*Ng,
-                           desc="Phase Matching",
-                           delay=3, # only display if longer than 3 seconds
-                           ):
-            for n in range(Nr):
-                current = (Ri, slice(None), ji, n)
-                if Ri == 0 and ji == 0:   # consistent, arbitrary reference phase
-                    reference = (0, 0, 0, 0)
-                elif ji > 0:              # line up with previous j
-                    reference = (Ri, slice(None), ji-1, n)
-                elif ji == 0 and Ri > 0:  # line up with previous R
-                    reference = (Ri-1, slice(None), ji, n)
-                else:
-                    raise RuntimeError("We should always have a reference!")
-
-                # be careful not to undo your work!! (Ri=0)-1=-1
-                # indexes the last one and breaks things!
-
-                # if any(map(lambda x: x < 0 if type(x) is not slice else False,
-                #             current + reference
-                #             )):
-                #     raise RuntimeError(f"invalid reference: {current(0)}, {reference(0)}")
-
-                # actually match the phase
-                if xp.sum(U[current] * U[reference]) < 0:
-                    U[current] *= -1
-
-        # yolo
-        #oddjs = j_full%2 == 1
-        #U[:, :, oddjs, :] = 0
-        #U = fft(U, axis=2)
-        #assert(xp.mean(xp.abs(U.imag)) < 1e-12)
-        #U = U.real
-
-        U = xp.fft.ifft(U, axis=2)
-        assert(xp.mean(xp.abs(U.imag)) < 1e-12)
-        U = U.real
-
-        return (Ad, U)
-
-    def _make_guess_V1(self, min_guess):
-        Ad, U, *_ = self._preconditioner_data
-        NR, Nr, Ng = self.shape
-        # States are U[R, :, Ng//2 + j, n]
-        s = int(numpy.ceil(numpy.sqrt(min_guess)))
-        guesses = xp.stack([
-            xp.copy(xp.broadcast_to(
-                U[:, :, Ng//2 + j, i][:, :, xp.newaxis],
-                self.shape
-            )).ravel() for i in range(s) for j in range(s)])
-
-        return guesses
-
-    #@partial(jax.jit, static_argnums=0)
-    def _preconditioner_V1(self, dx, e, x0):
-        dx_ = dx.reshape((-1,) + self.shape)
-        Ad, U, *_ = self._preconditioner_data
-        diagd = Ad - (e - 1e-5)
-
-        dx_t = xp.einsum("Rrgi,BRrg->BRig", U, dx_)#, optimize=True)
-        tr_t = dx_t / diagd
-        tr_ = xp.einsum('Rigr,BRig->BRrg', U, tr_t)#, optimize=True)
-
-        return tr_.reshape(dx.shape)
+    # def _build_preconditioner_BO(self):
+    #     print("Building U_n")
+    #     NR, Nr, Ng = self.shape
+    #     Nelec = Nr*Ng
+    #
+    #     # if xp.backend == 'cupy' or xp.backend == 'cupynumeric':
+    #     #     from cupyx.profiler import time_range as timer_ctx
+    #     # else:
+    #     #     from debug import timer_ctx
+    #
+    #     with timer_ctx("Build Hel"):
+    #         Hel = self.build_Hel()
+    #
+    #     #FIXME: something like this enhanced preconditioning in some cases, maybe?
+    #     #Hel[:] += -xp.kron(xp.diag(1 / self.r**2), xp.eye(Ng)/4)/2/self.mu
+    #     # with timer_ctx("Diag  Hel"):
+    #     #     from cupyx.profiler import benchmark
+    #     #     from cupy.cuda import memory_hooks
+    #     #     # Profile the specific batch
+    #     #     with memory_hooks.DebugPrintHook():
+    #     #         result = benchmark(xp.linalg.eigh, (Hel,), n_repeat=5)
+    #     #         print(result)
+    #     #     Ad_n, U_n = xp.linalg.eigh(Hel)
+    #
+    #     with timer_ctx(f"Diag  Hel"):
+    #         if xp.backend == 'numpy':
+    #             threadctl = ThreadpoolController()
+    #             with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+    #                 result = ex.map(lambda i: (i, xp.linalg.eigh(self.build_Hel(i))), range(NR))
+    #                 U_n   = xp.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
+    #                 Ad_n  = xp.zeros((NR, Nelec))
+    #                 for i, (a, u) in result:
+    #                     Ad_n[i] = a
+    #                     U_n[i]  = u
+    #         else:
+    #             Ad_n, U_n = xp.linalg.eigh(Hel)
+    #
+    #     with timer_ctx("Phase match U_n"):
+    #         phase_match(U_n)
+    #
+    #     NR, Nelec, _ = Hel.shape
+    #
+    #     with timer_ctx("Build Hbo"):
+    #         Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+    #         Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
+    #         Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
+    #
+    #     with timer_ctx("Diag  Hbo"):
+    #         Ad_vn, U_v = xp.linalg.eigh(Hbo)  # xp.linalg.eigh(Hbo)
+    #         Ad_vn = Ad_vn.T
+    #
+    #     with timer_ctx("Phase match U_v"):
+    #         phase_match(U_v)
+    #
+    #     pc = (Ad_vn, U_n, U_v, Ad_n)
+    #     return pc
+    #
+    # def _make_guess_BO(self, min_guess):
+    #     Ad_vn, U_n, U_v, *_ = self._preconditioner_data
+    #     # BO states are like: U_n[:,:,n]
+    #     # vib states are like: U_v[n,:,v]
+    #     s = int(numpy.ceil(numpy.sqrt(min_guess)))
+    #
+    #     guesses = xp.stack([
+    #         (U_n[:,:,n] * U_v[n,:,v,xp.newaxis]).ravel()
+    #         for n in range(s) for v in range(s)
+    #     ])
+    #
+    #     return guesses
+    #
+    # #@partial(jax.jit, static_argnums=0)
+    # def _preconditioner_BO(self, dx, e, _):
+    #     Ad_vn, U_n, U_v, *_ = self._preconditioner_data
+    #     diagd = Ad_vn - (e - 1e-5)
+    #     NR, Nr, Ng = self.shape
+    #     dx_ = dx.reshape((-1, NR, Nr*Ng))
+    #
+    #     # YOLO: truncate it
+    #     # Nelec=(3*Nr*Ng)//4
+    #
+    #     # Ad_vn_t = Ad_vn[:, :Nelec]
+    #     # diagd_t = Ad_vn_t - (e - 1e-5)
+    #     # U_n_t = U_n[:,:, :Nelec]
+    #     # U_v_t = U_v[:Nelec, :, :]
+    #     # tr_ = jnp.einsum(
+    #     #     'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
+    #     #     U_n_t, U_v_t, 1.0 / diagd_t, U_v_t, U_n_t, dx_, optimize=True
+    #     # )
+    #
+    #     #FIXME: precompute optimal einsum path and provide that
+    #     kwargs = dict(optimize=True)
+    #     if xp.backend == 'torch':
+    #         kwargs = {}
+    #
+    #     tr_ = xp.einsum(
+    #         'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
+    #         U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, **kwargs
+    #     )
+    #
+    #     return tr_.reshape(dx.shape)
+    #
+    # def _preconditioner_BO_interp(self, dx, e, x0):
+    #     return
+    #
+    # def _build_preconditioner_BO_interp(self):
+    #     args = self.args
+    #     args.NR //= 2
+    #     args.Nr //= 2
+    #     args.Ng //= 2
+    #     args.preconditioner='BO'
+    #     print(args)
+    #     H = Hamiltonian(args)
+    #     Ad_vn, U_n, U_v, *_ = H._preconditioner_data
+    #     print(Ad_vn.shape, U_n.shape, U_v.shape)
+    #
+    #     exit()
+    #     # pseudo-code...
+    #     # H_coarse =
+    #
+    #     return
+    #
+    # def _make_guess_BO_interp(self, min_guess):
+    #     return
+    #
+    # def _build_preconditioner_V1(self, min_guess=4):
+    #     NR, Nr, Ng = self.shape
+    #     dg = self.g[1] - self.g[0]
+    #
+    #     threadctl = ThreadpoolController()
+    #     threadctl.limit(limits=1)
+    #
+    #     j_full = fftshift(xp.arange(Ng)-Ng//2)
+    #     COS = xp.cos(2*j_full[:,None] * self.g)
+    #     V1 = simpson(self.Vgrid[:,:,:], dx=dg, axis=-1)/xp.pi/2
+    #
+    #     # V1 is V2(j==0)
+    #     # IF debugging
+    #     #V2 = simpson(self.Vgrid[:,:,None,:] * COS[None,None,:,:], dx=dg, axis=-1)/xp.pi/2
+    #     #assert(xp.allclose(V1, V2[:,:,xp.squeeze(xp.where(j_full == 0)).item()]))
+    #
+    #     Ad = xp.zeros((NR, Nr, Ng))
+    #     U  = xp.zeros((NR, Nr, Ng, Nr))
+    #
+    #     def diag_H0(args, Ad=Ad, U=U):
+    #         Ri, (ji, j) = args
+    #         H_el = -(
+    #             self.ddr2 + xp.diag(j**2/self.r**2 + (self.J-j)**2/self.R[Ri]**2)
+    #         )/2/self.mu + xp.diag(V1[Ri])
+    #         Ad[Ri, :, ji], U[Ri, :, ji, :] = xp.linalg.eigh(H_el)
+    #
+    #
+    #     # Presumably because of gated access, this tops out pretty fast at ~
+    #     with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+    #         list(tqdm(
+    #             ex.map(diag_H0, product(range(NR),enumerate(j_full))),
+    #             total=NR*Ng, desc="Building Preconditioner", delay=3))
+    #
+    #     # Align phases by iterating over Nr eigen vectors at each Ri, ji
+    #     for Ri, ji in tqdm(product(range(NR),
+    #                                range(Ng)),
+    #                        total=NR*Ng,
+    #                        desc="Phase Matching",
+    #                        delay=3, # only display if longer than 3 seconds
+    #                        ):
+    #         for n in range(Nr):
+    #             current = (Ri, slice(None), ji, n)
+    #             if Ri == 0 and ji == 0:   # consistent, arbitrary reference phase
+    #                 reference = (0, 0, 0, 0)
+    #             elif ji > 0:              # line up with previous j
+    #                 reference = (Ri, slice(None), ji-1, n)
+    #             elif ji == 0 and Ri > 0:  # line up with previous R
+    #                 reference = (Ri-1, slice(None), ji, n)
+    #             else:
+    #                 raise RuntimeError("We should always have a reference!")
+    #
+    #             # be careful not to undo your work!! (Ri=0)-1=-1
+    #             # indexes the last one and breaks things!
+    #
+    #             # if any(map(lambda x: x < 0 if type(x) is not slice else False,
+    #             #             current + reference
+    #             #             )):
+    #             #     raise RuntimeError(f"invalid reference: {current(0)}, {reference(0)}")
+    #
+    #             # actually match the phase
+    #             if xp.sum(U[current] * U[reference]) < 0:
+    #                 U[current] *= -1
+    #
+    #     # yolo
+    #     #oddjs = j_full%2 == 1
+    #     #U[:, :, oddjs, :] = 0
+    #     #U = fft(U, axis=2)
+    #     #assert(xp.mean(xp.abs(U.imag)) < 1e-12)
+    #     #U = U.real
+    #
+    #     U = xp.fft.ifft(U, axis=2)
+    #     assert(xp.mean(xp.abs(U.imag)) < 1e-12)
+    #     U = U.real
+    #
+    #     return (Ad, U)
+    #
+    # def _make_guess_V1(self, min_guess):
+    #     Ad, U, *_ = self._preconditioner_data
+    #     NR, Nr, Ng = self.shape
+    #     # States are U[R, :, Ng//2 + j, n]
+    #     s = int(numpy.ceil(numpy.sqrt(min_guess)))
+    #     guesses = xp.stack([
+    #         xp.copy(xp.broadcast_to(
+    #             U[:, :, Ng//2 + j, i][:, :, xp.newaxis],
+    #             self.shape
+    #         )).ravel() for i in range(s) for j in range(s)])
+    #
+    #     return guesses
+    #
+    # #@partial(jax.jit, static_argnums=0)
+    # def _preconditioner_V1(self, dx, e, x0):
+    #     dx_ = dx.reshape((-1,) + self.shape)
+    #     Ad, U, *_ = self._preconditioner_data
+    #     diagd = Ad - (e - 1e-5)
+    #
+    #     dx_t = xp.einsum("Rrgi,BRrg->BRig", U, dx_)#, optimize=True)
+    #     tr_t = dx_t / diagd
+    #     tr_ = xp.einsum('Rigr,BRig->BRrg', U, tr_t)#, optimize=True)
+    #
+    #     return tr_.reshape(dx.shape)
 
     # Below here are a bunch of things related to immutability
     # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
@@ -866,7 +892,6 @@ def parse_args():
     parser.add_argument('-M_1', required=True, type=float)
     parser.add_argument('-M_2', required=True, type=float)
     parser.add_argument('-J', default=0, type=int)
-    parser.add_argument('-Om', default=0, type=int)
     parser.add_argument('-R', dest="NR", metavar="NR", default=80, type=int)
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=80, type=int)
     parser.add_argument('-g', dest="Ng", metavar="Ng", default=80, type=int)
