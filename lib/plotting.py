@@ -106,22 +106,20 @@ def plot3D_test1(H, Ng,Np,levels=None):
     cbar.set_label("E / a.u.")
 
     ax_R = plt.axes([0.2, 0.20, 0.65, 0.03])
-    ax_p = plt.axes([0.2, 0.175, 0.65, 0.03])
+    #ax_p = plt.axes([0.2, 0.175, 0.65, 0.03])
     ax_g = plt.axes([0.2, 0.15, 0.65, 0.03])
 
     slider_R = Slider(ax_R,"R",0,H.shape[0]-1,valstep=1)
-    slider_p = Slider(ax_p,"p",0,H.shape[2]-1,valstep=1)
     slider_g = Slider(ax_g,"g",0,H.shape[3]-1,valstep=1)
 
     # wavefunctions as many polar slices at R
     def update_R(val):
         idx_R = int(slider_R.val)
-        idx_p = int(slider_p.val)
         idx_g = int(slider_g.val)
 
         ax.cla()
         Vdisplay = Vgrid[idx_R,:,:,idx_g].T
-        contour = ax.contour(*numpy.meshgrid(g, r, indexing='ij'), Vdisplay, levels=levels)        
+        contour = ax.contour(*numpy.meshgrid(p, r, indexing='ij'), Vdisplay, levels=levels)        
         ax.grid(axis='x')
         slider_R.valtext.set_text(f"{R[idx_R]:.3f}")
         
@@ -132,33 +130,14 @@ def plot3D_test1(H, Ng,Np,levels=None):
         ax.set_yticks([limit], [f"r={limit}a₀,γ fix"])
         
         fig.canvas.draw_idle()
-
-    def update_p(val):
-        idx_R = int(slider_R.val)
-        idx_p = int(slider_p.val)
-        idx_g = int(slider_g.val)
-
-        ax.cla()
-        Vdisplay = Vgrid[idx_R,:,idx_p,:].T
-        contour = ax.contour(*numpy.meshgrid(p, r, indexing='ij'), Vdisplay, levels=levels)       
-        ax.grid(axis='x')
-        slider_p.valtext.set_text(f"{p[idx_p]/xp.pi:.3f} π")
-
-        locs=ax.get_xticks()
-        labels = [f'{th/numpy.pi:.03}π' for th in locs]
-        ax.set_xticks(locs, labels)
-        [limit]=ax.get_yticks()[-1:]
-        ax.set_yticks([limit], [f"r={limit}a₀,γ fix"])
-        fig.canvas.draw_idle()
         
     def update_g(val):
         idx_R = int(slider_R.val)
-        idx_p = int(slider_p.val)
         idx_g = int(slider_g.val)
 
         ax.cla()
         Vdisplay = Vgrid[idx_R,:,:,idx_g].T
-        contour = ax.contour(*numpy.meshgrid(g, r, indexing='ij'), Vdisplay, levels=levels)        
+        contour = ax.contour(*numpy.meshgrid(p, r, indexing='ij'), Vdisplay, levels=levels)        
         ax.grid(axis='x')
         slider_g.valtext.set_text(f"{g[idx_g]/xp.pi:.3f} π")
 
@@ -170,7 +149,6 @@ def plot3D_test1(H, Ng,Np,levels=None):
         fig.canvas.draw_idle()
 
     slider_R.on_changed(update_R)
-    slider_p.on_changed(update_p)
     slider_g.on_changed(update_g)
     plt.show()
  
