@@ -54,8 +54,8 @@ else:  # mock this out for use in Jupyter Notebooks etc
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'g_1', 'g_2', 'J','mur',
-        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'g_grid','RP_grid','ddg3','ddg4',
-        'ddR2', 'ddr2', 'ddg2', 'ddg1','ddr1','axes','Vgrid','rp_grid','gp_grid',
+        'R', 'P_R', 'R_grid', 'r', 'p', 'r_grid','p_grid', 'g', 'pg', 'g_grid','RP_grid', 'ddp2', 'ddp1',
+        'ddR2', 'ddr2', 'ddg2', 'ddg1', 'ddr1', 'ddr2','axes','Vgrid','rb_grid','gb_grid','pb_grid',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data','Pg',
         'shape', 'size','guess','k','mu12','_Vfunc',
         '_locked','max_threads'
@@ -120,23 +120,26 @@ class Hamiltonian:
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
         self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
+        self.p = xp.linspace(0, 2*xp.pi, args.Np, endpoint=True)##XXXXX  check this
 
-        self.axes = (self.R, self.r, self.g)
+        self.axes = (self.R, self.r, self.g, self.p)
 
-        self.shape = (args.NR, args.Nr, args.Ng)
-        self.size = args.NR * args.Nr * args.Ng
+        self.shape = (args.NR, args.Nr, args.Ng, args.Np)
+        self.size = args.NR * args.Nr * args.Ng * args.Np
 
         dR = self.R[1] - self.R[0]
         dr = self.r[1] - self.r[0]
         dg = self.g[1] - self.g[0]
+        dp = self.p[1] - self.p[0] 
 
-        self.P  = xp.fft.fftshift(xp.fft.fftfreq(args.NR, dR)) * 2 * xp.pi
-        self.RP_grid = xp.meshgrid(self.R, self.P, indexing='ij')
+        self.P_R  = xp.fft.fftshift(xp.fft.fftfreq(args.NR, dR)) * 2 * xp.pi
+        self.RP_grid = xp.meshgrid(self.R, self.P_R, indexing='ij')
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
         #self.ddR2, _ = KE_Borisov(self.R, bare=True)
         self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False) + xp.diag(1/4/self.R**2)
         self.ddr2, _ = KE_Borisov(self.r, bare=True)
+        self.ddr1, _ = KE_Borisov(self.r, bare=True, order=1)
 
         # Part of the reason for using a cyclic *stencil* for gamma
         # rather than KE_FFT is that it wasn't immediately obvious how
@@ -144,11 +147,13 @@ class Hamiltonian:
         # default stencil degree is 11
         self.ddg2 = KE(args.Ng, dg, bare=True, cyclic=True)
         self.ddg1 = KE(args.Ng, dg, bare=True, cyclic=True, order=1)
-        self.ddr1, _ = KE_Borisov(self.r, bare=True, order=1)
 
-        self.R_grid, self.rp_grid, self.gp_grid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
-        self.r_grid, self.g_grid = xp.meshgrid(self.r, self.g, indexing='ij')
-        self.Vgrid = self.V(self.R_grid, self.rp_grid, self.gp_grid)
+        self.ddp2 = KE(args.Np, dp, bare=True, cyclic=True)
+        self.ddp1 = KE(args.Np, dp, bare=True, cyclic=True, order=1)
+    
+        self.R_grid, self.rb_grid, self.pb_grid, self.gb_grid = xp.meshgrid(self.R, self.r, self.p, self.g, indexing='ij')
+        self.r_grid, self.p_grid, self.g_grid,  = xp.meshgrid(self.r, self.p, self.g, indexing='ij')
+        self.Vgrid = self.V(self.R_grid, self.rb_grid, self.pb_grid, self.gb_grid)
 
         # since we need these in Hx; maybe fine to compute on the fly?
         self.rinv2 = 1.0/(self.r)**2
@@ -169,13 +174,13 @@ class Hamiltonian:
         
         self._locked = True
 
-    def V(self, R, r, gamma, spitvals=False):
+    def V(self, R, r, gamma, psi, spitvals=False):
 
         mu12 = self.mu12
         M_1 = self.M_1
         M_2 = self.M_2
 
-        kappa2 = r*R*xp.cos(gamma)
+        kappa2 = r*R*xp.cos(gamma)*xp.cos(psi)
 
         r1e2 = (r)**2 + (R)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
         r2e2 = (r)**2 + (R)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
@@ -236,34 +241,43 @@ class Hamiltonian:
 
         return pc
 
-def Gamma_etf_polar(R,r,g,ddr,ddg,M_1,M_2,mu12,r1e2,r2e2):
+def Gamma_etf_polar(R,r,p,g,ddr,ddp,ddg,M_1,M_2,mu12,r1e2,r2e2):
 
     Ng = len(ddg)
     Nr = len(ddr)
+    Np = len(ddp)
     
     theta1 = xp.exp(-r1e2)
     theta2 = xp.exp(-r2e2)
     partition = theta1 + theta2
 
-    cosgamma = xp.cos(g)
-    singamma = xp.sin(g)
+    cosgamma = xp.cos(g+xp.pi/2)
+    singamma = xp.sin(g+xp.pi/2)
+    cospsi = xp.cos(p)
+    sinpsi = xp.sin(p)
+
     invr = 1/(r[:,0])
 
     t1 = xp.diag((theta1/partition).ravel())
     t2 = xp.diag((theta2/partition).ravel())
 
-    spg = ddg.copy()
-    cpg = ddg.copy()
-    xp.fill_diagonal(spg, xp.diag(spg) * singamma[0,:])
-    xp.fill_diagonal(cpg, xp.diag(cpg) * cosgamma[0,:])
+    #xp.fill_diagonal(spg, xp.diag(spg) * singamma[0,:])
+    #xp.fill_diagonal(cpg, xp.diag(cpg) * cosgamma[0,:])
 
-    pr =  xp.kron(ddr,xp.diag(cosgamma[0,:])) - xp.kron(xp.diag(invr),spg)
-    pt =  xp.kron(ddr,xp.diag(singamma[0,:])) + xp.kron(xp.diag(invr),cpg)
+    pr =  xp.kron(xp.kron(ddr, xp.diag(singamma[0,:,0])), xp.diag(cospsi[0,0,:])) + xp.kron(xp.kron(xp.diag(invr), xp.diag(cosgamma[0,:,0])*ddg), cospsi[0,0,:]) + xp.kron(xp.kron(xp.diag(invr), xp.diag(singamma[0,:,0])), xp.diag(sinpsi)*ddp)
+    pp =  xp.kron(xp.kron(ddr, xp.diag(singamma[0,:,0])), xp.diag(sinpsi[0,0,:])) + xp.kron(xp.kron(xp.diag(invr), xp.diag(singamma[0,:,0])*ddg), sinpsi[0,0,:]) + xp.kron(xp.kron(xp.diag(invr), xp.diag(singamma[0,:,0])), xp.diag(cospsi)*ddp)
+    pt =  xp.kron(xp.kron(ddr, xp.diag(cosgamma[0,:,0])), xp.eye(Np)) - xp.kron(xp.kron(xp.diag(invr), singamma[0,:,0])*ddg1, xp.eye(Np)) 
 
     t1pr = xp.dot(t1,pr)
     prt1 = xp.dot(pr,t1)
     t2pr = xp.dot(t2,pr)
     prt2 = xp.dot(pr,t2)
+
+    t1pp = xp.dot(t1,pp)
+    ppt1 = xp.dot(pp,t1)
+    t2pp = xp.dot(t2,pp)
+    ppt2 = xp.dot(pp,t2)
+
     t1pt = xp.dot(t1,pt)
     ptt1 = xp.dot(pt,t1)
     t2pt = xp.dot(t2,pt)
@@ -271,18 +285,23 @@ def Gamma_etf_polar(R,r,g,ddr,ddg,M_1,M_2,mu12,r1e2,r2e2):
 
     gammaetf1r = -0.5*(t1pr + prt1)
     gammaetf1t = -0.5*(t1pt + ptt1)
+    gammaetf1p = -0.5*(t1pp + ppt1)
+
     gammaetf2r = -0.5*(t2pr + prt2)
     gammaetf2t = -0.5*(t2pt + ptt2)
+    gammaetf2p = -0.5*(t2pp + ppt2)
     
-    return gammaetf1r, gammaetf1t, gammaetf2r, gammaetf2t    
+    return gammaetf1r, gammaetf1p, gammaetf1t, gammaetf2r, gammaetf2p, gammaetf2t    
 
 def compute_EPS(info):
+
+    Rval, Pval, Htot_bo, gammacoeff_R, gammacoeff_phi, gammacoeff_theta, \
+    Gammatotr, Gammatotp, Gammatott, Gammasqtotr, Gammasqtotp,Gammasqtott, mu12 = info
     
-    Rval, Pval, Htot_bo, gammacoeff_R, gammacoeff_theta, gammatotr, gammatott, gammatotrsq, gammatottsq, mu12 = info
     #print("i,j",Rval,Pval,gammacoeff_R[Rval,Pval],flush=True)           
     
-    Htot = Htot_bo[Rval]+(gammacoeff_R[Rval,Pval]*gammatotr)+(gammacoeff_theta[Rval]*gammatott)
-    Htotsq = Htot - (gammatotrsq +gammatottsq)/(2*mu12)
+    Htot = Htot_bo[Rval]+(gammacoeff_R[Rval]*gammatotr)+(gammacoeff_phi[Rval]*gammatotphi)+(gammacoeff_theta[Rval]*gammatottheta)
+    Htotsq = Htot - (Gammasqtotr +Gammasqtotp+ Gammasqtott)/(2*mu12)
     
     e_approx = xp.linalg.eigvalsh(Htot)
     e_approxsq = xp.linalg.eigvalsh(Htotsq)
@@ -305,10 +324,12 @@ def parse_args():
     parser.add_argument('-g_2', metavar='g_2', required=True, type=float)
     parser.add_argument('-M_1', required=True, type=float)
     parser.add_argument('-M_2', required=True, type=float)
-    parser.add_argument('-J', default=0, type=float)
+    parser.add_argument('-Pphi', default=0, type=float)
+    parser.add_argument('-Ptheta', default=0, type=float)
     parser.add_argument('-R', dest="NR", metavar="NR", default=101, type=int)
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=400, type=int)
-    parser.add_argument('-g', dest="Ng", metavar="Ng", default=250, type=int)
+    parser.add_argument('-gamma', dest="Ng", metavar="Ng", default=250, type=int)
+    parser.add_argument('-psi', dest="Np", metavar="Np", default=250, type=int)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
@@ -357,20 +378,24 @@ if __name__ == '__main__':
     H = Hamiltonian(args)
     start_script = perf_counter()
     
-    NR,Nr,Ng = H.shape
-    Nelec = Nr*Ng 
+    NR,Nr,Ng,Np = H.shape
+    Nelec = Nr*Ng*Np 
     
-    Hel = -1/(2*H.mur)*(xp.kron(H.ddr2,xp.eye(H.shape[2])) + xp.kron(xp.diag(H.rinv2), H.ddg2))
+    Hel = -1/(2*H.mur)*(
+        xp.kron(xp.kron(H.ddr2, xp.eye(H.shape[Ng])), xp.eye(H.shape[Np])) +\
+        xp.kron(xp.kron(xp.diag(H.rinv2), xp.diag(xp.cot(H.g+xp.pi/2))*H.ddg1), xp.eye(H.shape[Np]))+\
+        xp.kron(xp.kron(xp.diag(H.rinv2), H.ddg2), H.shape[Np])+\
+        xp.kron(xp.kron(xp.diag(H.rinv2), xp.sin(H.g+xp.pi/2)**2),H.ddp2)
+        )
 
-    Htot_bo = xp.zeros([NR,Nelec,Nelec])
+    Htot_bo = xp.zeros([NR,Nelec,Nelec,Nelec])
     Htot_bo[:] = Hel
-    Htot_bo[:,xp.arange(Nelec),xp.arange(Nelec)] += xp.reshape(H.Vgrid[:],(NR,Nelec))
+    Htot_bo[:,xp.arange(Nelec),xp.arange(Nelec),xp.arange(Nelec)] += xp.reshape(H.Vgrid[:],(NR,Nelec))#XXXXXcheck this 
     
     ival = xp.zeros([NR,1])
     def Htot_R(i):
         return Htot_bo[i]
-
-    
+   
     threadctl = ThreadpoolController()
     with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=args.t) as ex:
         result = list(tqdm(ex.map(lambda i: (i, xp.linalg.eigvalsh(Htot_R(i))), range(NR)), total=NR))
@@ -381,38 +406,55 @@ if __name__ == '__main__':
     
     EPS = xp.zeros((H.shape[0], H.shape[0]))
     EPSsq = xp.zeros((H.shape[0], H.shape[0]))
-    Rval, Pval = H.RP_grid
-    gammacoeff_R = -1j*(Pval-1/(2*Rval))/H.mu12
-    gammacoeff_theta = -1j*(H.J/H.R)/H.mu12
 
-    
-    Gammasqtotr = xp.zeros([Nelec,Nelec],dtype=complex)
-    Gammasqtott = xp.zeros([Nelec,Nelec],dtype=complex)
-    Gammatotr = xp.zeros([Nelec,Nelec],dtype=complex)
-    Gammatott = xp.zeros([Nelec,Nelec],dtype=complex)
+    gammacoeff_R = -1j*H.P/H.mu12 #XXXXXX check this if factor -1/4R present
+    gammacoeff_phi = -1j*(H.Pphi/H.R)/H.mu12
+    gammacoeff_theta = +1j*(H.Ptheta/H.R)/H.mu12
+
+    Gammasqtotr = xp.zeros([Nelec,Nelec,Nelec],dtype=complex)
+    Gammasqtott = xp.zeros([Nelec,Nelec,Nelec],dtype=complex)
+    Gammatotr = xp.zeros([Nelec,Nelec,Nelec],dtype=complex)
+    Gammatott = xp.zeros([Nelec,Nelec,Nelec],dtype=complex)
 
     for i in range(H.shape[0]):
         print("i",i,flush=True)
 
         r1e2, r2e2 = H.V(H.R[i], H.r_grid, H.g_grid, spitvals=True)
         with timer_ctx("build gamma"):
-            gammaetf1r, gammaetf1t, gammaetf2r, gammaetf2t = Gamma_etf_polar(H.R[i],H.r_grid,H.g_grid,H.ddr1,H.ddg1,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
+            gammaetf1r, gammaetf1p, gammaetf1t, gammaetf2r, gammaetf2p, gammaetf2t = Gamma_etf_polar(H.R[i],H.r_grid,H.p_grid,H.g_grid,H.ddr1,H.ddp1,H.ddg1,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
+            gammaetr1r, gammaerf1p, gammaerf1t, gammaerf2r, gammaerf2p, gammaerf2t = Gamma_erf_polar(H.R[i],H.r_grid,H.p_grid,H.g_grid,H.ddr1,H.ddp1,H.ddg1,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
+
+        gamma1r = gammaetf1r+gammaerf1r
+        gamma2r = gammaetf2r+gammaerf2r
+        gamma1t = gammaetf1t+gammaerf1t
+        gamma2t = gammaetf2t+gammaerf2t
+        gamma1p = gammaetf1p+gammaerf1p
+        gamma2p = gammaetf2p+gammaerf2p
+
+        Gammatotr = (H.M_2*gamma1r-H.M_1*gamma2r)/(H.M_1+H.M_2)
+        Gammatotp = (H.M_2*gamma1p-H.M_1*gamma2p)/(H.M_1+H.M_2)
+        Gammatott = (H.M_2*gamma1t-H.M_1*gamma2t)/(H.M_1+H.M_2)
         
-        Gammatotr = (H.M_2*gammaetf1r-H.M_1*gammaetf2r)/(H.M_1+H.M_2)
-        Gammatott = (H.M_2*gammaetf1t-H.M_1*gammaetf2t)/(H.M_1+H.M_2)
-        gammasq1r = xp.dot(gammaetf1r,gammaetf1r)
-        gammasq2r = xp.dot(gammaetf2r,gammaetf2r)
-        gammasq1t = xp.dot(gammaetf1t,gammaetf1t)
-        gammasq2t = xp.dot(gammaetf2t,gammaetf2t)
-        gamma1r2r = xp.dot(gammaetf1r,gammaetf2r)
-        gamma2r1r = xp.dot(gammaetf2r,gammaetf1r)
-        gamma1t2t = xp.dot(gammaetf1t,gammaetf2t)
-        gamma2t1t = xp.dot(gammaetf2t,gammaetf1t)
+        gammasq1r = xp.dot(gamma1r,gamma1r)
+        gammasq2r = xp.dot(gamma2r,gamma2r)
+        gamma1r2r = xp.dot(gamma1r,gamma2r)
+        gamma2r1r = xp.dot(gamma2r,gamma1r)
+
+        gammasq1p = xp.dot(gamma1p,gamma1p)
+        gammasq2p = xp.dot(gamma2p,gamma2p)       
+        gamma1p2p = xp.dot(gamma1p,gamma2p)
+        gamma2p1p = xp.dot(gamma2p,gamma1p)
+
+        gammasq1t = xp.dot(gamma1t,gamma1t)
+        gammasq2t = xp.dot(gamma2t,gamma2t)       
+        gamma1t2t = xp.dot(gamma1t,gamma2t)
+        gamma2t1t = xp.dot(gamma2t,gamma1t)
 
         Gammasqtotr = ((H.M_2**2*gammasq1r)+(H.M_1**2*gammasq2r)-(H.M_1*H.M_2*gamma1r2r)-(H.M_1*H.M_2*gamma2r1r))/(H.M_1+H.M_2)**2
+        Gammasqtotp = ((H.M_2**2*gammasq1p)+(H.M_1**2*gammasq2p)-(H.M_1*H.M_2*gamma1p2p)-(H.M_1*H.M_2*gamma2p1p))/(H.M_1+H.M_2)**2
         Gammasqtott = ((H.M_2**2*gammasq1t)+(H.M_1**2*gammasq2t)-(H.M_1*H.M_2*gamma1t2t)-(H.M_1*H.M_2*gamma2t1t))/(H.M_1+H.M_2)**2 
 
-        index_pairs = [(i, k, Htot_bo, gammacoeff_R, gammacoeff_theta, Gammatotr, Gammatott, Gammasqtotr, Gammasqtott, H.mu12) for k in range(NR)]
+        index_pairs = [(i, k, Htot_bo, gammacoeff_R, gammacoeff_phi, gammacoeff_theta, Gammatotr, Gammatotp, Gammatott, Gammasqtotr, Gammasqtotp,Gammasqtott, H.mu12) for k in range(NR)]
                
         threadctl = ThreadpoolController()
         h_workers = min(args.t, H.shape[0])    
@@ -427,43 +469,18 @@ if __name__ == '__main__':
             EPS[i, k] = val
             EPSsq[i, k] = valsq
 
-    Hbo_new = -1/(2*H.mu12)*(H.ddR2 - xp.diag(H.J**2/H.R**2)) +xp.diag(Ad_n)
+    Hbo_new = -1/(2*H.mu12)*(H.ddR2 - xp.diag(H.Pphi**2/H.R**2)- xp.diag(H.Ptheta**2/H.R**2)) +xp.diag(Ad_n)
     Ad_vn_new = batch_eigvalsh(Hbo_new)
     e_bo_new = xp.sort(Ad_vn_new.flatten())
     bo_new = e_bo_new[1] - e_bo_new[0]
     print("BO new vib gap",bo_new,flush=True)
         
-if args.evecs:        
-    #EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
-    #HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
-    #EPSv,EPSvwfn = xp.linalg.eigh(HPS)
-    #print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
-
-    EPSsq += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
-    HPSsq = inverse_weyl_transform(EPSsq, H.shape[0], H.R, H.P)
-    EPSvsq,EPSvsqwfn = xp.linalg.eigh(HPSsq)
-    print("PS vib gap sq",EPSvsq[1]-EPSvsq[0],flush=True)
-
-    #EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
-    #Helmat = xp.repeat(ival,H.shape[0],axis=1)
-    #EPS_bo += Helmat   
-    #EPS_bo += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
-    #HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P)
-    #EPSv_bo,EPSvbowfn = xp.linalg.eigh(HPS_bo)
-    #print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
-    
-    numpy.savez_compressed(args.evecs, EPS=EPSvwfn, H=H.R)
-    numpy.savez_compressed("SQ"+str(args.evecs), EPS=EPSvsqwfn, H=H.R)
-    numpy.savez_compressed("BO"+str(args.evecs), EPS=EPSvbowfn, H=H.R)
-    print("Wrote eigenvectors to", args.evecs)
-
-else:
-    EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
+    EPS += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2)
     HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
     EPSv = batch_eigvalsh(HPS)
     print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
 
-    EPSsq += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
+    EPSsq += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2)
     HPSsq = inverse_weyl_transform(EPSsq, H.shape[0], H.R, H.P)
     EPSvsq = batch_eigvalsh(HPSsq)
     print("PS vib gap sq",EPSvsq[1]-EPSvsq[0],flush=True)
@@ -471,7 +488,7 @@ else:
     EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
     Helmat = xp.repeat(ival,H.shape[0],axis=1)
     EPS_bo += Helmat   
-    EPS_bo += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
+    EPS_bo += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2)
     HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P)
     EPSv_bo = batch_eigvalsh(HPS_bo)
     print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
