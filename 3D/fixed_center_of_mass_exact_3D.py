@@ -137,19 +137,23 @@ class Hamiltonian:
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
         # N.B : in 3D gamma must exist only on the interval (0,pi)!
-        self.g = xp.asarray([i*xp.pi/args.Ng for i in range(args.Ng)])
+
+        #self.g = xp.asarray([i*xp.pi/args.Ng-xp.pi/2 for i in range(args.Ng)])
+        self.g = xp.linspace(-xp.pi/2, xp.pi/2, args.Ng, endpoint=True)
+        
         self.j = xp.fft.fftfreq(args.Ng)*args.Ng
         self.j = self.j.astype(int)
 
         self.Om = xp.fft.fftfreq(2*self.J +1)*(2*self.J+1)
         self.Om = self.Om.astype(int)
-        self.psi = xp.asarray([i*2*xp.pi/(2*self.J+1) for i in range(0,2*self.J+1)])
 
+        self.psi = xp.asarray([i*2*xp.pi/(2*self.J+1) for i in range(0,2*self.J+1)])
+        #self.psi = xp.linspace(0,2*xp.pi, 2*self.J+1, endpoint=False)
 
         self.axes = (self.R, self.r, self.g, self.psi)
 
         self.R_grid, self.r_grid, self.g_grid, self.psi_grid = xp.meshgrid(self.R, self.r, self.g, self.psi, indexing='ij')
-        self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid) # preserve 2D structure of Vgrid in real space
+        self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid, self.psi_grid) # Vgrid in real space \propto cos(psi)cos(g)
 
         with timer_ctx("Build Vsph from Vgrid"):
             self.Vsph = self.buildVsph()
@@ -241,13 +245,13 @@ class Hamiltonian:
         self._hash = numpy.random.randint(2**63)  # self._make_hash()
         self._locked = True
 
-    def V(self, R, r, gamma):
+    def V(self, R, r, gamma, psi):
         mu12 = self.mu12
         aa = self.aa
         M_1 = self.M_1
         M_2 = self.M_2
 
-        kappa2 = r*R*xp.cos(gamma)
+        kappa2 = r*R*xp.cos(gamma)*xp.cos(psi)
 
         r1e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
         r2e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
@@ -385,7 +389,8 @@ class Hamiltonian:
     # @partial(jax.jit, static_argnums=0) fashion will break; not sure why.
 
     def _make_guess_naive(self, min_guess):
-        guesses = xp.exp(-(self.Vsph - xp.min(self.Vsph))**2/27.211**2).ravel()
+        tr_Vsph = xp.einsum('RrjjO->RrjO',self.Vsph)
+        guesses = xp.exp(-(tr_Vsph - xp.min(tr_Vsph))**2/27.211**2).ravel()
         return guesses
 
     #@partial(jax.jit, static_argnums=0)
