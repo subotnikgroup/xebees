@@ -5,6 +5,9 @@ Ensure that the eigen spectra from Hel and Hel_j are the same
 import pytest
 from argparse import Namespace
 
+import os, sys
+sys.path.append(os.path.abspath("lib"))
+
 import xp
 import fixed_center_of_mass_exact_2D as fcm2d
 

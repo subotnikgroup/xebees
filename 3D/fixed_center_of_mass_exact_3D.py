@@ -70,6 +70,7 @@ class Hamiltonian:
     def __init__(self, args):
         # save number of threads for preconditioner
         self.max_threads = getattr(args, "t", 1)
+        self.args = args
 
         self.m_e = 1
         self.M_1 = args.M_1
@@ -186,19 +187,26 @@ class Hamiltonian:
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
         #self.ddR2, _ = KE_Borisov(self.R, bare=True)
-        self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False) + xp.diag(1/4/self.R**2)
+        
+        # needed for testing on tiny systems in 3D
+        stencil_R = min(11, args.NR)
+        if stencil_R%2==0: stencil_R -= 1
+        stencil_g = min(11,args.Ng)
+        if stencil_g%2==0: stencil_g -= 1
+
+        self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R) 
         self.ddr2, _ = KE_Borisov(self.r, bare=True)
 
         self.ddr_lab2, _ = KE_Borisov(self.r_lab, bare=True)
-        self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False)
+        self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
 
 
         # Part of the reason for using a cyclic *stencil* for gamma
         # rather than KE_FFT is that it wasn't immediately obvious how
         # I would represent ∂/∂γ. (∂²/∂γ² was clear.)  N.B.: The
         # default stencil degree is 11
-        self.ddg2 = KE(args.Ng, dg, bare=True, cyclic=True)
-        self.ddg1 = KE(args.Ng, dg, bare=True, cyclic=True, order=1)
+        self.ddg2 = KE(args.Ng, dg, bare=True, cyclic=True, stencil_size=stencil_g)
+        self.ddg1 = KE(args.Ng, dg, bare=True, cyclic=True, order=1, stencil_size= stencil_g)
 
         # since we need these in Hx; maybe fine to compute on the fly?
         self.Rinv2 = 1.0/(self.R_grid)**2
@@ -264,6 +272,7 @@ class Hamiltonian:
     def sph_transform(self, Vgrid, j1, j2, Om1, Om2):
         ''' returns (int dγ dψ sin(γ)
                         conj(Y1(j1,Ω1,γ,ψ)) V(r,R,γ, ψ=0) Y2(j2,Ω2, γ,ψ) )'''
+        args = self.args
         Y1 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
         Y2 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
         V_jjOmOm = xp.zeros((args.NR, args.Nr),dtype=xp.float64)
@@ -288,6 +297,7 @@ class Hamiltonian:
 
     def buildVsph(self):
         ''' V(R,r,j,j',Ω=Ω') '''
+        args = self.args
         Vsph = xp.zeros((args.NR, args.Nr, args.Ng, args.Ng, 2*self.J+1), dtype=xp.float64)
         for iOm in range(2*self.J+1):
                 for ij1 in range(args.Ng):
@@ -299,6 +309,7 @@ class Hamiltonian:
         ''' Contains the Clebsch-Gordon Coeffs between Om values
                 √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1)),
                 shape: Ng x (2J+1)^2 '''
+        args = self.args
         VOm = xp.zeros((args.Ng, 2*self.J+1, 2*self.J+1), dtype=xp.float64)
 
         #NB: recall self.Om = [-J, -J+1 ...0...J-1,J]
