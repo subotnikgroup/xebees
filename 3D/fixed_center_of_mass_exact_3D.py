@@ -19,7 +19,7 @@ from scipy.integrate import simpson
 from scipy.sparse.linalg import lobpcg
 from scipy.interpolate import RegularGridInterpolator
 
-from scipy.special import sph_harm_y
+from scipy.special import sph_harm_y, lpmv, factorial
 ## TO-DO: make sph_harm_y also work from cupyx backend
 
 
@@ -57,8 +57,9 @@ else:  # mock this out for use in Jupyter Notebooks etc
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
-        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'g_grid','Om','psi','psi_grid',
-        'axes', 'dtype', 'args',
+        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'g_grid','Om','Om_grid', 'j_grid',
+        'R_rgrid','r_rgrid','g_rgrid',
+        'axes', 'dtype', 'args','NOm',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
         'Vgrid', 'Vsph','VOm', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
@@ -80,6 +81,7 @@ class Hamiltonian:
         self.g_2 = args.g_2
 
         self.J   = args.J
+        self.NOm = 2*self.J+1 
         self.dtype = xp.float64 if self.J == 0 else xp.complex128
 
         # Potential function selection
@@ -139,30 +141,33 @@ class Hamiltonian:
         # all over the place
         # N.B : in 3D gamma must exist only on the interval (0,pi)!
 
-        #self.g = xp.asarray([i*xp.pi/args.Ng-xp.pi/2 for i in range(args.Ng)])
-        self.g = xp.linspace(-xp.pi/2, xp.pi/2, args.Ng, endpoint=True)
+        #self.g = xp.asarray([i*xp.pi/args.Ng for i in range(args.Ng)])
+        self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)
         
-        self.j = xp.fft.fftfreq(args.Ng)*args.Ng
+        # self.j = xp.fft.fftfreq(args.Ng)*args.Ng
+        self.j = xp.arange(0,args.Ng)
         self.j = self.j.astype(int)
 
         self.Om = xp.fft.fftfreq(2*self.J +1)*(2*self.J+1)
         self.Om = self.Om.astype(int)
 
-        self.psi = xp.asarray([i*2*xp.pi/(2*self.J+1) for i in range(0,2*self.J+1)])
+        # self.psi = xp.asarray([i*2*xp.pi/(2*self.J+1) for i in range(0,self.Npsi)])
         #self.psi = xp.linspace(0,2*xp.pi, 2*self.J+1, endpoint=False)
 
-        self.axes = (self.R, self.r, self.g, self.psi)
+        self.axes = (self.R, self.r, self.j, self.Om)
 
-        self.R_grid, self.r_grid, self.g_grid, self.psi_grid = xp.meshgrid(self.R, self.r, self.g, self.psi, indexing='ij')
-        self.Vgrid = self.V(self.R_grid, self.r_grid, self.g_grid, self.psi_grid) # Vgrid in real space \propto cos(psi)cos(g)
+        self.R_grid, self.r_grid, self.j_grid, self.Om_grid = xp.meshgrid(self.R, self.r, self.j, self.Om, indexing='ij')
+        self.R_rgrid, self.r_rgrid, self.g_rgrid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
+        self.Vgrid = self.V(self.R_rgrid, self.r_rgrid, self.g_rgrid) # Vgrid in real space \propto cos(psi)cos(g)
+        assert not xp.any(self.Vgrid)==xp.nan
 
         with timer_ctx("Build Vsph from Vgrid"):
             self.Vsph = self.buildVsph()
-            xp.savez("test_Vsph",Vsph=self.Vsph,Vgrid=self.Vgrid, Rgrid=self.R, rgrid=self.r, g_grid=self.g, psi_grid=self.psi)
+            # xp.savez("test_Vsph",Vsph=self.Vsph,Vgrid=self.Vgrid, Rgrid=self.R, rgrid=self.r, g_grid=self.g, psi_grid=self.psi)
 
         self.VOm = self.buildVOm()
 
-        self.shape = self.Vgrid.shape
+        self.shape = self.Vgrid.shape + (self.NOm,)
         self.size = xp.prod(xp.asarray(self.shape))
 
         dR = self.R[1] - self.R[0]
@@ -217,9 +222,6 @@ class Hamiltonian:
         xa = xp.zeros(self.size,dtype=xp.complex128)
         xa[0] = 1
         xa = self.Hx(xa)
-        print("test xa",self.size,self.shape, xp.any(xp.isnan(xa)))
-        print(xa)
-        print(xa.shape)
 
         if not hasattr(args, "preconditioner"):
             args.preconditioner = 'naive'
@@ -253,13 +255,13 @@ class Hamiltonian:
         self._hash = numpy.random.randint(2**63)  # self._make_hash()
         self._locked = True
 
-    def V(self, R, r, gamma, psi):
+    def V(self, R, r, gamma):
         mu12 = self.mu12
         aa = self.aa
         M_1 = self.M_1
         M_2 = self.M_2
 
-        kappa2 = r*R*xp.cos(gamma)*xp.cos(psi)
+        kappa2 = r*R*xp.cos(gamma)
 
         r1e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
         r2e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
@@ -273,26 +275,47 @@ class Hamiltonian:
         ''' returns (int dγ dψ sin(γ)
                         conj(Y1(j1,Ω1,γ,ψ)) V(r,R,γ, ψ=0) Y2(j2,Ω2, γ,ψ) )'''
         args = self.args
-        Y1 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
-        Y2 = xp.zeros((args.Ng, 2*self.J+1), dtype=xp.complex128)
+        Y1 = xp.zeros((args.Ng), dtype=xp.float64)
+        Y2 = xp.zeros((args.Ng), dtype=xp.float64)
         V_jjOmOm = xp.zeros((args.NR, args.Nr),dtype=xp.float64)
 
         dg = self.g[1]-self.g[0]
-        dpsi = self.psi[1]-self.psi[0]
+        
+        if Om1==0 and j1==0:
+            Y1[:] = 1/2/xp.pi**0.5
+        elif j1 < xp.abs(Om1):
+            Y1[:] = 0 # exclude j < |Om|
+        else:
+            c1 = ((2*xp.abs(Om1)+1)/4/xp.pi*factorial(j2-xp.abs(Om1))/factorial(xp.abs(Om1)+j1))**0.5
+            if Om1 > 0: c1 *= (-1)**Om1
+            Y1 = c1*lpmv(xp.abs(Om1),j1, xp.cos(self.g))
+        
+        if Om2==0 and j2==0:
+            Y2[:] = 1/2/xp.pi**0.5
+        elif j2 < xp.abs(Om2):
+            Y2[:] = 0 # exclude j < |Om|
+        else:
+            c2 = ((2*xp.abs(Om2)+1)/4/xp.pi*factorial(j2-xp.abs(Om2))/factorial(xp.abs(Om2)+j2))**0.5
+            if Om1 > 0: c2 *= (-1)**Om2
+            Y2 = c2*lpmv(xp.abs(Om2),j2, xp.cos(self.g))
 
-        # TODO: broken vectorization for sph_harm_y... fix later
-        #Y1 = sph_harm_y(j1, Om1, self.g, self.psi)
-        #Y2 = sph_harm_y(j2,Om2, self.g, self.psi)
-        for igam in range(args.Ng):
-            for ipsi in range(2*self.J+1):
-                Y1[igam, ipsi] = sph_harm_y(j1,Om1,self.g[igam], self.psi[ipsi])
-                Y2[igam, ipsi] = sph_harm_y(j2,Om2, self.g[igam], self.psi[ipsi])
+        
+        if xp.any(xp.isnan(Y1)):
+            print("Y1 error", j1, Om1 )
+        if xp.any(xp.isnan(Y2)):
+            print("Y2 error", j2, Om2 )
+        # for igam in range(args.Ng):
+            # for ipsi in range(2*self.J+1)
+            # Y1[igam] = c1*lpmv[j1,Om1,self.g[igam]]
+            # Y2[igam] = c2*lpmv[j2,Om2,self.g[igam]]
+                # Y1[igam, ipsi] = sph_harm_y(j1,Om1,self.g[igam], self.psi[ipsi])
+                # Y2[igam, ipsi] = sph_harm_y(j2,Om2, self.g[igam], self.psi[ipsi])
         sin_gam = xp.sin(self.g)
 
         for iR in range(args.NR):
             for ir in range(args.Nr):
-                integrand = (xp.conj(Y1)*Y2).real*sin_gam[:,None]*Vgrid[iR,ir,:,:]
-                V_jjOmOm[iR,ir] = xp.sum(integrand)/4./xp.pi*dg*dpsi # 2 for psi being 0...2pi instead of 0...pi
+                integrand = (xp.conj(Y1)*Y2)*sin_gam[:]*Vgrid[iR,ir,:]
+                V_jjOmOm[iR,ir] = xp.sum(integrand)/4.*dg # 2 for psi being 0...2pi instead of 0...pi
         return V_jjOmOm
 
     def buildVsph(self):
@@ -302,7 +325,10 @@ class Hamiltonian:
         for iOm in range(2*self.J+1):
                 for ij1 in range(args.Ng):
                     for ij2 in range(args.Ng):
-                        Vsph[:,:,ij1,ij2,iOm] = self.sph_transform(self.Vgrid, self.j[ij1], self.j[ij2], self.Om[iOm], self.Om[iOm])
+                        a = self.sph_transform(self.Vgrid, self.j[ij1], self.j[ij2], self.Om[iOm], self.Om[iOm])
+                        Vsph[:,:,ij1,ij2,iOm] = a 
+        
+        assert not xp.any(xp.isnan(Vsph))
         return Vsph
 
     def buildVOm(self):
@@ -359,12 +385,15 @@ class Hamiltonian:
 
         # Angular electronic ke terms: j(j+1)/r^2 + j(j+1)/R^2
         kej = xp.einsum('BRrjO, j-> BRrjO', xa, self.j*(self.j+1))
+        # kej = xa*self.j_grid*(self.j_grid+1) # we don't have a j_grid defined yet?
         ke += (self.Rinv2 + self.rinv2)*kej
 
 
         # Angular Kinetic Energy J terms
         if self.J != 0:
-            keJdiag  = xa*(self.J*(self.J+1)-2*self.Om**2)     #  J(J+1)-Ω^2
+            keJdiag  = xa*self.J*(self.J+1)
+            keJdiag += -2*xp.einsum('BRrjO,O-> BRrjO', xa,self.Om**2)     #  J(J+1)-2Ω^2
+
             keJoffdiag = xp.einsum('BRrjO,jOP-> BRrjP', xa, self.VOm) #√(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
             ke += self.Rinv2*keJdiag
             ke += self.Rinv2*keJoffdiag
