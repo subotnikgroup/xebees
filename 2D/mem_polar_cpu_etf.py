@@ -249,8 +249,11 @@ def Gamma_etf_polar(R,r,g,ddr,ddg,M_1,M_2,mu12,r1e2,r2e2):
     singamma = xp.sin(g)
     invr = 1/(r[:,0])
 
-    t1 = xp.diag((theta1/partition).ravel())
-    t2 = xp.diag((theta2/partition).ravel())
+    t1_old = xp.diag((theta1/partition).ravel())
+    t2_old = xp.diag((theta2/partition).ravel())
+
+    t1 = xp.diag(0.5*xp.ones(theta1.shape).ravel())
+    t2 = xp.diag(0.5*xp.ones(theta2.shape).ravel())
 
     spg = ddg.copy()
     cpg = ddg.copy()
