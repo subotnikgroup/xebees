@@ -526,23 +526,23 @@ class Hamiltonian:
         # J terms: (1/R²)(J(J+1) - 2Ω²)
         if self.J != 0:
             Hel[:, xp.arange(Nelec), xp.arange(Nelec)] += (
-                Rinv2 * self.J * (self.J+1)  # +(1/R²) (J(J+1)
+                Rinv2[0] * self.J * (self.J+1)  # +(1/R²) J(J+1)
             )
-            Hel -= 2 * kron3(xp.eye(Nr), xp.eye(Nj), self.Om**2) * Rinv2 # - 2Ω²(1/R²)
+            Hel -= 2 * kron3(xp.eye(Nr), xp.eye(Nj), xp.diag(self.Om**2)) * Rinv2 # - 2Ω²(1/R²)
 
         # VOm term:
         VOm_big =  xp.einsum("jkOP,jOP->jkOP",
-                             xp.kron(xp.eye(Nj), xp.eye(NOm)),
-                             self.VOm).rehape(Nsph, Nsph)# Nj(NOm)^2 -> Nsph^2
+                             xp.kron(xp.eye(Nj), xp.eye(NOm)).reshape((Nj,Nj,NOm,NOm)),
+                             self.VOm).reshape(Nsph, Nsph)# Nj(NOm)^2 -> Nsph^2
 
-        Hel += xp.kron(xp.eye(Nr), VOm_big) * R2inv
+        Hel += xp.kron(xp.eye(Nr), VOm_big) * Rinv2
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · (Te + VOm)
 
+        Vsph_big = xp.einsum("rs,OP,RrjkO->RrsjkOP",
+                             xp.eye(Nr), xp.eye(NOm),
+                             self.Vsph[Ridx]).reshape(-1, Nelec, Nelec)
 
-        Hel[:, xp.arange(Nelec), xp.arange(Nelec)] += xp.einsum("rs,OP,RrjkO->RrsjkOP",
-                                                                xp.eye(Nr), xp.eye(NOm),
-                                                                self.Vsph[Ridx])
-
+        Hel += Vsph_big
         return xp.squeeze(Hel)
 
     # NR x (NrNj) x (NrNj)
