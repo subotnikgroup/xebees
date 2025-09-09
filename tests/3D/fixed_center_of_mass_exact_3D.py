@@ -1,1 +1,0 @@
-../../3D/fixed_center_of_mass_exact_3D.py
