@@ -81,8 +81,8 @@ class Hamiltonian:
         self.g_2 = args.g_2
 
         self.J   = args.J
-        self.NOm = 2*self.J+1 
-        self.dtype = xp.float64 if self.J == 0 else xp.complex128
+        self.NOm = 2*self.J+1
+        self.dtype = xp.float64 #if self.J == 0 else xp.complex128
 
         # Potential function selection
         if not hasattr(args, "potential"):
@@ -448,8 +448,8 @@ class Hamiltonian:
 
     def BO_spectrum(self, nroots=0, Hel_func=None):
         print("Building BO spectrum")
-        NR, Nr, Ng = self.shape
-        Nelec = Nr*Ng
+        NR, Nr, Ng, NOm = self.shape
+        Nelec = Nr*Ng*NOm
 
         if Hel_func is None:
             Hel_func = self.build_Hel
@@ -486,10 +486,11 @@ class Hamiltonian:
         return (Ad_vn, Ad_n)  # energies are Ad_vn[v,n]
 
 
-    # NR x (NrNg) x (NrNg)
+    # NR x (NrNgNOm) x (NrNgNOm)
     def build_Hel(self, Ridx=None):
-        NR, Nr, Ng = self.shape
-        Nelec = Nr*Ng
+        NR, Nr, Nj, NOm = self.shape
+        Nsph = Nj * NOm
+        Nelec = Nr * Nsph
 
         if Ridx is None:
             Ridx = xp.arange(NR)
@@ -497,33 +498,50 @@ class Hamiltonian:
             Ridx = xp.atleast_1d(Ridx)
             NR,  = Ridx.shape
 
-        # Hel = -1/2/μ · Te + V
-        # Te  =  ∂²/∂r² + 1/4/r² + (1/r²)(∂²/∂γ²) + (1/R²)(∂²/∂γ²) - (1/R²)(J² + J2i(∂/∂γ))
+        def kron3(Or, Oj, OO):
+            return xp.kron(Or, xp.kron(Oj, OO))
+
+        # Hel = -1/2/μ · (Te + VOm) + V
+        # Te  =  ∂²/∂r² + (1/r²)j(j+1) + (1/R²)(j(j+1) + J(J+1) - 2Ω²)
+        # VOm = (1/R²)√(J(J+1) - Ω(Ω ± 1))√(j(j+1) - Ω(Ω ± 1)) ; (1/R²)*self.VOm
         # N.B. self.ddr2 = ∂²/∂r² + 1/4/r²
         Hel = xp.empty((NR, Nelec, Nelec), dtype=self.dtype)
 
         # build *bare* Te first
-        # R-independent terms: ∂²/∂r² + (1/r²)(∂²/∂γ² + 1/4)
+        # R-independent terms: ∂²/∂r² + (1/r²)j(j+1)
         Hel[:] = (
-            xp.kron(self.ddr2, xp.eye(Ng)) +            # ∂²/∂r² + 1/4/r²
-            xp.kron(xp.diag(1 / self.r**2), self.ddg2)  # (1/r²)(∂²/∂γ²)
+            xp.kron(self.ddr2, xp.eye(Nsph)) +   # ∂²/∂r²
+            kron3(xp.diag(1 / self.r**2),        # +(1/r²)j(j+1)
+                  xp.diag(self.j*(self.j+1)),
+                  xp.eye(NOm))
         )
 
-        # R-dependent terms: (1/R²)(∂²/∂γ²)
+
+        # R-dependent terms: (1/R²)j(j+1)
         Rinv2 = (1 / self.R**2)[Ridx, None, None]  # (1/R²), ready for broadcasting
-        Hel += Rinv2 * xp.kron(xp.eye(Nr), self.ddg2)[None]  # 1/R² (∂²/∂γ²)
+        Hel += Rinv2 * kron3(xp.eye(Nr),           # (1/R²) * j(j+1)
+                             xp.diag(self.j*(self.j+1)),
+                             xp.eye(NOm))[None]
 
-        # J terms: -(1/R²)(J² + J2i(∂/∂γ))
+        # J terms: (1/R²)(J(J+1) - 2Ω²)
         if self.J != 0:
-            Hel -= (
-                xp.kron(self.J * xp.eye(Nr), 2j * self.ddg1) [None, :, :] + # J2i(∂/∂γ)
-                (self.J**2 * xp.eye(Nelec))[None] # J²
-            )  * Rinv2  # -(1/R²)
+            Hel[:, xp.arange(Nelec), xp.arange(Nelec)] += (
+                Rinv2 * self.J * (self.J+1)  # +(1/R²) (J(J+1)
+            )
+            Hel -= 2 * kron3(xp.eye(Nr), xp.eye(Nj), self.Om**2) * Rinv2 # - 2Ω²(1/R²)
 
-        Hel *= -1 / (2 * self.mu)  # -1/2/μ · Te
-        Hel[:, xp.arange(Nelec), xp.arange(Nelec)] +=(  # extract diagonal at every R
-            xp.reshape(self.Vgrid[Ridx], (NR, Nelec))   # + V
-        )
+        # VOm term:
+        VOm_big =  xp.einsum("jkOP,jOP->jkOP",
+                             xp.kron(xp.eye(Nj), xp.eye(NOm)),
+                             self.VOm).rehape(Nsph, Nsph)# Nj(NOm)^2 -> Nsph^2
+
+        Hel += xp.kron(xp.eye(Nr), VOm_big) * R2inv
+        Hel *= -1 / (2 * self.mu)  # -1/2/μ · (Te + VOm)
+
+
+        Hel[:, xp.arange(Nelec), xp.arange(Nelec)] += xp.einsum("rs,OP,RrjkO->RrsjkOP",
+                                                                xp.eye(Nr), xp.eye(NOm),
+                                                                self.Vsph[Ridx])
 
         return xp.squeeze(Hel)
 
