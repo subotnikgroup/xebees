@@ -41,7 +41,7 @@ import numpy  # only use this for reading and writing objects
 import linalg_helper as lib
 import potentials
 from constants import *
-from hamiltonian import  KE, KE_FFT, KE_Borisov
+from hamiltonian import  KE, KE_FFT, KE_Borisov_3D
 from davidson import phase_match, phase_match_mem_constrained, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
@@ -200,9 +200,9 @@ class Hamiltonian:
         if stencil_g%2==0: stencil_g -= 1
 
         self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R) 
-        self.ddr2, _ = KE_Borisov(self.r, bare=True)
+        self.ddr2, _ = KE_Borisov_3D(self.r, bare=True)
 
-        self.ddr_lab2, _ = KE_Borisov(self.r_lab, bare=True)
+        self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
         self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
 
 
@@ -272,8 +272,8 @@ class Hamiltonian:
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
     def sph_transform(self, Vgrid, j1, j2, Om1, Om2):
-        ''' returns (int dγ dψ sin(γ)
-                        conj(Y1(j1,Ω1,γ,ψ)) V(r,R,γ, ψ=0) Y2(j2,Ω2, γ,ψ) )'''
+        ''' returns (int dγ sin(γ)
+                        P1(j1,Ω1,γ) V(r,R,γ, ψ=0) P2(j2,Ω2, γ) )'''
         args = self.args
         Y1 = xp.zeros((args.Ng), dtype=xp.float64)
         Y2 = xp.zeros((args.Ng), dtype=xp.float64)
@@ -281,21 +281,17 @@ class Hamiltonian:
 
         dg = self.g[1]-self.g[0]
         
-        if Om1==0 and j1==0:
-            Y1[:] = 1/2/xp.pi**0.5
-        elif j1 < xp.abs(Om1):
+        if j1 < xp.abs(Om1):
             Y1[:] = 0 # exclude j < |Om|
         else:
-            c1 = ((2*xp.abs(Om1)+1)/4/xp.pi*factorial(j2-xp.abs(Om1))/factorial(xp.abs(Om1)+j1))**0.5
+            c1 = ((2*j1+1)/2*factorial(j1-xp.abs(Om1))/factorial(xp.abs(Om1)+j1))**0.5
             if Om1 > 0: c1 *= (-1)**Om1
             Y1 = c1*lpmv(xp.abs(Om1),j1, xp.cos(self.g))
         
-        if Om2==0 and j2==0:
-            Y2[:] = 1/2/xp.pi**0.5
-        elif j2 < xp.abs(Om2):
+        if j2 < xp.abs(Om2):
             Y2[:] = 0 # exclude j < |Om|
         else:
-            c2 = ((2*xp.abs(Om2)+1)/4/xp.pi*factorial(j2-xp.abs(Om2))/factorial(xp.abs(Om2)+j2))**0.5
+            c2 = ((2*j2+1)/2*factorial(j2-xp.abs(Om2))/factorial(xp.abs(Om2)+j2))**0.5
             if Om1 > 0: c2 *= (-1)**Om2
             Y2 = c2*lpmv(xp.abs(Om2),j2, xp.cos(self.g))
 
@@ -304,18 +300,13 @@ class Hamiltonian:
             print("Y1 error", j1, Om1 )
         if xp.any(xp.isnan(Y2)):
             print("Y2 error", j2, Om2 )
-        # for igam in range(args.Ng):
-            # for ipsi in range(2*self.J+1)
-            # Y1[igam] = c1*lpmv[j1,Om1,self.g[igam]]
-            # Y2[igam] = c2*lpmv[j2,Om2,self.g[igam]]
-                # Y1[igam, ipsi] = sph_harm_y(j1,Om1,self.g[igam], self.psi[ipsi])
-                # Y2[igam, ipsi] = sph_harm_y(j2,Om2, self.g[igam], self.psi[ipsi])
+
         sin_gam = xp.sin(self.g)
 
         for iR in range(args.NR):
             for ir in range(args.Nr):
-                integrand = (xp.conj(Y1)*Y2)*sin_gam[:]*Vgrid[iR,ir,:]
-                V_jjOmOm[iR,ir] = xp.sum(integrand)/4.*dg # 2 for psi being 0...2pi instead of 0...pi
+                integrand = Y1*Y2*sin_gam*Vgrid[iR,ir,:]
+                V_jjOmOm[iR,ir] = xp.sum(integrand)/2*dg
         return V_jjOmOm
 
     def buildVsph(self):
