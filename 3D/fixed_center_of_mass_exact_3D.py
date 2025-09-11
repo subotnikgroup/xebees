@@ -281,31 +281,45 @@ class Hamiltonian:
 
         dg = self.g[1]-self.g[0]
         
-        if j1 < xp.abs(Om1):
-            Y1[:] = 0 # exclude j < |Om|
-        else:
-            c1 = ((2*j1+1)/2*factorial(j1-xp.abs(Om1))/factorial(xp.abs(Om1)+j1))**0.5
-            if Om1 > 0: c1 *= (-1)**Om1
-            Y1 = c1*lpmv(xp.abs(Om1),j1, xp.cos(self.g))
+        # if j1 < xp.abs(Om1):
+        #     Y1[:] = 0 # exclude j < |Om|
+        # else:
+        #     c1 = ((2*j1+1)/2)**0.5 #factorial(j1-xp.abs(Om1))/factorial(xp.abs(Om1)+j1))**0.5
+        #     if Om1 > 0: c1 *= (-1)**Om1
+        #     # c1=1
+        #     Y1 = c1*lpmv(xp.abs(Om1),j1, xp.cos(self.g))
         
-        if j2 < xp.abs(Om2):
-            Y2[:] = 0 # exclude j < |Om|
-        else:
-            c2 = ((2*j2+1)/2*factorial(j2-xp.abs(Om2))/factorial(xp.abs(Om2)+j2))**0.5
-            if Om1 > 0: c2 *= (-1)**Om2
-            Y2 = c2*lpmv(xp.abs(Om2),j2, xp.cos(self.g))
+        # if j2 < xp.abs(Om2):
+        #     Y2[:] = 0 # exclude j < |Om|
+        # else:
+        #     c2 = ((2*j2+1)/2)**0.5 #*factorial(j2-xp.abs(Om2))/factorial(xp.abs(Om2)+j2))**0.5
+        #     if Om1 > 0: c2 *= (-1)**Om2
+        #     # c2=1
+        #     Y2 = c2*lpmv(xp.abs(Om2),j2, xp.cos(self.g))
 
         
-        if xp.any(xp.isnan(Y1)):
-            print("Y1 error", j1, Om1 )
-        if xp.any(xp.isnan(Y2)):
-            print("Y2 error", j2, Om2 )
+        # if xp.any(xp.isnan(Y1)):
+        #     print("Y1 error", j1, Om1 )
+        # if xp.any(xp.isnan(Y2)):
+        #     print("Y2 error", j2, Om2 )
+
+        if j1 < xp.abs(Om1) or j2 < abs(Om2):
+            return V_jjOmOm
+    
+        c1 = ((2*j1+1)/2)**0.5 #factorial(j1-xp.abs(Om1))/factorial(xp.abs(Om1)+j1))**0.5
+        if Om1 > 0: c1 *= (-1)**Om1
+        Y1 = c1*lpmv(xp.abs(Om1),j1, xp.cos(self.g))
+        
+        c2 = ((2*j2+1)/2)**0.5 #*factorial(j2-xp.abs(Om2))/factorial(xp.abs(Om2)+j2))**0.5
+        if Om1 > 0: c2 *= (-1)**Om2
+        #     # c2=1
+        Y2 = c2*lpmv(xp.abs(Om2),j2, xp.cos(self.g))
 
         sin_gam = xp.sin(self.g)
 
         for iR in range(args.NR):
             for ir in range(args.Nr):
-                integrand = Y1*Y2*sin_gam*Vgrid[iR,ir,:]
+                integrand = Y1*Y2*sin_gam[:]*Vgrid[iR,ir,:]
                 V_jjOmOm[iR,ir] = xp.sum(integrand)/2*dg
         return V_jjOmOm
 
