@@ -136,23 +136,31 @@ class Hamiltonian:
         if args.Ng % 2 != 0:
             raise RuntimeError(f"Ng must be even!")
 
+        # FIXME: we must be sure that we have consistent definition
+        # for gamma and know what domain it covers. We should also
+        # endevor to have consistent useage in the phase psace and
+        # exact codes.
+
         # N.B.: It is essential that we not include the endpoint in
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
         # N.B : in 3D gamma must exist only on the interval (0,pi)!
 
         #self.g = xp.asarray([i*xp.pi/args.Ng for i in range(args.Ng)])
-        self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)
-        
-        # self.j = xp.fft.fftfreq(args.Ng)*args.Ng
-        self.j = xp.arange(0,args.Ng)
-        self.j = self.j.astype(int)
+        #self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)
+        self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
 
-        self.Om = xp.fft.fftfreq(2*self.J +1)*(2*self.J+1)
-        self.Om = self.Om.astype(int)
+        # How do we know which choice of j is correct? Given the
+        # condition that sums over j are for j > |Ω|, taking the
+        # fftfreq definition, would throw out half of our j range,
+        # which doesn't seem correct. Also, the Legendre polynomials
+        # are defined such that P(-|n|,0) = P(|n|-1,0); once the
+        # derivatives are included there are other differences. We
+        # still have to be careful in our definition of the KE.
+        self.j = xp.arange(0,args.Ng).astype(int)                 # [ 0    ... Nj  ]
+        # self.j = (xp.fft.fftfreq(args.Ng)*args.Ng).astype(int)  # [-Nj/2 ... Nj/2]
 
-        # self.psi = xp.asarray([i*2*xp.pi/(2*self.J+1) for i in range(0,self.Npsi)])
-        #self.psi = xp.linspace(0,2*xp.pi, 2*self.J+1, endpoint=False)
+        self.Om = (xp.fft.fftfreq(self.NOm)*self.NOm).astype(int)
 
         self.axes = (self.R, self.r, self.j, self.Om)
 
@@ -161,13 +169,14 @@ class Hamiltonian:
         self.Vgrid = self.V(self.R_rgrid, self.r_rgrid, self.g_rgrid) # Vgrid in real space \propto cos(psi)cos(g)
         assert not xp.any(self.Vgrid)==xp.nan
 
+        self.shape = self.Vgrid.shape + (self.NOm,)
+
         with timer_ctx("Build Vsph from Vgrid"):
             self.Vsph = self.buildVsph()
             # xp.savez("test_Vsph",Vsph=self.Vsph,Vgrid=self.Vgrid, Rgrid=self.R, rgrid=self.r, g_grid=self.g, psi_grid=self.psi)
 
         self.VOm = self.buildVOm()
 
-        self.shape = self.Vgrid.shape + (self.NOm,)
         self.size = xp.prod(xp.asarray(self.shape))
 
         dR = self.R[1] - self.R[0]
@@ -192,7 +201,7 @@ class Hamiltonian:
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
         #self.ddR2, _ = KE_Borisov(self.R, bare=True)
-        
+
         # needed for testing on tiny systems in 3D
         stencil_R = min(11, args.NR)
         if stencil_R%2==0: stencil_R -= 1
@@ -271,68 +280,50 @@ class Hamiltonian:
 
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
-    def sph_transform(self, Vgrid, j1, j2, Om1, Om2):
+    def sph_transform(self, Vgrid, j1, j2, Om):
         ''' returns (int dγ sin(γ)
                         P1(j1,Ω1,γ) V(r,R,γ, ψ=0) P2(j2,Ω2, γ) )'''
-        args = self.args
-        Y1 = xp.zeros((args.Ng), dtype=xp.float64)
-        Y2 = xp.zeros((args.Ng), dtype=xp.float64)
-        V_jjOmOm = xp.zeros((args.NR, args.Nr),dtype=xp.float64)
+
+        NR, Nr, Ng, NOm = self.shape
+
+        if j1 < xp.abs(Om) or j2 < abs(Om):  # these terms are excluded from the sum; c.f. eq. 32
+            return xp.zeros((NR, Nr))
+
+        def phase(j, Om):  # eq. 31
+            c = ((xp.sqrt((2*j + 1) / 2) *
+                  xp.sqrt(
+                      factorial(j - xp.abs(Om)) /
+                      factorial(j + xp.abs(Om))
+                  )
+                ))
+
+            if Om > 0 and Om % 2 == 1:
+                c *= -1
+
+            return c
+
+        # eq. 30
+        P1 = phase(j1, Om)*lpmv(xp.abs(Om), j1, xp.cos(self.g))
+        P2 = phase(j2, Om)*lpmv(xp.abs(Om), j2, xp.cos(self.g))
 
         dg = self.g[1]-self.g[0]
-        
-        # if j1 < xp.abs(Om1):
-        #     Y1[:] = 0 # exclude j < |Om|
-        # else:
-        #     c1 = ((2*j1+1)/2)**0.5 #factorial(j1-xp.abs(Om1))/factorial(xp.abs(Om1)+j1))**0.5
-        #     if Om1 > 0: c1 *= (-1)**Om1
-        #     # c1=1
-        #     Y1 = c1*lpmv(xp.abs(Om1),j1, xp.cos(self.g))
-        
-        # if j2 < xp.abs(Om2):
-        #     Y2[:] = 0 # exclude j < |Om|
-        # else:
-        #     c2 = ((2*j2+1)/2)**0.5 #*factorial(j2-xp.abs(Om2))/factorial(xp.abs(Om2)+j2))**0.5
-        #     if Om1 > 0: c2 *= (-1)**Om2
-        #     # c2=1
-        #     Y2 = c2*lpmv(xp.abs(Om2),j2, xp.cos(self.g))
+        V_jjOmOm = xp.sum(
+            (dg/2*P1*P2*xp.sin(self.g))[None,None,:]*Vgrid,
+            axis=-1)
 
-        
-        # if xp.any(xp.isnan(Y1)):
-        #     print("Y1 error", j1, Om1 )
-        # if xp.any(xp.isnan(Y2)):
-        #     print("Y2 error", j2, Om2 )
-
-        if j1 < xp.abs(Om1) or j2 < abs(Om2):
-            return V_jjOmOm
-    
-        c1 = ((2*j1+1)/2)**0.5 #factorial(j1-xp.abs(Om1))/factorial(xp.abs(Om1)+j1))**0.5
-        if Om1 > 0: c1 *= (-1)**Om1
-        Y1 = c1*lpmv(xp.abs(Om1),j1, xp.cos(self.g))
-        
-        c2 = ((2*j2+1)/2)**0.5 #*factorial(j2-xp.abs(Om2))/factorial(xp.abs(Om2)+j2))**0.5
-        if Om1 > 0: c2 *= (-1)**Om2
-        #     # c2=1
-        Y2 = c2*lpmv(xp.abs(Om2),j2, xp.cos(self.g))
-
-        sin_gam = xp.sin(self.g)
-
-        for iR in range(args.NR):
-            for ir in range(args.Nr):
-                integrand = Y1*Y2*sin_gam[:]*Vgrid[iR,ir,:]
-                V_jjOmOm[iR,ir] = xp.sum(integrand)/2*dg
         return V_jjOmOm
+
 
     def buildVsph(self):
         ''' V(R,r,j,j',Ω=Ω') '''
-        args = self.args
-        Vsph = xp.zeros((args.NR, args.Nr, args.Ng, args.Ng, 2*self.J+1), dtype=xp.float64)
-        for iOm in range(2*self.J+1):
-                for ij1 in range(args.Ng):
-                    for ij2 in range(args.Ng):
-                        a = self.sph_transform(self.Vgrid, self.j[ij1], self.j[ij2], self.Om[iOm], self.Om[iOm])
-                        Vsph[:,:,ij1,ij2,iOm] = a 
-        
+        NR, Nr, Ng, NOm = self.shape
+        Vsph = xp.zeros((NR, Nr, Ng, Ng, NOm))
+
+        for iOm, Om in enumerate(self.Om):
+            for ij1, j1 in enumerate(self.j):
+                for ij2, j2 in enumerate(self.j):
+                    Vsph[:,:,ij1,ij2,iOm] = self.sph_transform(self.Vgrid, j1, j2, Om)
+
         assert not xp.any(xp.isnan(Vsph))
         return Vsph
 
@@ -426,7 +417,7 @@ class Hamiltonian:
         Vdiag = xp.einsum('RrjjO-> RrjO',self.Vsph)
         # Potential terms
         diag = Vdiag + ke
-        
+
         assert not xp.any(xp.isnan(diag))
         return diag.ravel()
 
@@ -1006,6 +997,8 @@ if __name__ == '__main__':
     if args.bo_spectrum:
         with timer_ctx("BO spectrum"):
             Ad_vn, Ad_n = H.BO_spectrum(args.k)
+            with numpy.printoptions(precision=4):
+                print(Ad_n.T[0] - Ad_n.T[0,-1])
             numpy.savez_compressed(args.bo_spectrum, bo_spectrum=Ad_vn, bo_surfaces=Ad_n)
 
     # FIXME: would like to use a callback to save intermediate
