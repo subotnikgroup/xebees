@@ -316,8 +316,8 @@ class Hamiltonian:
 
     def buildVsph(self):
         ''' V(R,r,j,j',Ω=Ω') '''
-        NR, Nr, Ng, NOm = self.shape
-        Vsph = xp.zeros((NR, Nr, Ng, Ng, NOm))
+        NR, Nr, Nj, NOm = self.shape
+        Vsph = xp.zeros((NR, Nr, Nj, Nj, NOm))
 
         for iOm, Om in enumerate(self.Om):
             for ij1, j1 in enumerate(self.j):
@@ -328,26 +328,33 @@ class Hamiltonian:
         return Vsph
 
     def buildVOm(self):
-        ''' Contains the Clebsch-Gordon Coeffs between Om values
-                √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1)),
-                shape: Ng x (2J+1)^2 '''
-        args = self.args
-        VOm = xp.zeros((args.Ng, 2*self.J+1, 2*self.J+1), dtype=xp.float64)
+        ''' Clebsch-Gordon Coefficients between adjacent Ω
+            √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1)),
+            shape: Ng x NΩ x NΩ '''
+        NR, Nr, Nj, NOm = self.shape
+        VOm = xp.zeros((Nj, NOm, NOm))
 
-        #NB: recall self.Om = [-J, -J+1 ...0...J-1,J]
+        # NB: recall self.Om = [-J, -J+1 ...0...J-1,J]
         # will not appear tridiagonal with this matrix element ordering!
-        for i in range(2*self.J+1):
-            for j in range(2*self.J+1):
-                if self.Om[i]== self.Om[j]+1:
-                    a = self.j*(self.j+1) - self.Om[i]*(self.Om[i]+1)
-                    VOm[:,i,j] = xp.sqrt(xp.maximum(xp.zeros(args.Ng),a))
-                    VOm[:,i,j] *= xp.sqrt(self.J*(self.J+1) - self.Om[i]*(self.Om[i]+1))
-                elif self.Om[i] == self.Om[j]-1:
-                    a = self.j*(self.j+1) - self.Om[i]*(self.Om[i]-1)
-                    VOm[:,i,j] = xp.sqrt(xp.maximum(xp.zeros(args.Ng),a))
-                    VOm[:,i,j] *= xp.sqrt(self.J*(self.J+1) - self.Om[i]*(self.Om[i]-1))
+        j, J = self.j, self.J
+        for i, Oi in enumerate(self.Om):
+            for k, Ok in enumerate(self.Om):
+                s = Oi - Ok
+                if abs(s) != 1 : continue
+                VOm[:,i,k] = xp.sqrt(
+                                 (J*(J+1) - Oi*(Oi+s)) *
+                    xp.maximum(0, j*(j+1) - Oi*(Oi+s))
+                )
 
-        assert not xp.any(xp.isnan(VOm))
+        # Overkill, vectorized version for reference
+        # OO = self.Om[:, None] - self.Om[None, :]  # like xp.subtract.outer
+        # i, k = xp.where(xp.abs(OO) == 1)
+        # s = OO[i, k]
+        # Oi = self.Om[i]
+        # VOm[:, i, k] = xp.sqrt(              (J*(J+1)           - Oi*(Oi+s)) *
+        #                        xp.maximum(0, (j*(j+1))[:, None] - Oi*(Oi+s)))
+
+        assert (not xp.any(xp.isnan(VOm)))
         return VOm
 
     # allows H @ x
