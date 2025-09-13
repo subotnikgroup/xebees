@@ -141,6 +141,7 @@ class Hamiltonian:
         # endevor to have consistent useage in the phase psace and
         # exact codes.
 
+        # FWIW, at the moment only ɣ = [0 ... π] converges (it's all wrong anyway though)
         # N.B.: It is essential that we not include the endpoint in
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
@@ -157,6 +158,7 @@ class Hamiltonian:
         # are defined such that P(-|n|,0) = P(|n|-1,0); once the
         # derivatives are included there are other differences. We
         # still have to be careful in our definition of the KE.
+
         self.j = xp.arange(0,args.Ng).astype(int)                 # [ 0    ... Nj  ]
         # self.j = (xp.fft.fftfreq(args.Ng)*args.Ng).astype(int)  # [-Nj/2 ... Nj/2]
 
@@ -362,13 +364,25 @@ class Hamiltonian:
         # Apply mask and signed phases
         Pj = Pj * (mask * phases)[...,None]
 
-        # Pmj'(ɣ)Pmj(ɣ)
-        Pjj = Pj[:, :, None, :] * Pj[:, None, :, :]
+        # Pmj(ɣ)Pmk(ɣ)
+        Pjk = Pj[:, :, None, :] * Pj[:, None, :, :]
 
         dg = self.g[1] - self.g[0]
         integrand = (dg/2.0) * self.Vgrid * xp.sin(self.g)[None,None,:]
 
-        Vsph = xp.einsum('Rrg,Oijg->RrijO', integrand, Pjj)
+        Vsph = xp.einsum('Rrg,Oijg->RrijO', integrand, Pjk)
+        # Storage of various objects at -R 90 -r 91 -g 92 -J 10
+        # print(Pj.shape, Pj.nbytes/(1<<20))                #     1 MB
+        # print(Pjk.shape, Pjk.nbytes/(1<<20))              #   125 MB
+        # print(integrand.shape, integrand.nbytes/(1<<20))  #     6 MB
+        # print(Vsph.shape, Vsph.nbytes/(1<<20))            # 11106 MB (11 GB)
+        # exit()
+
+        # FIXME: Given how huge Vsph is, if we're memory limited, we
+        # might want to consider having the Tx function operate
+        # directly with integrand and Pjk. Something like:
+
+        # vout = xp.einsum('BRrjO,Rrg,Ojkg->BRrkO', xa, integrand, Pjk)
 
         assert not xp.any(xp.isnan(Vsph))
         return Vsph
