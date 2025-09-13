@@ -19,7 +19,7 @@ from scipy.integrate import simpson
 from scipy.sparse.linalg import lobpcg
 from scipy.interpolate import RegularGridInterpolator
 
-from scipy.special import sph_harm_y, lpmv, factorial
+from scipy.special import sph_harm_y, lpmv, factorial, assoc_legendre_p_all
 ## TO-DO: make sph_harm_y also work from cupyx backend
 
 
@@ -147,8 +147,8 @@ class Hamiltonian:
         # N.B : in 3D gamma must exist only on the interval (0,pi)!
 
         #self.g = xp.asarray([i*xp.pi/args.Ng for i in range(args.Ng)])
-        #self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)
-        self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
+        self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)
+        #self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
 
         # How do we know which choice of j is correct? Given the
         # condition that sums over j are for j > |Ω|, taking the
@@ -173,7 +173,7 @@ class Hamiltonian:
 
         with timer_ctx("Build Vsph from Vgrid"):
             self.Vsph = self.buildVsph()
-            # xp.savez("test_Vsph",Vsph=self.Vsph,Vgrid=self.Vgrid, Rgrid=self.R, rgrid=self.r, g_grid=self.g, psi_grid=self.psi)
+            #self.Vsph = self.buildVsph_vec()
 
         self.VOm = self.buildVOm()
 
@@ -228,10 +228,6 @@ class Hamiltonian:
 
         self.diag = self.buildDiag()
 
-        xa = xp.zeros(self.size,dtype=xp.complex128)
-        xa[0] = 1
-        xa = self.Hx(xa)
-
         if not hasattr(args, "preconditioner"):
             args.preconditioner = 'naive'
 
@@ -280,6 +276,7 @@ class Hamiltonian:
 
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
+
     def sph_transform(self, Vgrid, j1, j2, Om):
         ''' returns (int dγ sin(γ)
                         P1(j1,Ω1,γ) V(r,R,γ, ψ=0) P2(j2,Ω2, γ) )'''
@@ -319,10 +316,59 @@ class Hamiltonian:
         NR, Nr, Nj, NOm = self.shape
         Vsph = xp.zeros((NR, Nr, Nj, Nj, NOm))
 
+        Vsph_ = self.buildVsph_vec()
+
         for iOm, Om in enumerate(self.Om):
             for ij1, j1 in enumerate(self.j):
                 for ij2, j2 in enumerate(self.j):
                     Vsph[:,:,ij1,ij2,iOm] = self.sph_transform(self.Vgrid, j1, j2, Om)
+                    devi = xp.sum(xp.abs(Vsph[:,:,ij1,ij2,iOm] - Vsph_[:,:,ij1,ij2,iOm]))
+                    if devi < 1e-10:
+                        pass # print(devi, f"({ij1},{ij2},{iOm})")
+
+
+        assert not xp.any(xp.isnan(Vsph))
+        prms(Vsph, Vsph_, "diff Vsph_")
+        #assert (xp.allclose(Vsph, Vsph_))
+        return Vsph
+
+
+    def buildVsph_vec(self):
+        # builds <jΩ|V(R,r)|j'Ω> by transforming over the ɣ and ψ
+        # coordinates. (V is not a function of ψ so that part is
+        # analytic.)
+        Nj = len(self.j)
+        m  = xp.abs(self.Om)
+
+        # Precompute all the associated Legendre functions up to Nj, through order J
+        # N.B. P has shape (1, Nj, 2J+1, ...) with the 2nd axis in order -J,..0...J
+        # so the |Ω| index is in slot (self.J + m)
+        Pj = assoc_legendre_p_all(
+            Nj - 1, self.J,
+            xp.cos(self.g), norm=False)[0, :, self.J + m]
+
+        # phase magnitudes for each j, Om
+        def phase(j, Om):  # eq. 31 less sign
+            return ((xp.sqrt((2*j + 1) / 2.0 *
+                             factorial(j - abs(Om)) /
+                             factorial(j + abs(Om))
+                  )))
+
+        signs = xp.where((self.Om > 0) & (self.Om % 2 == 1), -1, 1)
+        phases = phase(self.j, xp.arange(self.J+1)[:, None])[m] * signs[:, None]
+
+        # mask to remove j < |Ω|
+        mask = self.j[None, :] >= m[:, None]
+        # Apply mask and signed phases
+        Pj = Pj * (mask * phases)[...,None]
+
+        # Pmj'(ɣ)Pmj(ɣ)
+        Pjj = Pj[:, :, None, :] * Pj[:, None, :, :]
+
+        dg = self.g[1] - self.g[0]
+        integrand = (dg/2.0) * self.Vgrid * xp.sin(self.g)[None,None,:]
+
+        Vsph = xp.einsum('Rrg,Oijg->RrijO', integrand, Pjj)
 
         assert not xp.any(xp.isnan(Vsph))
         return Vsph
