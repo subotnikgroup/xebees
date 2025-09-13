@@ -345,16 +345,18 @@ class Hamiltonian:
         # Precompute all the associated Legendre functions up to Nj, through order J
         # N.B. P has shape (1, Nj, 2J+1, ...) with the 2nd axis in order -J,..0...J
         # so the |Ω| index is in slot (self.J + m)
-        Pj = assoc_legendre_p_all(
-            Nj - 1, self.J,
-            xp.cos(self.g), norm=False)[0, :, self.J + m]
+        Pj = xp.asarray(
+            assoc_legendre_p_all(
+                Nj - 1, self.J,
+                xp.cos(self.g), norm=False)[0, :, self.J + m]
+        )
 
         # phase magnitudes for each j, Om
         def phase(j, Om):  # eq. 31 less sign
-            return ((xp.sqrt((2*j + 1) / 2.0 *
+            return xp.sqrt((2*j + 1) / 2.0 *
                              factorial(j - abs(Om)) /
                              factorial(j + abs(Om))
-                  )))
+                    )
 
         signs = xp.where((self.Om > 0) & (self.Om % 2 == 1), -1, 1)
         phases = phase(self.j, xp.arange(self.J+1)[:, None])[m] * signs[:, None]
@@ -370,7 +372,11 @@ class Hamiltonian:
         dg = self.g[1] - self.g[0]
         integrand = (dg/2.0) * self.Vgrid * xp.sin(self.g)[None,None,:]
 
-        Vsph = xp.einsum('Rrg,Oijg->RrijO', integrand, Pjk)
+        kwargs = dict(optimize=True)
+        if xp.backend == 'torch':
+            kwargs = {}
+
+        Vsph = xp.einsum('Rrg,Oijg->RrijO', integrand, Pjk, **kwargs)
         # Storage of various objects at -R 90 -r 91 -g 92 -J 10
         # print(Pj.shape, Pj.nbytes/(1<<20))                #     1 MB
         # print(Pjk.shape, Pjk.nbytes/(1<<20))              #   125 MB
@@ -382,7 +388,21 @@ class Hamiltonian:
         # might want to consider having the Tx function operate
         # directly with integrand and Pjk. Something like:
 
-        # vout = xp.einsum('BRrjO,Rrg,Ojkg->BRrkO', xa, integrand, Pjk)
+        # xa = xp.random.random((4,) + self.shape)
+        # with timer_ctx("Tx : xa, Vsph; explicit"):
+        #     vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, Vsph, **kwargs)
+
+        # with timer_ctx("Tx : xa, integrand, Pjk; implicit"):
+        #     vout1 = xp.einsum('BRrjO,Rrg,Ojkg->BRrkO', xa, integrand, Pjk, **kwargs)
+
+        # assert(xp.allclose(vout, vout1))
+
+        # Looks like this will definitely be the right thing to do on
+        # GPU because the variant that doesn't explicitly construct
+        # Vsph is *faster* than the version that does at size 90 91 92
+        # J=10 on the grace hopper node. The numpy backend sees the
+        # implict Vx take an order of magnitude longer than the
+        # explicit at that size.
 
         assert not xp.any(xp.isnan(Vsph))
         return Vsph
