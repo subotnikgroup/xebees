@@ -296,8 +296,8 @@ class Hamiltonian:
                   )
                 ))
 
-            if Om > 0 and Om % 2 == 1:
-                c *= -1
+            #if Om > 0 and Om % 2 == 1:  # N.B. lpmv includes the Condon-Shortley phase.
+            #    c *= -1
 
             return c
 
@@ -326,13 +326,14 @@ class Hamiltonian:
                     Vsph[:,:,ij1,ij2,iOm] = self.sph_transform(self.Vgrid, j1, j2, Om)
                     devi = xp.sum(xp.abs(Vsph[:,:,ij1,ij2,iOm] - Vsph_[:,:,ij1,ij2,iOm]))
                     if devi < 1e-10:
-                        pass # print(devi, f"({ij1},{ij2},{iOm})")
+                        pass # print(devi, f"({ij1},{ij2},{iOm})", f"({j1},{j2},{Om})")
 
 
         assert not xp.any(xp.isnan(Vsph))
         prms(Vsph, Vsph_, "diff Vsph_")
         #assert (xp.allclose(Vsph, Vsph_))
         return Vsph
+        #return Vsph_
 
 
     def buildVsph_vec(self):
@@ -349,7 +350,7 @@ class Hamiltonian:
             assoc_legendre_p_all(
                 Nj - 1, self.J,
                 xp.cos(self.g), norm=False)[0, :, self.J + m]
-        )
+        ) # index with [|Ω|, j, ɣ]
 
         # phase magnitudes for each j, Om
         def phase(j, Om):  # eq. 31 less sign
@@ -359,7 +360,7 @@ class Hamiltonian:
                     )
 
         signs = xp.where((self.Om > 0) & (self.Om % 2 == 1), -1, 1)
-        phases = phase(self.j, xp.arange(self.J+1)[:, None])[m] * signs[:, None]
+        phases = phase(self.j, self.Om[:, None]) * signs[:, None]
 
         # mask to remove j < |Ω|
         mask = self.j[None, :] >= m[:, None]
@@ -376,7 +377,7 @@ class Hamiltonian:
         if xp.backend == 'torch':
             kwargs = {}
 
-        Vsph = xp.einsum('Rrg,Oijg->RrijO', integrand, Pjk, **kwargs)
+        Vsph = xp.einsum('Rrg,Ojkg->RrjkO', integrand, Pjk, **kwargs)
         # Storage of various objects at -R 90 -r 91 -g 92 -J 10
         # print(Pj.shape, Pj.nbytes/(1<<20))                #     1 MB
         # print(Pjk.shape, Pjk.nbytes/(1<<20))              #   125 MB
@@ -514,6 +515,7 @@ class Hamiltonian:
     def _make_guess_naive(self, min_guess):
         tr_Vsph = xp.einsum('RrjjO->RrjO',self.Vsph)
         guesses = xp.exp(-(tr_Vsph - xp.min(tr_Vsph))**2/27.211**2).ravel()
+        #return xp.random.random(guesses.shape)
         return guesses
 
     #@partial(jax.jit, static_argnums=0)
@@ -585,16 +587,16 @@ class Hamiltonian:
             return xp.kron(Or, xp.kron(Oj, OO))
 
         # Hel = -1/2/μ · (Te + VOm) + V
-        # Te  =  ∂²/∂r² + (1/r²)j(j+1) + (1/R²)(j(j+1) + J(J+1) - 2Ω²)
+        # Te  =  ∂²/∂r² - (1/r²)j(j+1) - (1/R²)(j(j+1) + J(J+1) - 2Ω²)
         # VOm = (1/R²)√(J(J+1) - Ω(Ω ± 1))√(j(j+1) - Ω(Ω ± 1)) ; (1/R²)*self.VOm
         # N.B. self.ddr2 = ∂²/∂r² + 1/4/r²
         Hel = xp.empty((NR, Nelec, Nelec), dtype=self.dtype)
 
         # build *bare* Te first
-        # R-independent terms: ∂²/∂r² + (1/r²)j(j+1)
+        # R-independent terms: ∂²/∂r² - (1/r²)j(j+1)
         Hel[:] = (
-            xp.kron(self.ddr2, xp.eye(Nsph)) +   # ∂²/∂r²
-            kron3(xp.diag(1 / self.r**2),        # +(1/r²)j(j+1)
+            xp.kron(self.ddr2, xp.eye(Nsph)) -   # ∂²/∂r²
+            kron3(xp.diag(1 / self.r**2),        # -(1/r²)j(j+1)
                   xp.diag(self.j*(self.j+1)),
                   xp.eye(NOm))
         )
@@ -602,16 +604,16 @@ class Hamiltonian:
 
         # R-dependent terms: (1/R²)j(j+1)
         Rinv2 = (1 / self.R**2)[Ridx, None, None]  # (1/R²), ready for broadcasting
-        Hel += Rinv2 * kron3(xp.eye(Nr),           # (1/R²) * j(j+1)
+        Hel -= Rinv2 * kron3(xp.eye(Nr),           # -(1/R²) * j(j+1)
                              xp.diag(self.j*(self.j+1)),
                              xp.eye(NOm))[None]
 
-        # J terms: (1/R²)(J(J+1) - 2Ω²)
+        # J terms: -(1/R²)J(J+1) + 2Ω²/R²
         if self.J != 0:
-            Hel[:, xp.arange(Nelec), xp.arange(Nelec)] += (
-                Rinv2[0] * self.J * (self.J+1)  # +(1/R²) J(J+1)
+            Hel[:, xp.arange(Nelec), xp.arange(Nelec)] -= (
+                Rinv2[0] * self.J * (self.J+1)  # -(1/R²) J(J+1)
             )
-            Hel -= 2 * kron3(xp.eye(Nr), xp.eye(Nj), xp.diag(self.Om**2)) * Rinv2 # - 2Ω²(1/R²)
+            Hel += 2 * kron3(xp.eye(Nr), xp.eye(Nj), xp.diag(self.Om**2)) * Rinv2 # + 2Ω²/R²
 
         # VOm term:
         VOm_big =  xp.einsum("jkOP,jOP->jkOP",
