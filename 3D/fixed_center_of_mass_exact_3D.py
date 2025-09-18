@@ -236,9 +236,9 @@ class Hamiltonian:
         self.args = args
 
         builder, self.preconditioner, self.make_guess = {
-#            'BO':     (self._build_preconditioner_BO,        self._preconditioner_BO,        self._make_guess_BO),
-            'naive':  (lambda: (self.diag,),                 self._preconditioner_naive,     self._make_guess_naive),
-            None:     (lambda: (self.diag,),                 self._preconditioner_naive,     self._make_guess_naive),
+            'BO':     (self._build_preconditioner_BO, self._preconditioner_BO,    self._make_guess_BO),
+            'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
+            None:     (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
             }[args.preconditioner]
 
         with timer_ctx(f"Build preconditioner {args.preconditioner}"):
@@ -630,230 +630,79 @@ class Hamiltonian:
         return xp.squeeze(Hel)
 
 
-    # def _build_preconditioner_BO(self):
-    #     print("Building U_n")
-    #     NR, Nr, Ng = self.shape
-    #     Nelec = Nr*Ng
-    #
-    #     # if xp.backend == 'cupy' or xp.backend == 'cupynumeric':
-    #     #     from cupyx.profiler import time_range as timer_ctx
-    #     # else:
-    #     #     from debug import timer_ctx
-    #
-    #     with timer_ctx("Build Hel"):
-    #         Hel = self.build_Hel()
-    #
-    #     #FIXME: something like this enhanced preconditioning in some cases, maybe?
-    #     #Hel[:] += -xp.kron(xp.diag(1 / self.r**2), xp.eye(Ng)/4)/2/self.mu
-    #     # with timer_ctx("Diag  Hel"):
-    #     #     from cupyx.profiler import benchmark
-    #     #     from cupy.cuda import memory_hooks
-    #     #     # Profile the specific batch
-    #     #     with memory_hooks.DebugPrintHook():
-    #     #         result = benchmark(xp.linalg.eigh, (Hel,), n_repeat=5)
-    #     #         print(result)
-    #     #     Ad_n, U_n = xp.linalg.eigh(Hel)
-    #
-    #     with timer_ctx(f"Diag  Hel"):
-    #         if xp.backend == 'numpy':
-    #             threadctl = ThreadpoolController()
-    #             with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
-    #                 result = ex.map(lambda i: (i, xp.linalg.eigh(self.build_Hel(i))), range(NR))
-    #                 U_n   = xp.zeros((NR, Nr*Ng, Nelec), dtype=self.dtype)
-    #                 Ad_n  = xp.zeros((NR, Nelec))
-    #                 for i, (a, u) in result:
-    #                     Ad_n[i] = a
-    #                     U_n[i]  = u
-    #         else:
-    #             Ad_n, U_n = xp.linalg.eigh(Hel)
-    #
-    #     with timer_ctx("Phase match U_n"):
-    #         phase_match(U_n)
-    #
-    #     NR, Nelec, _ = Hel.shape
-    #
-    #     with timer_ctx("Build Hbo"):
-    #         Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
-    #         Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
-    #         Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
-    #
-    #     with timer_ctx("Diag  Hbo"):
-    #         Ad_vn, U_v = xp.linalg.eigh(Hbo)  # xp.linalg.eigh(Hbo)
-    #         Ad_vn = Ad_vn.T
-    #
-    #     with timer_ctx("Phase match U_v"):
-    #         phase_match(U_v)
-    #
-    #     pc = (Ad_vn, U_n, U_v, Ad_n)
-    #     return pc
-    #
-    # def _make_guess_BO(self, min_guess):
-    #     Ad_vn, U_n, U_v, *_ = self._preconditioner_data
-    #     # BO states are like: U_n[:,:,n]
-    #     # vib states are like: U_v[n,:,v]
-    #     s = int(numpy.ceil(numpy.sqrt(min_guess)))
-    #
-    #     guesses = xp.stack([
-    #         (U_n[:,:,n] * U_v[n,:,v,xp.newaxis]).ravel()
-    #         for n in range(s) for v in range(s)
-    #     ])
-    #
-    #     return guesses
-    #
-    # #@partial(jax.jit, static_argnums=0)
-    # def _preconditioner_BO(self, dx, e, _):
-    #     Ad_vn, U_n, U_v, *_ = self._preconditioner_data
-    #     diagd = Ad_vn - (e - 1e-5)
-    #     NR, Nr, Ng = self.shape
-    #     dx_ = dx.reshape((-1, NR, Nr*Ng))
-    #
-    #     # YOLO: truncate it
-    #     # Nelec=(3*Nr*Ng)//4
-    #
-    #     # Ad_vn_t = Ad_vn[:, :Nelec]
-    #     # diagd_t = Ad_vn_t - (e - 1e-5)
-    #     # U_n_t = U_n[:,:, :Nelec]
-    #     # U_v_t = U_v[:Nelec, :, :]
-    #     # tr_ = jnp.einsum(
-    #     #     'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
-    #     #     U_n_t, U_v_t, 1.0 / diagd_t, U_v_t, U_n_t, dx_, optimize=True
-    #     # )
-    #
-    #     #FIXME: precompute optimal einsum path and provide that
-    #     kwargs = dict(optimize=True)
-    #     if xp.backend == 'torch':
-    #         kwargs = {}
-    #
-    #     tr_ = xp.einsum(
-    #         'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
-    #         U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, **kwargs
-    #     )
-    #
-    #     return tr_.reshape(dx.shape)
-    #
-    # def _preconditioner_BO_interp(self, dx, e, x0):
-    #     return
-    #
-    # def _build_preconditioner_BO_interp(self):
-    #     args = self.args
-    #     args.NR //= 2
-    #     args.Nr //= 2
-    #     args.Ng //= 2
-    #     args.preconditioner='BO'
-    #     print(args)
-    #     H = Hamiltonian(args)
-    #     Ad_vn, U_n, U_v, *_ = H._preconditioner_data
-    #     print(Ad_vn.shape, U_n.shape, U_v.shape)
-    #
-    #     exit()
-    #     # pseudo-code...
-    #     # H_coarse =
-    #
-    #     return
-    #
-    # def _make_guess_BO_interp(self, min_guess):
-    #     return
-    #
-    # def _build_preconditioner_V1(self, min_guess=4):
-    #     NR, Nr, Ng = self.shape
-    #     dg = self.g[1] - self.g[0]
-    #
-    #     threadctl = ThreadpoolController()
-    #     threadctl.limit(limits=1)
-    #
-    #     j_full = fftshift(xp.arange(Ng)-Ng//2)
-    #     COS = xp.cos(2*j_full[:,None] * self.g)
-    #     V1 = simpson(self.Vgrid[:,:,:], dx=dg, axis=-1)/xp.pi/2
-    #
-    #     # V1 is V2(j==0)
-    #     # IF debugging
-    #     #V2 = simpson(self.Vgrid[:,:,None,:] * COS[None,None,:,:], dx=dg, axis=-1)/xp.pi/2
-    #     #assert(xp.allclose(V1, V2[:,:,xp.squeeze(xp.where(j_full == 0)).item()]))
-    #
-    #     Ad = xp.zeros((NR, Nr, Ng))
-    #     U  = xp.zeros((NR, Nr, Ng, Nr))
-    #
-    #     def diag_H0(args, Ad=Ad, U=U):
-    #         Ri, (ji, j) = args
-    #         H_el = -(
-    #             self.ddr2 + xp.diag(j**2/self.r**2 + (self.J-j)**2/self.R[Ri]**2)
-    #         )/2/self.mu + xp.diag(V1[Ri])
-    #         Ad[Ri, :, ji], U[Ri, :, ji, :] = xp.linalg.eigh(H_el)
-    #
-    #
-    #     # Presumably because of gated access, this tops out pretty fast at ~
-    #     with cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
-    #         list(tqdm(
-    #             ex.map(diag_H0, product(range(NR),enumerate(j_full))),
-    #             total=NR*Ng, desc="Building Preconditioner", delay=3))
-    #
-    #     # Align phases by iterating over Nr eigen vectors at each Ri, ji
-    #     for Ri, ji in tqdm(product(range(NR),
-    #                                range(Ng)),
-    #                        total=NR*Ng,
-    #                        desc="Phase Matching",
-    #                        delay=3, # only display if longer than 3 seconds
-    #                        ):
-    #         for n in range(Nr):
-    #             current = (Ri, slice(None), ji, n)
-    #             if Ri == 0 and ji == 0:   # consistent, arbitrary reference phase
-    #                 reference = (0, 0, 0, 0)
-    #             elif ji > 0:              # line up with previous j
-    #                 reference = (Ri, slice(None), ji-1, n)
-    #             elif ji == 0 and Ri > 0:  # line up with previous R
-    #                 reference = (Ri-1, slice(None), ji, n)
-    #             else:
-    #                 raise RuntimeError("We should always have a reference!")
-    #
-    #             # be careful not to undo your work!! (Ri=0)-1=-1
-    #             # indexes the last one and breaks things!
-    #
-    #             # if any(map(lambda x: x < 0 if type(x) is not slice else False,
-    #             #             current + reference
-    #             #             )):
-    #             #     raise RuntimeError(f"invalid reference: {current(0)}, {reference(0)}")
-    #
-    #             # actually match the phase
-    #             if xp.sum(U[current] * U[reference]) < 0:
-    #                 U[current] *= -1
-    #
-    #     # yolo
-    #     #oddjs = j_full%2 == 1
-    #     #U[:, :, oddjs, :] = 0
-    #     #U = fft(U, axis=2)
-    #     #assert(xp.mean(xp.abs(U.imag)) < 1e-12)
-    #     #U = U.real
-    #
-    #     U = xp.fft.ifft(U, axis=2)
-    #     assert(xp.mean(xp.abs(U.imag)) < 1e-12)
-    #     U = U.real
-    #
-    #     return (Ad, U)
-    #
-    # def _make_guess_V1(self, min_guess):
-    #     Ad, U, *_ = self._preconditioner_data
-    #     NR, Nr, Ng = self.shape
-    #     # States are U[R, :, Ng//2 + j, n]
-    #     s = int(numpy.ceil(numpy.sqrt(min_guess)))
-    #     guesses = xp.stack([
-    #         xp.copy(xp.broadcast_to(
-    #             U[:, :, Ng//2 + j, i][:, :, xp.newaxis],
-    #             self.shape
-    #         )).ravel() for i in range(s) for j in range(s)])
-    #
-    #     return guesses
-    #
-    # #@partial(jax.jit, static_argnums=0)
-    # def _preconditioner_V1(self, dx, e, x0):
-    #     dx_ = dx.reshape((-1,) + self.shape)
-    #     Ad, U, *_ = self._preconditioner_data
-    #     diagd = Ad - (e - 1e-5)
-    #
-    #     dx_t = xp.einsum("Rrgi,BRrg->BRig", U, dx_)#, optimize=True)
-    #     tr_t = dx_t / diagd
-    #     tr_ = xp.einsum('Rigr,BRig->BRrg', U, tr_t)#, optimize=True)
-    #
-    #     return tr_.reshape(dx.shape)
+    def _build_preconditioner_BO(self):
+        print("Building U_n")
+        NR, *other = self.shape
+        Nelec = numpy.prod(other)
+
+        with timer_ctx("Build Hel"):
+            Hel = self.build_Hel()
+
+        with timer_ctx(f"Diag  Hel"):
+            if xp.backend == 'numpy':
+                threadctl = ThreadpoolController()
+                with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+                    result = ex.map(lambda i: (i, xp.linalg.eigh(self.build_Hel(i))), range(NR))
+                    U_n   = xp.zeros((NR, Nelec, Nelec), dtype=self.dtype)
+                    Ad_n  = xp.zeros((NR, Nelec))
+                    for i, (a, u) in result:
+                        Ad_n[i] = a
+                        U_n[i]  = u
+            else:
+                Ad_n, U_n = xp.linalg.eigh(Hel)
+
+        with timer_ctx("Phase match U_n"):
+            phase_match(U_n)
+
+        NR, Nelec, _ = Hel.shape
+
+        with timer_ctx("Build Hbo"):
+            Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+            Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
+            Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
+
+        with timer_ctx("Diag  Hbo"):
+            Ad_vn, U_v = xp.linalg.eigh(Hbo)  # xp.linalg.eigh(Hbo)
+            Ad_vn = Ad_vn.T
+
+        with timer_ctx("Phase match U_v"):
+            phase_match(U_v)
+
+        pc = (Ad_vn, U_n, U_v, Ad_n)
+        return pc
+
+    def _make_guess_BO(self, min_guess):
+        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
+        # BO states are like: U_n[:,:,n]
+        # vib states are like: U_v[n,:,v]
+        s = int(numpy.ceil(numpy.sqrt(min_guess)))
+
+        guesses = xp.stack([
+            (U_n[:,:,n] * U_v[n,:,v,xp.newaxis]).ravel()
+            for n in range(s) for v in range(s)
+        ])
+
+        return guesses
+
+    #@partial(jax.jit, static_argnums=0)
+    def _preconditioner_BO(self, dx, e, _):
+        Ad_vn, U_n, U_v, *_ = self._preconditioner_data
+        diagd = Ad_vn - (e - 1e-5)
+        NR, *Nother = self.shape
+        dx_ = dx.reshape((-1, NR, xp.prod(Nother)))
+
+        #FIXME: precompute optimal einsum path and provide that
+        kwargs = dict(optimize=True)
+        if xp.backend == 'torch':
+            kwargs = {}
+
+        tr_ = xp.einsum(
+            'Rij,jRq,qj,jmq,mpj,Bmp->BRi',
+            U_n, U_v, 1.0 / diagd, U_v, U_n, dx_, **kwargs
+        )
+
+        return tr_.reshape(dx.shape)
+
 
     # Below here are a bunch of things related to immutability
     # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
@@ -915,7 +764,7 @@ def parse_args():
                         "(typically set automatically)")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
-    parser.add_argument('--preconditioner', choices=['naive', 'V1', 'BO', 'BO-int', 'jfull'],
+    parser.add_argument('--preconditioner', choices=['naive', 'BO',],
                         default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--backend', default='numpy')
