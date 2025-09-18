@@ -8,9 +8,9 @@ import xp
 import fixed_center_of_mass_exact_3D as fcm3d
 
 def test_buildDaig():
-    ''' Test that the internal function self.buildDiag correctly extracts the diagonal 
+    ''' Test that the internal function self.buildDiag correctly extracts the diagonal
         of the Hamiltonian by comparison to explict construction of H with self.Hx.'''
-    
+
     xp.backend = 'numpy'
 
     base_params = {
@@ -27,9 +27,9 @@ def test_buildDaig():
     N_tot = H.size
     H_diag = H.buildDiag()
 
-    H_test = xp.zeros((N_tot,N_tot), dtype=xp.complex128)
+    H_test = xp.zeros((N_tot,N_tot))
     for i in range(N_tot):
-        xa = xp.zeros((N_tot), dtype=xp.complex128)
+        xa = xp.zeros((N_tot))
         xa[i] = 1
         xout = H.Hx(xa)
         H_test[:,i] = xout
@@ -44,5 +44,4 @@ def test_buildDaig():
 
 if __name__ == "__main__":
     # Allow running the test directly
-    pytest.main([__file__, "-v", "-s"])    
-    
+    pytest.main([__file__, "-v", "-s"])
