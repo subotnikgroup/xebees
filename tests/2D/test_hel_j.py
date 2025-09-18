@@ -30,7 +30,7 @@ def test_hel_j_convergence():
         'g_1': 1.0, 'g_2': 1.0,
         'M_1': 100, 'M_2': 100,
         'NR': 19, 'Nr': 22,
-        'J': 0, 'potential': 'borgis',
+        'J': 10, 'potential': 'borgis',
         'preconditioner': 'naive',
         'verbosity': 0,
         'max_threads': 1,
