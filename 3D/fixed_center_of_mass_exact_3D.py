@@ -624,7 +624,7 @@ class Hamiltonian:
 
         Vsph_big = xp.einsum("rs,OP,RrjkO->RrsjkOP",
                              xp.eye(Nr), xp.eye(NOm),
-                             self.Vsph[Ridx]).reshape(-1, Nelec, Nelec)
+                             self.Vsph[Ridx]).reshape(NR, Nelec, Nelec)
 
         Hel += Vsph_big
         return xp.squeeze(Hel)
