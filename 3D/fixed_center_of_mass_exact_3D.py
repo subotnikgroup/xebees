@@ -523,14 +523,6 @@ class Hamiltonian:
         diagd = self.diag - (e - 1e-5)
         return dx/diagd
 
-    #@partial(jax.jit, static_argnums=0)
-    def _preconditioner_power(self, dx, e, x0):
-        #vinv = 1/(self.Vgrid.ravel() - (e - 1e-5))
-        vinv = 1/(self.diag - (e - 1e-5))
-        vr = vinv * dx
-        tvr = self.Tx(vr) - (self.diag - self.Vgrid.ravel()) * vr
-        return vr - vinv * tvr
-
     def BO_spectrum(self, nroots=0, Hel_func=None):
         print("Building BO spectrum")
         NR, Nr, Ng, NOm = self.shape
@@ -767,7 +759,7 @@ def parse_args():
                         "(typically set automatically)")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
-    parser.add_argument('--preconditioner', choices=['naive', 'BO',],
+    parser.add_argument('--preconditioner', choices=['naive', 'BO'],
                         default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--backend', default='numpy')
@@ -802,8 +794,8 @@ if __name__ == '__main__':
     if args.bo_spectrum:
         with timer_ctx("BO spectrum"):
             Ad_vn, Ad_n = H.BO_spectrum(args.k)
-            with numpy.printoptions(precision=4):
-                print(Ad_n.T[0] - Ad_n.T[0,-1])
+            # with numpy.printoptions(precision=4):
+            #     print(Ad_n.T[0] - Ad_n.T[0,-1])
             numpy.savez_compressed(args.bo_spectrum, bo_spectrum=Ad_vn, bo_surfaces=Ad_n)
 
     # FIXME: would like to use a callback to save intermediate
