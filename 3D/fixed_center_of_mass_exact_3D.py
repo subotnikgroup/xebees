@@ -620,6 +620,11 @@ class Hamiltonian:
                              xp.kron(xp.eye(Nj), xp.eye(NOm)).reshape((Nj,Nj,NOm,NOm)),
                              self.VOm).reshape(Nsph, Nsph)# Nj(NOm)^2 -> Nsph^2
 
+        VOm_big = xp.zeros((Nj,Nj, NOm,NOm))
+        for j in range(Nj):
+            VOm_big[j,j] = self.VOm[j]
+        VOm_big = xp.swapaxes(VOm_big, 1, 2).reshape(Nsph, Nsph)
+
         Hel += xp.kron(xp.eye(Nr), VOm_big) * Rinv2
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · (Te + VOm)
 
@@ -837,8 +842,7 @@ if __name__ == '__main__':
         print("Wrote eigenvectors to", args.evecs)
 
     if args.bo_spectrum:
-        e_bo = xp.sort(Ad_vn.flatten())
-        bo = e_bo[1] - e_bo[0]
+        bo = Ad_vn[1,0] - Ad_vn[0,0]
         print("BO gap", bo)
         if all(conv):
             ex = e_approx[1] - e_approx[0]
