@@ -622,7 +622,11 @@ class Hamiltonian:
         Hel += xp.kron(xp.eye(Nr), VOm_big) * Rinv2
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · (Te + VOm)
 
-        Vsph_big = xp.einsum("rs,OP,RrjkO->RrsjkOP",
+        # N.B. While one might be tempted to write the output as
+        # RrsjkOP, recall that when we reshape, we need to make sure
+        # that we have Rx(Nelec)x(Nelec) => Rx(jrO)x(ksP). This
+        # repeats the ordering of the indices that matches kron3.
+        Vsph_big = xp.einsum("rs,OP,RrjkO->RjrOksP",
                              xp.eye(Nr), xp.eye(NOm),
                              self.Vsph[Ridx]).reshape(NR, Nelec, Nelec)
 
