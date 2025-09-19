@@ -616,14 +616,7 @@ class Hamiltonian:
             Hel += 2 * kron3(xp.eye(Nr), xp.eye(Nj), xp.diag(self.Om**2)) * Rinv2 # + 2Ω²/R²
 
         # VOm term:
-        VOm_big =  xp.einsum("jkOP,jOP->jkOP",
-                             xp.kron(xp.eye(Nj), xp.eye(NOm)).reshape((Nj,Nj,NOm,NOm)),
-                             self.VOm).reshape(Nsph, Nsph)# Nj(NOm)^2 -> Nsph^2
-
-        VOm_big = xp.zeros((Nj,Nj, NOm,NOm))
-        for j in range(Nj):
-            VOm_big[j,j] = self.VOm[j]
-        VOm_big = xp.swapaxes(VOm_big, 1, 2).reshape(Nsph, Nsph)
+        VOm_big = xp.einsum('jOP,ij->iOjP', self.VOm, xp.eye(Nj)).reshape(Nsph, Nsph)
 
         Hel += xp.kron(xp.eye(Nr), VOm_big) * Rinv2
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · (Te + VOm)
