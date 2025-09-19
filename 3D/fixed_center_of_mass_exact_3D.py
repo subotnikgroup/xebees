@@ -162,7 +162,7 @@ class Hamiltonian:
         self.j = xp.arange(0,args.Ng).astype(int)                 # [ 0    ... Nj  ]
         # self.j = (xp.fft.fftfreq(args.Ng)*args.Ng).astype(int)  # [-Nj/2 ... Nj/2]
 
-        self.Om = (xp.fft.fftfreq(self.NOm)*self.NOm).astype(int)
+        self.Om = xp.arange(-self.J, self.J+1).astype(int)
 
         self.axes = (self.R, self.r, self.j, self.Om)
 
@@ -423,9 +423,10 @@ class Hamiltonian:
                 s = Oi - Ok
                 if abs(s) != 1 : continue
                 VOm[:,i,k] = xp.sqrt(
-                                 (J*(J+1) - Oi*(Oi+s)) *
-                    xp.maximum(0, j*(j+1) - Oi*(Oi+s))
+                                 (J*(J+1) - Oi*Ok) *
+                    xp.maximum(0, j*(j+1) - Oi*Ok)
                 )
+
 
         # Overkill, vectorized version for reference
         # OO = self.Om[:, None] - self.Om[None, :]  # like xp.subtract.outer
