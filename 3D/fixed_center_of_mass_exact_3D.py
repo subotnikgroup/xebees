@@ -57,7 +57,7 @@ else:  # mock this out for use in Jupyter Notebooks etc
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
-        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'g_grid','Om','Om_grid', 'j_grid',
+        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'Om','Om_grid', 'j_grid',
         'R_rgrid','r_rgrid','g_rgrid',
         'axes', 'dtype', 'args','NOm',
         'max_threads',
@@ -94,6 +94,7 @@ class Hamiltonian:
             self.M_1 *= AMU_TO_AU
             self.M_2 *= AMU_TO_AU
 
+
         self.mu   = numpy.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
@@ -101,6 +102,7 @@ class Hamiltonian:
         self._Vfunc, extent_func = {
             'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb),
             'borgis': (potentials.borgis, potentials.extents_borgis),
+            'erf_coulomb':(potentials.erf_coulomb, potentials.extents_erf_coulomb)
             }[args.potential]
 
         extent = extent_func(self.mu12)
@@ -752,8 +754,8 @@ def parse_args():
     parser.add_argument('-R', dest="NR", metavar="NR", default=80, type=int)
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=80, type=int)
     parser.add_argument('-g', dest="Ng", metavar="Ng", default=80, type=int)
-    parser.add_argument('--potential', choices=['soft_coulomb', 'borgis'],
-                        default='soft_coulomb')
+    parser.add_argument('--potential', choices=['soft_coulomb', 'borgis', 'erf_coulomb'],
+                        default='borgis')
     parser.add_argument('--extent', metavar="X", action=ArrayAction,
                         nargs=3, help="Rmin Rmax rmax, in Bohr "
                         "(typically set automatically)")

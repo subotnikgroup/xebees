@@ -3,6 +3,7 @@ import xp
 from scipy.interpolate import PchipInterpolator
 import numpy
 from constants import *
+from scipy.special import erf
 
 ## README ##
 # Functions in this file should be defined to take the *lab-frame*
@@ -45,7 +46,7 @@ def _extents_log_factory(mu12ref, lower, upper, decimals=3):
 
 
 # Soft Coulomb potential; dv controls softness
-def soft_coulomb(R, r1e, r2e, charges, dv=0.5):
+def soft_coulomb(R, r1e, r2e, charges, dv=1):
     Q1, Q2 = charges
 
     V1  = -Q1      / xp.sqrt(r1e**2 + dv**2)
@@ -59,6 +60,19 @@ extents_soft_coulomb = _extents_log_factory(
     [8,   5,   4,   3.5, 3.5]
 )
 
+def erf_coulomb(R, r1e, r2e, charges, alpha=2, beta=2):
+    Q1,Q2 = charges
+    V1  = -Q1 *      erf(alpha*r1e) / r1e
+    V2  = -Q2 *      erf(alpha*r2e) / r2e
+    # make the nuclear repulsion stronger w/ beta
+    VN  =  Q1 * Q2 * erf(beta*alpha*R)/ R
+    return V1 + V2 + VN
+
+extents_erf_coulomb = _extents_log_factory(
+    [1e1, 1e2, 1e3, 1e4, 1e5],
+    [0.1, 0.1, 0.3, 0.3,   0.3],
+    [8,   4,   3,   2.5, 2.5]
+)
 
 def soft_coulomb_barrier(R, r1e, r2e, charges, dv=0.5, G=1, p=2, A=1):
     Q1, Q2 = charges
