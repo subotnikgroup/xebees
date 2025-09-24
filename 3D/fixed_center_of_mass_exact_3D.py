@@ -176,8 +176,8 @@ class Hamiltonian:
         self.shape = self.Vgrid.shape + (self.NOm,)
 
         with timer_ctx("Build Vsph from Vgrid"):
-            self.Vsph = self.buildVsph()
-            #self.Vsph = self.buildVsph_vec()
+            # self.Vsph = self.buildVsph() # old not vectorized version
+            self.Vsph = self.buildVsph_vec()
 
         self.VOm = self.buildVOm()
 
@@ -326,14 +326,13 @@ class Hamiltonian:
             for ij1, j1 in enumerate(self.j):
                 for ij2, j2 in enumerate(self.j):
                     Vsph[:,:,ij1,ij2,iOm] = self.sph_transform(self.Vgrid, j1, j2, Om)
-                    devi = xp.sum(xp.abs(Vsph[:,:,ij1,ij2,iOm] - Vsph_[:,:,ij1,ij2,iOm]))
-                    if devi < 1e-10:
-                        pass # print(devi, f"({ij1},{ij2},{iOm})", f"({j1},{j2},{Om})")
-
+                    # devi = xp.sum(xp.abs(Vsph[:,:,ij1,ij2,iOm] - Vsph_[:,:,ij1,ij2,iOm]))
+                    # if devi > 1e-10:
+                        # print(devi, f"({ij1},{ij2},{iOm})", f"({j1},{j2},{Om})")
 
         assert not xp.any(xp.isnan(Vsph))
-        prms(Vsph, Vsph_, "diff Vsph_")
-        #assert (xp.allclose(Vsph, Vsph_))
+        # prms(Vsph, Vsph_, "diff Vsph_")
+        assert (xp.allclose(Vsph, Vsph_))
         return Vsph
         #return Vsph_
 
@@ -351,7 +350,7 @@ class Hamiltonian:
         Pj = xp.asarray(
             assoc_legendre_p_all(
                 Nj - 1, self.J,
-                xp.cos(self.g), norm=False)[0, :, self.J + m]
+                xp.cos(self.g), norm=False)[0, :, m]
         ) # index with [|Ω|, j, ɣ]
 
         # phase magnitudes for each j, Om
