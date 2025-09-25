@@ -121,6 +121,28 @@ def _torch_iscomplexobj(original_func, backend, backend_name, A):
     """Patch in iscomplexobj() function for torch backend."""
     return backend.is_complex(A)
 
+@override.register('numpy', 'assoc_legendre_p_all')
+@override.register('cupy',        'assoc_legendre_p_all', "using cpu fallback for assoc_legendre_p_all")
+@override.register('torch',       'assoc_legendre_p_all', "using cpu fallback for assoc_legendre_p_all")
+@override.register('cupynumeric', 'assoc_legendre_p_all', "using cpu fallback for assoc_legendre_p_all")
+def _assoc_legendre_p_all(original_func, backend, backend_name, *args, **kwargs):
+    from scipy.special import assoc_legendre_p_all
+    n, m, z = args
+    if hasattr(z, 'get'):
+        z = z.get()
+    return backend.asarray(assoc_legendre_p_all(n, m, z, **kwargs))
+
+@override.register('numpy', 'factorial')
+@override.register('cupy',        'factorial', "using cpu fallback for factorial")
+@override.register('torch',       'factorial', "using cpu fallback for factorial")
+@override.register('cupynumeric', 'factorial', "using cpu fallback for factorial")
+def _factorial(original_func, backend, backend_name, n, **kwargs):
+    from scipy.special import factorial
+    if hasattr(n, 'get'):
+        n = n.get()
+    return backend.asarray(factorial(n, **kwargs))
+
+
 # Workaround for cupynumeric issue 1211
 @override.register('cupynumeric', 'linalg.qr', "Working around cupynumeric issue 1211")
 def _cupynumeric_qr_1211(original_func, backend, backend_name, A, *args, **kwargs):

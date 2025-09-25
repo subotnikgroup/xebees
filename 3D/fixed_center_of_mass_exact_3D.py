@@ -1,27 +1,5 @@
 #!/usr/bin/env python
-
-# Why is the standard eigen_solver so slow??
-#   cupyx.cusolver.syevj?
-#   cuDSS
-# why do we use so much memory when we have cupynumeric in the conda environment?
-# what do we need to do to support the jax.numpy backend?
-# memory concerns
-# nvtx and timing annotations
-#
-# Explore reduced precision preconditioner
-
-#import jax
-#import jax.numpy as jnp
-#jax.config.update('jax_enable_x64', True)
-
-from numpy.fft import fft, fftshift
-from scipy.integrate import simpson
-from scipy.sparse.linalg import lobpcg
-from scipy.interpolate import RegularGridInterpolator
-
-from scipy.special import sph_harm_y, lpmv, factorial, assoc_legendre_p_all
-## TO-DO: make sph_harm_y also work from cupyx backend
-
+from scipy.special import lpmv
 
 from sys import stderr
 import argparse as ap
@@ -41,8 +19,9 @@ import numpy  # only use this for reading and writing objects
 import linalg_helper as lib
 import potentials
 from constants import *
-from hamiltonian import  KE, KE_FFT, KE_Borisov_3D
-from davidson import phase_match, phase_match_mem_constrained, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
+from hamiltonian import  KE, KE_Borisov_3D
+from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen
+
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
 
@@ -52,7 +31,6 @@ else:  # mock this out for use in Jupyter Notebooks etc
     def tqdm(iterator, **kwargs):
         print(f"Mock call to tqdm({kwargs})")
         return iterator
-
 
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
@@ -149,9 +127,8 @@ class Hamiltonian:
         # all over the place
         # N.B : in 3D gamma must exist only on the interval (0,pi)!
 
-        #self.g = xp.asarray([i*xp.pi/args.Ng for i in range(args.Ng)])
-        self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)
-        #self.g = xp.linspace(0, 2*xp.pi, args.Ng, endpoint=False)
+        #self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)  # can't use this form for torch
+        self.g = xp.asarray([i*xp.pi/(args.Ng-1) for i in range(args.Ng)])
 
         # How do we know which choice of j is correct? Given the
         # condition that sums over j are for j > |Ω|, taking the
@@ -161,10 +138,8 @@ class Hamiltonian:
         # derivatives are included there are other differences. We
         # still have to be careful in our definition of the KE.
 
-        self.j = xp.arange(0,args.Ng).astype(int)                 # [ 0    ... Nj  ]
-        # self.j = (xp.fft.fftfreq(args.Ng)*args.Ng).astype(int)  # [-Nj/2 ... Nj/2]
-
-        self.Om = xp.arange(-self.J, self.J+1).astype(int)
+        self.j  = xp.arange(0,args.Ng)
+        self.Om = xp.arange(-self.J, self.J+1)
 
         self.axes = (self.R, self.r, self.j, self.Om)
 
@@ -176,8 +151,7 @@ class Hamiltonian:
         self.shape = self.Vgrid.shape + (self.NOm,)
 
         with timer_ctx("Build Vsph from Vgrid"):
-            # self.Vsph = self.buildVsph() # old not vectorized version
-            self.Vsph = self.buildVsph_vec()
+            self.Vsph = self.buildVsph()
 
         self.VOm = self.buildVOm()
 
@@ -186,10 +160,6 @@ class Hamiltonian:
         dR = self.R[1] - self.R[0]
         dr = self.r[1] - self.r[0]
         dg = self.g[1] - self.g[0]
-
-        self.P  = xp.fft.fftshift(xp.fft.fftfreq(args.NR, dR)) * 2 * xp.pi
-        self.p  = xp.fft.fftshift(xp.fft.fftfreq(args.Nr, dr)) * 2 * xp.pi
-        self.pg = xp.fft.fftshift(xp.fft.fftfreq(args.Ng, dg)) * 2 * xp.pi
 
         # FIXME: the representations of the operators we build are
         # 'dumb' in the sense that they do not know how to apply
@@ -212,7 +182,7 @@ class Hamiltonian:
         stencil_g = min(11,args.Ng)
         if stencil_g%2==0: stencil_g -= 1
 
-        self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R) 
+        self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R)
         self.ddr2, _ = KE_Borisov_3D(self.r, bare=True)
 
         self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
@@ -287,14 +257,14 @@ class Hamiltonian:
 
         NR, Nr, Ng, NOm = self.shape
 
-        if j1 < xp.abs(Om) or j2 < abs(Om):  # these terms are excluded from the sum; c.f. eq. 32
+        if j1 < xp.abs(Om) or j2 < xp.abs(Om):  # these terms are excluded from the sum; c.f. eq. 32
             return xp.zeros((NR, Nr))
 
         def phase(j, Om):  # eq. 31
             c = ((xp.sqrt((2*j + 1) / 2) *
                   xp.sqrt(
-                      factorial(j - xp.abs(Om)) /
-                      factorial(j + xp.abs(Om))
+                      xp.factorial(j - xp.abs(Om)) /
+                      xp.factorial(j + xp.abs(Om))
                   )
                 ))
 
@@ -315,7 +285,7 @@ class Hamiltonian:
         return V_jjOmOm
 
 
-    def buildVsph(self):
+    def buildVsph_serial(self):
         ''' V(R,r,j,j',Ω=Ω') '''
         NR, Nr, Nj, NOm = self.shape
         Vsph = xp.zeros((NR, Nr, Nj, Nj, NOm))
@@ -337,7 +307,7 @@ class Hamiltonian:
         #return Vsph_
 
 
-    def buildVsph_vec(self):
+    def buildVsph(self):
         # builds <jΩ|V(R,r)|j'Ω> by transforming over the ɣ and ψ
         # coordinates. (V is not a function of ψ so that part is
         # analytic.)
@@ -347,17 +317,16 @@ class Hamiltonian:
         # Precompute all the associated Legendre functions up to Nj, through order J
         # N.B. P has shape (1, Nj, 2J+1, ...) with the 2nd axis in order -J,..0...J
         # so the |Ω| index is in slot (self.J + m)
-        Pj = xp.asarray(
-            assoc_legendre_p_all(
+        Pj = xp.assoc_legendre_p_all(
                 Nj - 1, self.J,
                 xp.cos(self.g), norm=False)[0, :, m]
-        ) # index with [|Ω|, j, ɣ]
+        # index with [|Ω|, j, ɣ]
 
         # phase magnitudes for each j, Om
         def phase(j, Om):  # eq. 31 less sign
             return xp.sqrt((2*j + 1) / 2.0 *
-                             factorial(j - abs(Om)) /
-                             factorial(j + abs(Om))
+                             xp.factorial(j - abs(Om)) /
+                             xp.factorial(j + abs(Om))
                     )
 
         signs = xp.where((self.Om > 0) & (self.Om % 2 == 1), -1, 1)
@@ -407,7 +376,7 @@ class Hamiltonian:
         # explicit at that size.
 
         assert not xp.any(xp.isnan(Vsph))
-        return Vsph
+        return xp.asarray(Vsph)
 
     def buildVOm(self):
         ''' Clebsch-Gordon Coefficients between adjacent Ω
