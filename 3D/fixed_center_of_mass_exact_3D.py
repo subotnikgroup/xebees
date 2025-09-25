@@ -776,8 +776,8 @@ if __name__ == '__main__':
             verbose=args.verbosity,
             max_space=args.subspace,
             max_memory=get_davidson_mem(0.75),
-            #tol=1e-12, #FIXME:DEBUG
-            tol=1e-10,
+            tol=1e-12, #FIXME:DEBUG
+            #tol=1e-10,
         )
 
     #guess quality
