@@ -94,7 +94,6 @@ def _cupy_eigh_fallback(original_func, backend, backend_name, *args, **kwargs):
         vals, vecs = torch.linalg.eigh(torch.from_dlpack(H))
         return backend.asarray(vals), backend.asarray(vecs)
     except (ImportError, ModuleNotFoundError, AssertionError, RuntimeError):
-        print("Override failed")
         return original_func(*args, **kwargs)
 
 @override.register('cupy', 'linalg.eigvalsh', "Attempting to override with torch")
@@ -107,7 +106,6 @@ def _cupy_eigvalsh_fallback(original_func, backend, backend_name, *args, **kwarg
         vals = torch.linalg.eigvalsh(torch.from_dlpack(H))
         return backend.asarray(vals)
     except (ImportError, ModuleNotFoundError, AssertionError, RuntimeError):
-        print("Override failed")
         return original_func(*args, **kwargs)
 
 # Patch in compatibility functions for backends that lack them
