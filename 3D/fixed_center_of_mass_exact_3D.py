@@ -115,26 +115,23 @@ class Hamiltonian:
             raise RuntimeError(f"Ng must be even!")
 
         # N.B.: We don't have consistent meaning for gamma in the
-        # phase-space and exact codes. In phase space, ɣ \in [0, 2π),
-        # but in the exact case, ɣ \in [0, π]. The exact case needs to
-        # only be on the half interval because of the integral
-        # transform to go from the diagonal ɣ basis to the
-        # (non-diagonal) j,j' basis, which is over the product of even
-        # and odd functions. If we include the full interval, the
-        # potential goes to 0.
-
-        # FIXME: Should we include the endpoint in the exact case? The
-        # results are non-trivially different.
+        # phase-space and exact codes. In the present (exact) case,
+        # following Schatz and everyone else (the physicist's
+        # notation), ɣ \on [0, π]. See the Potential section of our
+        # overleaf for more details. Note also that if we erroneously
+        # included the full interval, the potential goes to 0 because
+        # the integral transform from the diagonal ɣ basis to the
+        # (non-diagonal) j,j' basis,is over the product of even and
+        # odd functions.
 
         #self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)  # can't use this form for torch
-        self.g = xp.asarray([i*xp.pi/(args.Ng-1) for i in range(args.Ng)])
+        self.g = xp.asarray([i*xp.pi/(args.Ng-1) for i in range(args.Ng)]) # include the endpoint
 
         self.j  = xp.arange(0,args.Ng)
         self.Om = xp.arange(-self.J, self.J+1)
 
         self.axes = (self.R, self.r, self.j, self.Om)
 
-        # FIXME: The following definitions are inconsistent
         self.R_grid, self.r_grid, self.j_grid, self.Om_grid = xp.meshgrid(self.R, self.r, self.j, self.Om, indexing='ij')
         self.R_rgrid, self.r_rgrid, self.g_rgrid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V(self.R_rgrid, self.r_rgrid, self.g_rgrid)
@@ -265,7 +262,7 @@ class Hamiltonian:
 
         dg = self.g[1]-self.g[0]
         V_jjOmOm = xp.sum(
-            (dg/2*P1*P2*xp.sin(self.g))[None,None,:]*Vgrid,
+            (dg*P1*P2*xp.sin(self.g))[None,None,:]*Vgrid,
             axis=-1)
 
         return V_jjOmOm
@@ -327,7 +324,7 @@ class Hamiltonian:
         Pjk = Pj[:, :, None, :] * Pj[:, None, :, :]
 
         dg = self.g[1] - self.g[0]
-        integrand = (dg/2.0) * self.Vgrid * xp.sin(self.g)[None,None,:]
+        integrand = dg * self.Vgrid * xp.sin(self.g)[None,None,:]
 
         kwargs = dict(optimize=True)
         if xp.backend == 'torch':
