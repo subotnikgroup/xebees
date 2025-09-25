@@ -40,7 +40,7 @@ class Hamiltonian:
         'axes', 'dtype', 'args','NOm',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
-        'Vgrid', 'Vsph','VOm', 'ddR2', 'ddr2', 'ddg2', 'ddg1',
+        'Vgrid', 'Vsph','VOm', 'ddR2', 'ddr2',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2'
@@ -48,7 +48,7 @@ class Hamiltonian:
 
     def __init__(self, args):
         # save number of threads for preconditioner
-        self.max_threads = getattr(args, "t", 1)
+        self.max_threads = getattr(args, "t", 1) # default to single-threaded
         self.args = args
 
         self.m_e = 1
@@ -60,11 +60,11 @@ class Hamiltonian:
 
         self.J   = args.J
         self.NOm = 2*self.J+1
-        self.dtype = xp.float64 #if self.J == 0 else xp.complex128
+        self.dtype = xp.float64
 
         # Potential function selection
         if not hasattr(args, "potential"):
-            args.extent = 'soft_coulomb'
+            args.potential = 'borgis'
 
         if args.potential == 'borgis' or args.potential == 'original':
             print(f"Waring: All masses scaled to AMU for {args.potential}!")
@@ -79,7 +79,7 @@ class Hamiltonian:
         self.aa   = numpy.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
         self._Vfunc, extent_func = {
             'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb),
-            'borgis': (potentials.borgis, potentials.extents_borgis),
+            'borgis': (partial(potentials.borgis, asymmetry_param=1), potentials.extents_borgis),
             'erf_coulomb':(potentials.erf_coulomb, potentials.extents_erf_coulomb)
             }[args.potential]
 
@@ -103,10 +103,8 @@ class Hamiltonian:
         print("extent in   scaled coords:", R_range, r_max)
 
         # N.B.: We are careful not to include 0 in the range of r by
-        # starting 1 "step" away from 0. It might be more consistent
-        # to have Nr-1 points, but the confusion this would cause
-        # would be intolerable. This behavior is required because we
-        # have terms that go like 1/r.
+        # starting 1 "step" away from 0. This behavior is required
+        # because we have terms that go like 1/r.
         self.r     = xp.linspace(r_max    /args.Nr, r_max, args.Nr)
         self.r_lab = xp.linspace(r_max_lab/args.Nr, r_max_lab, args.Nr)
         self.R     = xp.linspace(*R_range,     args.NR)
@@ -116,50 +114,46 @@ class Hamiltonian:
         if args.Ng % 2 != 0:
             raise RuntimeError(f"Ng must be even!")
 
-        # FIXME: we must be sure that we have consistent definition
-        # for gamma and know what domain it covers. We should also
-        # endevor to have consistent useage in the phase psace and
-        # exact codes.
+        # N.B.: We don't have consistent meaning for gamma in the
+        # phase-space and exact codes. In phase space, ɣ \in [0, 2π),
+        # but in the exact case, ɣ \in [0, π]. The exact case needs to
+        # only be on the half interval because of the integral
+        # transform to go from the diagonal ɣ basis to the
+        # (non-diagonal) j,j' basis, which is over the product of even
+        # and odd functions. If we include the full interval, the
+        # potential goes to 0.
 
-        # FWIW, at the moment only ɣ = [0 ... π] converges (it's all wrong anyway though)
-        # N.B.: It is essential that we not include the endpoint in
-        # gamma lest our cyclic grid be ill-formed and 2nd derivatives
-        # all over the place
-        # N.B : in 3D gamma must exist only on the interval (0,pi)!
+        # FIXME: Should we include the endpoint in the exact case? The
+        # results are non-trivially different.
 
         #self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)  # can't use this form for torch
         self.g = xp.asarray([i*xp.pi/(args.Ng-1) for i in range(args.Ng)])
-
-        # How do we know which choice of j is correct? Given the
-        # condition that sums over j are for j > |Ω|, taking the
-        # fftfreq definition, would throw out half of our j range,
-        # which doesn't seem correct. Also, the Legendre polynomials
-        # are defined such that P(-|n|,0) = P(|n|-1,0); once the
-        # derivatives are included there are other differences. We
-        # still have to be careful in our definition of the KE.
 
         self.j  = xp.arange(0,args.Ng)
         self.Om = xp.arange(-self.J, self.J+1)
 
         self.axes = (self.R, self.r, self.j, self.Om)
 
+        # FIXME: The following definitions are inconsistent
         self.R_grid, self.r_grid, self.j_grid, self.Om_grid = xp.meshgrid(self.R, self.r, self.j, self.Om, indexing='ij')
         self.R_rgrid, self.r_rgrid, self.g_rgrid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
-        self.Vgrid = self.V(self.R_rgrid, self.r_rgrid, self.g_rgrid) # Vgrid in real space \propto cos(psi)cos(g)
+        self.Vgrid = self.V(self.R_rgrid, self.r_rgrid, self.g_rgrid)
+
         assert not xp.any(self.Vgrid)==xp.nan
 
         self.shape = self.Vgrid.shape + (self.NOm,)
 
         with timer_ctx("Build Vsph from Vgrid"):
+            # FIXME: decompose this to use less memory
             self.Vsph = self.buildVsph()
 
+        # Clebsch-Gordon Coefficients between adjacent Ω
         self.VOm = self.buildVOm()
 
         self.size = xp.prod(xp.asarray(self.shape))
 
         dR = self.R[1] - self.R[0]
         dr = self.r[1] - self.r[0]
-        dg = self.g[1] - self.g[0]
 
         # FIXME: the representations of the operators we build are
         # 'dumb' in the sense that they do not know how to apply
@@ -187,14 +181,6 @@ class Hamiltonian:
 
         self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
         self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
-
-
-        # Part of the reason for using a cyclic *stencil* for gamma
-        # rather than KE_FFT is that it wasn't immediately obvious how
-        # I would represent ∂/∂γ. (∂²/∂γ² was clear.)  N.B.: The
-        # default stencil degree is 11
-        self.ddg2 = KE(args.Ng, dg, bare=True, cyclic=True, stencil_size=stencil_g)
-        self.ddg1 = KE(args.Ng, dg, bare=True, cyclic=True, order=1, stencil_size= stencil_g)
 
         # since we need these in Hx; maybe fine to compute on the fly?
         self.Rinv2 = 1.0/(self.R_grid)**2
