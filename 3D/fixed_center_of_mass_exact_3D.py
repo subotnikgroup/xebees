@@ -776,8 +776,8 @@ if __name__ == '__main__':
             verbose=args.verbosity,
             max_space=args.subspace,
             max_memory=get_davidson_mem(0.75),
-            tol=1e-12, #FIXME:DEBUG
-            #tol=1e-10,
+            #tol=1e-12, #FIXME:DEBUG
+            tol=1e-10,
         )
 
     #guess quality
@@ -788,6 +788,8 @@ if __name__ == '__main__':
     print(conv)
 
     if args.evecs:
+        if hasattr(evecs, 'get'):
+            evecs = evecs.get()
         numpy.savez_compressed(args.evecs, guess=evecs, H=H)
         print("Wrote eigenvectors to", args.evecs)
 
