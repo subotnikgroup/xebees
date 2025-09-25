@@ -35,12 +35,11 @@ else:  # mock this out for use in Jupyter Notebooks etc
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
-        'R', 'P', 'R_grid', 'r', 'p', 'r_grid', 'g', 'pg', 'j', 'Om','Om_grid', 'j_grid',
-        'R_rgrid','r_rgrid','g_rgrid',
-        'axes', 'dtype', 'args','NOm',
+        'R', 'r', 'g', 'j', 'Om',
+        'axes', 'dtype', 'args',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
-        'Vgrid', 'Vsph','VOm', 'ddR2', 'ddr2',
+        'Vgrid', 'Vint', 'Pjk', 'VOm', 'ddR2', 'ddr2',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2'
@@ -59,7 +58,6 @@ class Hamiltonian:
         self.g_2 = args.g_2
 
         self.J   = args.J
-        self.NOm = 2*self.J+1
         self.dtype = xp.float64
 
         # Potential function selection
@@ -71,7 +69,6 @@ class Hamiltonian:
             self.m_e *= AMU_TO_AU
             self.M_1 *= AMU_TO_AU
             self.M_2 *= AMU_TO_AU
-
 
         self.mu   = numpy.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
@@ -132,17 +129,16 @@ class Hamiltonian:
 
         self.axes = (self.R, self.r, self.j, self.Om)
 
-        self.R_grid, self.r_grid, self.j_grid, self.Om_grid = xp.meshgrid(self.R, self.r, self.j, self.Om, indexing='ij')
-        self.R_rgrid, self.r_rgrid, self.g_rgrid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
-        self.Vgrid = self.V(self.R_rgrid, self.r_rgrid, self.g_rgrid)
+        R_rgrid, r_rgrid, g_rgrid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
+        self.Vgrid = self.V(R_rgrid, r_rgrid, g_rgrid)
 
         assert not xp.any(self.Vgrid)==xp.nan
 
-        self.shape = self.Vgrid.shape + (self.NOm,)
+        self.shape = self.Vgrid.shape + (len(self.Om),)
 
         with timer_ctx("Build Vsph from Vgrid"):
-            # FIXME: decompose this to use less memory
-            self.Vsph = self.buildVsph()
+            # self.Vsph, self.Vint, self.Pjk  = self.buildVsph()
+            self.Vint, self.Pjk  = self.buildVsph()
 
         # Clebsch-Gordon Coefficients between adjacent Ω
         self.VOm = self.buildVOm()
@@ -179,9 +175,10 @@ class Hamiltonian:
         self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
         self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
 
-        # since we need these in Hx; maybe fine to compute on the fly?
-        self.Rinv2 = 1.0/(self.R_grid)**2
-        self.rinv2 = 1.0/(self.r_grid)**2
+        # since we need these in Hx
+        R_grid, r_grid, _ , _ = xp.meshgrid(self.R, self.r, self.j, self.Om, indexing='ij')
+        self.Rinv2 = 1.0/(R_grid)**2
+        self.rinv2 = 1.0/(r_grid)**2
 
         self.diag = self.buildDiag()
 
@@ -324,13 +321,14 @@ class Hamiltonian:
         Pjk = Pj[:, :, None, :] * Pj[:, None, :, :]
 
         dg = self.g[1] - self.g[0]
-        integrand = dg * self.Vgrid * xp.sin(self.g)[None,None,:]
+        Vint = dg * self.Vgrid * xp.sin(self.g)[None,None,:]
 
         kwargs = dict(optimize=True)
         if xp.backend == 'torch':
             kwargs = {}
 
-        Vsph = xp.einsum('Rrg,Ojkg->RrjkO', integrand, Pjk, **kwargs)
+        #Vsph = xp.einsum('Rrg,Ojkg->RrjkO', Vint, Pjk, **kwargs)
+
         # Storage of various objects at -R 90 -r 91 -g 92 -J 10
         # print(Pj.shape, Pj.nbytes/(1<<20))                #     1 MB
         # print(Pjk.shape, Pjk.nbytes/(1<<20))              #   125 MB
@@ -358,8 +356,9 @@ class Hamiltonian:
         # implict Vx take an order of magnitude longer than the
         # explicit at that size.
 
-        assert not xp.any(xp.isnan(Vsph))
-        return xp.asarray(Vsph)
+        #assert not xp.any(xp.isnan(Vsph))
+        #return Vsph, Vint, Pjk
+        return Vint, Pjk
 
     def buildVOm(self):
         ''' Clebsch-Gordon Coefficients between adjacent Ω
@@ -401,11 +400,16 @@ class Hamiltonian:
         return self.Tx(x) + self.Vx(x)
 
     def Vx(self,x):
+        kwargs = dict(optimize=True)
         if xp.backend == 'torch':
             xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
         else:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
-        vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, self.Vsph)
+
+        #vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, self.Vsph, **kwargs)
+        vout = xp.einsum('BRrjO,Rrg,Ojkg->BRrkO', xa, self.Vint, self.Pjk, **kwargs)
+        #assert xp.allclose(vout1, vout)
         return vout.reshape(x.shape)
 
 
@@ -455,7 +459,10 @@ class Hamiltonian:
         # mass portion of KE
         ke *= -1 / (2*self.mu)
 
-        Vdiag = xp.einsum('RrjjO-> RrjO',self.Vsph)
+        Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
+        #Vdiag1 = xp.einsum('RrjjO-> RrjO', self.Vsph)
+        #assert xp.allclose(Vdiag, Vdiag1)
+
         # Potential terms
         diag = Vdiag + ke
 
@@ -466,8 +473,8 @@ class Hamiltonian:
     # @partial(jax.jit, static_argnums=0) fashion will break; not sure why.
 
     def _make_guess_naive(self, min_guess):
-        tr_Vsph = xp.einsum('RrjjO->RrjO',self.Vsph)
-        guesses = xp.exp(-(tr_Vsph - xp.min(tr_Vsph))**2/27.211**2).ravel()
+        Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
+        guesses = xp.exp(-(Vdiag - xp.min(Vdiag))**2/27.211**2).ravel()
         #return xp.random.random(guesses.shape)
         return guesses
 
@@ -570,11 +577,16 @@ class Hamiltonian:
         # RrsjkOP, recall that when we reshape, we need to make sure
         # that we have Rx(Nelec)x(Nelec) => Rx(jrO)x(ksP). This
         # repeats the ordering of the indices that matches kron3.
-        Vsph_big = xp.einsum("rs,OP,RrjkO->RjrOksP",
-                             xp.eye(Nr), xp.eye(NOm),
-                             self.Vsph[Ridx]).reshape(NR, Nelec, Nelec)
 
-        Hel += Vsph_big
+        # Vsph_big1 = xp.einsum("rs,OP,RrjkO->RjrOksP",
+        #                      xp.eye(Nr), xp.eye(NOm),
+        #                      self.Vsph[Ridx]).reshape(NR, Nelec, Nelec)
+
+        Hel += xp.einsum("rs,OP,Rrg,Ojkg->RjrOksP",
+                         xp.eye(Nr), xp.eye(NOm),
+                         self.Vint[Ridx], self.Pjk).reshape(NR, Nelec, Nelec)
+
+        # assert xp.allclose(Vsph_big, Vsph_big1)
         return xp.squeeze(Hel)
 
 
