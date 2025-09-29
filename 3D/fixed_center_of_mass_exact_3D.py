@@ -417,16 +417,19 @@ class Hamiltonian:
     def Tx(self, x):
         if xp.backend == 'torch':
             xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
         else:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+
         ke = xp.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
-        ke += xp.einsum('BRrjO,RS->BSrjO', xa, self.ddR2)  # ∂²/∂R²
-        ke += xp.einsum('BRrjO,rs->BRsjO', xa, self.ddr2)  # ∂²/∂r²
+        ke += xp.einsum('BRrjO,RS->BSrjO', xa, self.ddR2, **kwargs)  # ∂²/∂R²
+        ke += xp.einsum('BRrjO,rs->BRsjO', xa, self.ddr2, **kwargs)  # ∂²/∂r²
 
         # Angular electronic ke terms: -j(j+1)(1/r² + 1/R²)
-        kej = xp.einsum('BRrjO, j-> BRrjO', xa, self.j*(self.j+1))  # j(j+1)
+        kej = xp.einsum('BRrjO, j-> BRrjO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
         # kej = xa*self.j_grid*(self.j_grid+1) # we don't have a j_grid defined yet?
         ke -= (self.Rinv2 + self.rinv2)*kej  # -j(j+1)(1/r² + 1/R²)
 
@@ -434,9 +437,9 @@ class Hamiltonian:
         # Angular Kinetic Energy J terms
         if self.J != 0:
             keJdiag  = -xa * self.J * (self.J+1)                       # -J(J+1)
-            keJdiag += 2*xp.einsum('BRrjO,O-> BRrjO', xa, self.Om**2)  # -J(J+1)+2Ω²
+            keJdiag += 2*xp.einsum('BRrjO,O-> BRrjO', xa, self.Om**2, **kwargs)  # -J(J+1)+2Ω²
 
-            keJoffdiag = xp.einsum('BRrjO,jOP-> BRrjP', xa, self.VOm)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
+            keJoffdiag = xp.einsum('BRrjO,jOP-> BRrjP', xa, self.VOm, **kwargs)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
             ke += self.Rinv2*(keJdiag + keJoffdiag)
 
         # mass portion of KE
@@ -567,8 +570,12 @@ class Hamiltonian:
             )
             Hel += 2 * kron3(xp.eye(Nr), xp.eye(Nj), xp.diag(self.Om**2)) * Rinv2 # + 2Ω²/R²
 
+        kwargs = dict(optimize=True)
+        if xp.backend == 'torch':
+            kwargs = {}
+
         # VOm term:
-        VOm_big = xp.einsum('jOP,ij->iOjP', self.VOm, xp.eye(Nj)).reshape(Nsph, Nsph)
+        VOm_big = xp.einsum('jOP,ij->iOjP', self.VOm, xp.eye(Nj), **kwargs).reshape(Nsph, Nsph)
 
         Hel += xp.kron(xp.eye(Nr), VOm_big) * Rinv2
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · (Te + VOm)
@@ -584,7 +591,7 @@ class Hamiltonian:
 
         Hel += xp.einsum("rs,OP,Rrg,Ojkg->RjrOksP",
                          xp.eye(Nr), xp.eye(NOm),
-                         self.Vint[Ridx], self.Pjk).reshape(NR, Nelec, Nelec)
+                         self.Vint[Ridx], self.Pjk, **kwargs).reshape(NR, Nelec, Nelec)
 
         # assert xp.allclose(Vsph_big, Vsph_big1)
         return xp.squeeze(Hel)
