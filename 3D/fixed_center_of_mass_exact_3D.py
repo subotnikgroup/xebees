@@ -170,7 +170,8 @@ class Hamiltonian:
         if stencil_g%2==0: stencil_g -= 1
 
         self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R)
-        self.ddr2, _ = KE_Borisov_3D(self.r, bare=True)
+        # self.ddr2, _ = KE_Borisov_3D(self.r, bare=True)
+        self.ddr2 = KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False)
 
         self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
         self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
