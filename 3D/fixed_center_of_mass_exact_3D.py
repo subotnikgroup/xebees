@@ -798,7 +798,10 @@ if __name__ == '__main__':
     if args.evecs:
         if hasattr(evecs, 'get'):
             evecs = evecs.get()
-        numpy.savez_compressed(args.evecs, guess=evecs, H=H)
+        # warning: even though evecs will be cpu readable, H will only be readable on a node with gpu
+        # best to reconstruct H from args on a cpu for plotting purposes 
+        # H_new = Hamiltonian(Namespace(**NPZFILE['args'].item()))
+        numpy.savez_compressed(args.evecs, guess=evecs, H=H, args=vars(args))
         print("Wrote eigenvectors to", args.evecs)
 
     if args.bo_spectrum:
