@@ -412,7 +412,23 @@ class Hamiltonian:
         vout = xp.einsum('BRrjO,Rrg,Ojkg->BRrkO', xa, self.Vint, self.Pjk, **kwargs)
         #assert xp.allclose(vout1, vout)
         return vout.reshape(x.shape)
+    
+    def Vx_BO(self,x, iR=None):
+        kwargs = dict(optimize=True)
+        if xp.backend == 'torch':
+            xa = x.reshape(self.shape[1:]).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape( self.shape[1:]).astype(self.dtype)
 
+        #vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, self.Vsph, **kwargs)
+        vout = xp.einsum('rjO,rg,Ojkg->rkO', xa, self.Vint[iR], self.Pjk, **kwargs)
+        #assert xp.allclose(vout1, vout)
+        return vout.reshape(x.shape)
+
+        # Hel += xp.einsum("rs,OP,Rrg,Ojkg->RjrOksP",
+        #                  xp.eye(Nr), xp.eye(NOm),
+        #                  self.Vint[Ridx], self.Pjk, **kwargs).reshape(NR, Nelec, Nelec)
 
     #@partial(jax.jit, static_argnums=0)
     def Tx(self, x):
@@ -442,6 +458,38 @@ class Hamiltonian:
 
             keJoffdiag = xp.einsum('BRrjO,jOP-> BRrjP', xa, self.VOm, **kwargs)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
             ke += self.Rinv2*(keJdiag + keJoffdiag)
+
+        # mass portion of KE
+        ke *= -1/(2*self.mu)
+        return ke.reshape(x.shape)
+
+    def Tx_BO(self, x, iR=None):
+        if xp.backend == 'torch':
+            xa = x.reshape(self.shape[1:]).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape(self.shape[1:]).astype(self.dtype)
+            kwargs = dict(optimize=True)
+
+        ke = xp.zeros_like(xa)
+
+        # Radial Kinetic Energy terms, easy
+        # ke += xp.einsum('BRrjO,RS->BSrjO', xa, self.ddR2, **kwargs)  # ∂²/∂R²
+        ke += xp.einsum('rjO,rs->sjO', xa, self.ddr2, **kwargs)  # ∂²/∂r²
+
+        # Angular electronic ke terms: -j(j+1)(1/r² + 1/R²)
+        kej = xp.einsum('rjO, j-> rjO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+        # kej = xa*self.j_grid*(self.j_grid+1) # we don't have a j_grid defined yet?
+        ke -= (self.Rinv2[iR] + self.rinv2[iR])*kej  # -j(j+1)(1/r² + 1/R²)
+        
+
+        # Angular Kinetic Energy J terms
+        if self.J != 0:
+            keJdiag  = -xa * self.J * (self.J+1)                       # -J(J+1)
+            keJdiag += 2*xp.einsum('rjO,O-> rjO', xa, self.Om**2, **kwargs)  # -J(J+1)+2Ω²
+
+            keJoffdiag = xp.einsum('rjO,jOP-> rjP', xa, self.VOm, **kwargs)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
+            ke += self.Rinv2[iR]*(keJdiag + keJoffdiag)
 
         # mass portion of KE
         ke *= -1/(2*self.mu)
@@ -583,16 +631,17 @@ class Hamiltonian:
 
         # N.B. While one might be tempted to write the output as
         # RrsjkOP, recall that when we reshape, we need to make sure
-        # that we have Rx(Nelec)x(Nelec) => Rx(jrO)x(ksP). This
+        # that we have Rx(Nelec)x(Nelec) => Rx(rjO)x(skP). This
         # repeats the ordering of the indices that matches kron3.
 
         # Vsph_big1 = xp.einsum("rs,OP,RrjkO->RjrOksP",
         #                      xp.eye(Nr), xp.eye(NOm),
         #                      self.Vsph[Ridx]).reshape(NR, Nelec, Nelec)
 
-        Hel += xp.einsum("rs,OP,Rrg,Ojkg->RjrOksP",
+        Hel += xp.einsum("rs,OP,Rrg,Ojkg->RrjOskP",
                          xp.eye(Nr), xp.eye(NOm),
                          self.Vint[Ridx], self.Pjk, **kwargs).reshape(NR, Nelec, Nelec)
+        # V_sph = xp.einsum('Rrg, Ojkg-->Rj' , self.Vint[Ridx], self.Pjk,**kwargs)
 
         # assert xp.allclose(Vsph_big, Vsph_big1)
         return xp.squeeze(Hel)
@@ -801,7 +850,7 @@ if __name__ == '__main__':
         # warning: even though evecs will be cpu readable, H will only be readable on a node with gpu
         # best to reconstruct H from args on a cpu for plotting purposes 
         # H_new = Hamiltonian(Namespace(**NPZFILE['args'].item()))
-        numpy.savez_compressed(args.evecs, guess=evecs, H=H, args=vars(args))
+        numpy.savez_compressed(args.evecs, guess=evecs, H=H, args=vars(args), e_approx=e_approx)
         print("Wrote eigenvectors to", args.evecs)
 
     if args.bo_spectrum:
