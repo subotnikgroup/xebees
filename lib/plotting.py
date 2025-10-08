@@ -7,6 +7,115 @@ from matplotlib.widgets import Slider
 def fromgpu(tensor):
     return tensor.get() if hasattr(tensor, 'get') else tensor
 
+def plot_psi3D_BO(wfc, H, levels=None, iR=20, Ngamma=150, Npsi=10, scale='linear'):
+    fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(6,5))
+    # for the potential plotting
+    g     = fromgpu(H.g)
+    r_lab = fromgpu(H.r_lab)
+    Vgrid = fromgpu(H.Vgrid)
+
+    wfc = wfc[:,:,:]/fromgpu(H.r[:,None,None]) # rescale the radial wfc for 3D
+
+    # rotate out of the sph harm basis to sph grid
+    j = fromgpu(H.j)
+    Om = fromgpu(H.Om)
+    theta = np.linspace(0, np.pi, Ngamma, endpoint=True)
+    phi = np.linspace(0, 2 * np.pi, Npsi)
+    Yj, Yo, Yt, Yp = np.meshgrid(j,Om,theta,phi)
+    Yjo = sph_harm_y(Yj,Yo,Yt,Yp)
+    wfc_sph = np.einsum('ojtp,rjo->rtp', Yjo,wfc)
+
+    # plot potential on grid of (r, gamma)
+    if levels is None:
+        if H.args.potential=='erf_coulomb':
+            levels = np.linspace(xp.max(Vgrid[iR,:,:])-2,
+                                xp.max(Vgrid[iR,:,:]), 7) # 2 a.u. ~50 eV range
+        if H.args.potential=='borgis':
+            levels = np.linspace(xp.min(Vgrid[iR,:,:]),
+                                xp.min(Vgrid[iR,:,:])+0.5, 16) # 0.15 a.u. ~4 eV range
+        else:
+            levels = np.linspace(xp.min(Vgrid[iR,:,:]), xp.max(Vgrid[iR,:,:]), 7)
+    
+    print("contour levels", levels)
+    ax.contour(*xp.meshgrid(g, r_lab, indexing='ij'), Vgrid[16,:,:].T, levels=levels, cmap='binary_r')
+    ax.contour(*xp.meshgrid(g*-1, r_lab, indexing='ij'), Vgrid[16,:,:].T, levels=levels, cmap='binary_r')
+    cs = ax.contourf(*np.meshgrid(g, r_lab, indexing='ij'), Vgrid[16,:,:].T, levels=levels, cmap='binary_r') # dummy contour with filled patches
+    ax.set_title("Plotting polar slices of the sphere")
+
+    
+    if scale == 'linear':
+        cmap = 'seismic'
+        limit = np.max(np.abs(wfc_sph.real))
+        toplimit = limit
+        lowlimit = -limit
+    elif scale == 'log':
+        cmap = 'Blues'
+        limit = np.log10(np.max(np.abs(wfc_sph)))
+        toplimit = limit
+        lowlimit = limit - 6  # 6 orders of magnitude
+    else:
+        raise RuntimeError(f"scale must be either linear or log, not `{scale}`!")
+
+    print("wfc limits", lowlimit, toplimit)
+
+    if scale=='linear':
+        pc1 = ax.pcolormesh(theta, r_lab, wfc_sph[:,:,0].real,
+                      cmap=cmap, edgecolor='face',
+                      antialiased=True,
+                      vmin=lowlimit, vmax=toplimit)#, shading='gouraud')
+        pc2 = ax.pcolormesh(theta*-1, r_lab, wfc_sph[:,:,Npsi//2].real,
+                      cmap=cmap, edgecolor='face',
+                      antialiased=True,
+                      vmin=lowlimit, vmax=toplimit)#, shading='gouraud')
+        cbar2 = fig.colorbar(pc1, orientation='vertical', fraction=0.1)
+        cbar2.set_label("wfc heatmap: amplitude ")
+    elif scale=='log':
+        pc1 = ax.pcolormesh(theta, r_lab, np.log10(np.abs(wfc_sph[:,:,0])**2),
+                      cmap=cmap, edgecolor='face',
+                      antialiased=True,
+                      vmin=lowlimit, vmax=toplimit)#, shading='gouraud')
+        pc2 = ax.pcolormesh(theta*-1, r_lab, np.log10(np.abs(wfc_sph[:,:,Npsi//2])**2),
+                      cmap=cmap, edgecolor='face',
+                      antialiased=True,
+                      vmin=lowlimit, vmax=toplimit)#, shading='gouraud')
+        cbar2 = fig.colorbar(pc1, orientation='vertical', fraction=0.1)
+        cbar2.set_label("wfc heatmap: Log[density] ")
+    fig.tight_layout()
+
+    cbar = fig.colorbar(cs, orientation='horizontal', fraction=0.05)
+    cs.remove()
+    cbar.set_label("potential contours: E / a.u.")
+    formatter = mpl.ticker.FormatStrFormatter('%.1f')
+    cbar.ax.xaxis.set_major_formatter(formatter)
+
+    def update_psi(val):
+        ax.cla()
+        ax.contour(*xp.meshgrid(g, r_lab, indexing='ij'), Vgrid[iR,:,:].T, levels=levels, cmap='binary_r')
+        ax.contour(*xp.meshgrid(g*-1, r_lab, indexing='ij'), Vgrid[iR,:,:].T, levels=levels, cmap='binary_r')
+
+        if scale=='linear':
+            pc1 = ax.pcolormesh(theta, r_lab, wfc_sph[:,:,0+val].real,
+                          cmap=cmap, edgecolor='face',
+                          antialiased=True,
+                          vmin=lowlimit, vmax=toplimit, alpha=0.5)
+            pc2 = ax.pcolormesh(theta*-1, r_lab, wfc_sph[:,:,Npsi//2+val].real,
+                          cmap=cmap, edgecolor='face',
+                          antialiased=True,
+                          vmin=lowlimit, vmax=toplimit, alpha=0.5)
+        elif scale=='log':
+             pc1 = ax.pcolormesh(theta, r_lab, np.log10(np.abs(wfc_sph[:,:,0])**2),
+                      cmap=cmap, edgecolor='face',
+                      antialiased=True,
+                      vmin=lowlimit, vmax=toplimit)#, shading='gouraud')
+             pc2 = ax.pcolormesh(theta*-1, r_lab, np.log10(np.abs(wfc_sph[:,:,Npsi//2])**2),
+                      cmap=cmap, edgecolor='face',
+                      antialiased=True,
+                      vmin=lowlimit, vmax=toplimit)#, shading='gouraud')
+        ax.text(xp.pi/2,xp.max(r_lab)*.75,r"$\psi$={:.2f}$\pi$".format(phi[val]/xp.pi), ha='center')
+         
+    return mpl.animation.FuncAnimation(fig, update_psi, frames=Npsi//2)
+
+
 # use like IPython.display(plotpotential2D(H)))
 def plotpotential2D(H, levels=None):
     fig, ax = plt.subplots(subplot_kw=dict(projection='polar'))
