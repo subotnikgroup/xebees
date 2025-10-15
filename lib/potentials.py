@@ -24,9 +24,12 @@ from scipy.special import erf
 # will monotonically log-interpolate between them. See
 # extents_soft_coulumb below.
 
-def _extents_log_factory(mu12ref, lower, upper, decimals=3):
+def _extents_log_factory(mu12ref, lower, upper_R, upper_r=None, decimals=3):
     if any(numpy.diff(mu12ref) < 0):
         raise RuntimeError("mu12ref must be monotonic")
+
+    if upper_r==None: # all potentials except erf_coulomb
+        upper_r = upper_R
 
     def extents(mu12):
         if mu12 < mu12ref[0] or mu12 > mu12ref[-1]:
@@ -35,13 +38,15 @@ def _extents_log_factory(mu12ref, lower, upper, decimals=3):
         logm = numpy.log(mu12)
         logmref = numpy.log(mu12ref)
 
-        up_int = PchipInterpolator(logmref, upper)
+        upR_int = PchipInterpolator(logmref, upper_R)
         lo_int = PchipInterpolator(logmref, lower)
+        upr_int = PchipInterpolator(logmref, upper_r)
 
         lo = lo_int(logm)
-        up = up_int(logm)
+        upR = upR_int(logm)
+        upr = upr_int(logm)
 
-        return xp.asarray(numpy.round([lo, up, up], decimals))
+        return xp.asarray(numpy.round([lo, upR, upr], decimals))
     return extents
 
 
@@ -60,19 +65,21 @@ extents_soft_coulomb = _extents_log_factory(
     [8,   5,   4,   3.5, 3.5]
 )
 
-def erf_coulomb(R, r1e, r2e, charges, alpha=10, beta=1):
+def erf_coulomb(R, r1e, r2e, charges, alpha=0.5, beta=1):
     Q1,Q2 = charges
-    V1  = -Q1 *      erf(alpha*r1e) / r1e
-    V2  = -Q2 *      erf(alpha*r2e) / r2e
+    V1  = -Q1 *      erf(2*r1e/alpha) / r1e
+    V2  = -Q2 *      erf(2*r2e/alpha) / r2e
     # make the nuclear repulsion stronger w/ beta
-    VN  =  Q1 * Q2 * erf(beta*alpha*R)/ R
+    VN  =  Q1 * Q2 / R
     return V1 + V2 + VN
 
 extents_erf_coulomb = _extents_log_factory(
-    [2e1, 2e2, 2e3, 2e4, 2e5],
-    [0.1, 0.2, 0.5, 0.5,   1],
-    [20,   10,   5,   3.5, 3]
+    [2e0, 2e1, 2e2,  2e3,  2e4],
+    [0.1, 0.2, 0.3, 0.45, 0.45],
+    [20,  12,    8,    5,    4],
+    [20,  16,   14,   12,   12]
 )
+# extents for 2e2 not benchmarked at same R/r grid density as others
 
 def soft_coulomb_barrier(R, r1e, r2e, charges, dv=0.5, G=1, p=2, A=1):
     Q1, Q2 = charges

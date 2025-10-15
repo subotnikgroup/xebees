@@ -816,9 +816,12 @@ if __name__ == '__main__':
     if args.bo_spectrum:
         with timer_ctx("BO spectrum"):
             Ad_vn, Ad_n = H.BO_spectrum(args.k)
+            if hasattr(Ad_vn, 'get'):
+                Ad_vn = Ad_vn.get()
+                Ad_n = Ad_n.get()
             # with numpy.printoptions(precision=4):
             #     print(Ad_n.T[0] - Ad_n.T[0,-1])
-            numpy.savez_compressed(args.bo_spectrum, bo_spectrum=Ad_vn, bo_surfaces=Ad_n)
+            numpy.savez_compressed(args.bo_spectrum, bo_spectrum=Ad_vn, bo_surfaces=Ad_n, args=vars(args))
 
     # FIXME: would like to use a callback to save intermediate
     # wavefunctions in case we need to do a restart.
