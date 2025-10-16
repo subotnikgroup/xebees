@@ -64,7 +64,7 @@ class Hamiltonian:
         if not hasattr(args, "potential"):
             args.extent = 'soft_coulomb'
 
-        if args.potential == 'borgis' or args.potential == 'original':
+        if args.potential == 'borgis':
             print(f"Waring: All masses scaled to AMU for {args.potential}!")
             self.m_e *= AMU_TO_AU
             self.M_1 *= AMU_TO_AU
@@ -74,8 +74,8 @@ class Hamiltonian:
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self._Vfunc, extent_func = {
-            'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb),
-            'borgis': (potentials.borgis, potentials.extents_borgis),
+            'erf_coulomb':(potentials.erf_coulomb, potentials.extents_erf_coulomb),
+            'borgis': (potentials.borgis, potentials.extents_borgis)
             }[args.potential]
 
         extent = extent_func(self.mu12)
@@ -168,43 +168,115 @@ class Hamiltonian:
         else:
             return self._Vfunc(R, r1e, r2e, (self.g_1, self.g_2))
 
-    def Gamma_etf(R,rx,ry,rz,ddx,ddy,ddz,M_1,M_2,mu12,r1e2,r2e2,xdav):
+def Gamma_etf(R,rx,ry,rz,ddx,ddy,ddz,M_1,M_2,mu12,r1e2,r2e2,*xdav):
 
-        Nx = len(ddx)
-        Ny = len(ddy)
-        Nz = len(ddz)
+    if len(xdav)==1:
+        xdavx1 = xdavy1 = xdavz1 = xdavx2 = xdavy2 = xdavz2  = xdav[0]
+    else:
+        xdavx1, xdavy1, xdavz1, xdavx2, xdavy2, xdavz2 = xdav       
 
-        theta1 = xp.exp(-r1e2)
-        theta2 = xp.exp(-r2e2)
-        partition = theta1 + theta2
+    Nx = len(ddx)
+    Ny = len(ddy)
+    Nz = len(ddz)
 
-        t1 = theta1/partition
-        t2 = theta2/partition
+    theta1 = xp.exp(-r1e2)
+    theta2 = xp.exp(-r2e2)
+    partition = theta1 + theta2
 
-        t1px = xp.einsum('ijk,il,Bljk->Bijk',t1,ddx,xdav)
-        pxt1 = xp.einsum('il,ljk,Bljk->Bijk',ddx,t1,xdav)
-        t2px = xp.einsum('ijk,il,Bljk->Bijk',t2,ddx,xdav)
-        pxt2 = xp.einsum('il,ljk,Bljk->Bijk',ddx,t2,xdav)
+    t1 = theta1/partition
+    t2 = theta2/partition
 
-        t1py = xp.einsum('ijk,jl,Bilk->Bilk',t1,ddy,xdav)
-        pyt1 = xp.einsum('il,jlk,Bjlk->Bjik',ddy,t1,xdav)
-        t2py = xp.einsum('ijk,jl,Bilk->Bilk',t2,ddy,xdav)
-        pyt2 = xp.einsum('il,jlk,Bjlk->Bjik',ddy,t2,xdav)
+    t1px = xp.einsum('ijk,il,Bljk->Bijk',t1,ddx,xdavx1)
+    pxt1 = xp.einsum('il,ljk,Bljk->Bijk',ddx,t1,xdavx1)
+    t2px = xp.einsum('ijk,il,Bljk->Bijk',t2,ddx,xdavx2)
+    pxt2 = xp.einsum('il,ljk,Bljk->Bijk',ddx,t2,xdavx2)
 
-        t1pz = xp.einsum('ijk,kl,Bijl->Bijk',t1,ddz,xdav)
-        pzt1 = xp.einsum('ij,klj,Bklj->Bkli',ddz,t1,xdav)
-        t2pz = xp.einsum('ijk,kl,Bijl->Bijk',t2,ddz,xdav)
-        pzt2 = xp.einsum('ij,klj,Bklj->Bkli',ddz,t2,xdav)
+    t1py = xp.einsum('ijk,jl,Bilk->Bijk',t1,ddy,xdavy1)
+    pyt1 = xp.einsum('il,jlk,Bjlk->Bjik',ddy,t1,xdavy1)
+    t2py = xp.einsum('ijk,jl,Bilk->Bijk',t2,ddy,xdavy2)
+    pyt2 = xp.einsum('il,jlk,Bjlk->Bjik',ddy,t2,xdavy2)
 
-        gammaetf1x = -0.5*(t1px + pxt1)
-        gammaetf1y = -0.5*(t1py + pyt1)
-        gammaetf1z = -0.5*(t1pz + pzt1)
+    t1pz = xp.einsum('ijk,kl,Bijl->Bijk',t1,ddz,xdavz1)
+    pzt1 = xp.einsum('ij,klj,Bklj->Bkli',ddz,t1,xdavz1)
+    t2pz = xp.einsum('ijk,kl,Bijl->Bijk',t2,ddz,xdavz2)
+    pzt2 = xp.einsum('ij,klj,Bklj->Bkli',ddz,t2,xdavz2)
 
-        gammaetf2x = -0.5*(t2px + pxt2)   
-        gammaetf2y = -0.5*(t2py + pyt2)
-        gammaetf2z = -0.5*(t2pz + pzt2)
 
-        return gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z
+    gammaetf1x = -0.5*(t1px + pxt1)
+    gammaetf1y = -0.5*(t1py + pyt1)
+    gammaetf1z = -0.5*(t1pz + pzt1)
+
+    gammaetf2x = -0.5*(t2px + pxt2)   
+    gammaetf2y = -0.5*(t2py + pyt2)
+    gammaetf2z = -0.5*(t2pz + pzt2)
+
+    return gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z
+
+def Gamma_etf_diag(R,rx,ry,rz,ddx,ddy,ddz,M_1,M_2,mu12,r1e2,r2e2):
+
+    Nx = len(ddx)
+    Ny = len(ddy)
+    Nz = len(ddz)
+
+    theta1 = xp.exp(-r1e2)
+    theta2 = xp.exp(-r2e2)
+    partition = theta1 + theta2
+
+    t1 = (theta1/partition)
+    t2 = (theta2/partition)
+
+    t1px = xp.einsum('aij,ab->abij', t1, ddx)
+    pxt1 = xp.einsum('ab,bij->abij', ddx, t1)
+    gammasq1x = xp.einsum('abij,bcij->acij', (t1px+pxt1),(t1px+pxt1))
+    diag_gammasq1x = 0.25*xp.einsum('aaij->aij', gammasq1x)
+
+    t2px = xp.einsum('aij,ab->abij', t2, ddx)
+    pxt2 = xp.einsum('ab,bij->abij', ddx, t2)
+    gammasq2x = xp.einsum('abij,bcij->acij', (t2px+pxt2),(t2px+pxt2))
+    diag_gammasq2x = 0.25*xp.einsum('aaij->aij', gammasq2x)
+
+    gamma1x2x = xp.einsum('abij,bcij->acij', (t1px+pxt1),(t2px+pxt2))
+    diag_gamma1x2x = 0.25*xp.einsum('aaij->aij', gamma1x2x)
+    gamma2x1x = xp.einsum('abij,bcij->acij', (t2px+pxt2),(t1px+pxt1))
+    diag_gamma2x1x = 0.25*xp.einsum('aaij->aij', gamma2x1x)
+
+    t1py = xp.einsum('iaj,ab->iajb', t1, ddy)
+    pyt1 = xp.einsum('ab,ibj->iajb', ddy, t1)
+    gammasq1y = xp.einsum('iajb,ibjc->iajc', (t1py+pyt1),(t1py+pyt1))
+    diag_gammasq1y = 0.25*xp.einsum('iaja->iaj', gammasq1y)
+
+    t2py = xp.einsum('iaj,ab->iajb', t2, ddy)
+    pyt2 = xp.einsum('ab,ibj->iajb', ddy, t2)
+    gammasq2y = xp.einsum('iajb,ibjc->iajc', (t2py+pyt2),(t2py+pyt2))
+    diag_gammasq2y = 0.25*xp.einsum('iaja->iaj', gammasq2y)
+    
+    gamma1y2y = xp.einsum('iajb,ibjc->iajc', (t1py+pyt1),(t2py+pyt2))
+    diag_gamma1y2y = 0.25*xp.einsum('iaja->iaj', gamma1y2y)
+    gamma2y1y = xp.einsum('iajb,ibjc->iajc', (t2py+pyt2),(t1py+pyt1))
+    diag_gamma2y1y = 0.25*xp.einsum('iaja->iaj', gamma2y1y)
+
+    t1pz = xp.einsum('ija,ab->ijab', t1, ddz)
+    pzt1 = xp.einsum('ab,ijb->ijab', ddz, t1)
+    gammasq1z = xp.einsum('ijab,ijbc->ijac', (t1pz+pzt1),(t1pz+pzt1))
+    diag_gammasq1z = 0.25*xp.einsum('ijaa->ija', gammasq1z)
+   
+    t2pz = xp.einsum('ija,ab->ijab', t2, ddz)
+    pzt2 = xp.einsum('ab,ijb->ijab', ddz, t2)
+    gammasq2z = xp.einsum('ijab,ijbc->ijac', (t2pz+pzt2),(t2pz+pzt2))
+    diag_gammasq2z = 0.25*xp.einsum('ijaa->ija', gammasq2z)
+
+    gamma1z2z = xp.einsum('ijab,ijbc->ijac', (t1pz+pzt1),(t2pz+pzt2))
+    diag_gamma1z2z = 0.25*xp.einsum('ijaa->ija', gamma1z2z)
+    gamma2z1z = xp.einsum('ijab,ijbc->ijac', (t2pz+pzt2),(t1pz+pzt1))
+    diag_gamma2z1z = 0.25*xp.einsum('ijaa->ija', gamma2z1z)
+
+    output = (diag_gammasq1x, diag_gammasq2x, diag_gamma1x2x, diag_gamma2x1x, 
+              diag_gammasq1y, diag_gammasq2y, diag_gamma1y2y, diag_gamma2y1y,
+              diag_gammasq1z, diag_gammasq2z, diag_gamma1z2z, diag_gamma2z1z)
+
+
+    return output
+
 
 
 def parse_args():
@@ -234,8 +306,8 @@ def parse_args():
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--save', metavar="filename")
-    parser.add_argument('--potential', choices=['soft_coulomb', 'borgis'],
-                        default='soft_coulomb')
+    parser.add_argument('--potential', choices=['erf_coulomb', 'borgis'],
+                        default='borgis')
     parser.add_argument('--extent', metavar="X", action=NumpyArrayAction,
                         nargs=3, help="Rmin Rmax rmax, in Bohr "
                         "(typically set automatically)")
@@ -307,10 +379,46 @@ if __name__ == '__main__':
     ival = xp.zeros([NR,1])
     Ad_n = xp.zeros(NR)
 
+    EPS = xp.zeros((H.shape[0], H.shape[0]))
+    #EPSsq = xp.zeros((H.shape[0], H.shape[0]))
+#
+    gammacoeff_R = -1j*H.P_R/H.mu12 
+    gammacoeff_phi = -1j*(H.Pphi/H.R)/H.mu12
+    gammacoeff_theta = +1j*(H.Ptheta/H.R)/H.mu12
+#
+    #def buildDiagps(H,Ri):
+    #    ke  = xp.zeros([Nx,Ny,Nz])
+    #    ke += xp.diag(H.ddx2)[:,None,None]
+    #    ke += xp.diag(H.ddy2)[None,:,None]
+    #    ke += xp.diag(H.ddz2)[None,None,:]
+    #    ke *= -1 / (2*H.mur)
+    #    
+    #    diag = H.Vgrid[Ri] + ke 
+    #    return diag.ravel()
+
+    def buildDiagpssq(H,Ri):
+
+        (diag_gammasq1x, diag_gammasq2x, diag_gamma1x2x, diag_gamma2x1x,\
+         diag_gammasq1y, diag_gammasq2y, diag_gamma1y2y, diag_gamma2y1y,\
+         diag_gammasq1z, diag_gammasq2z, diag_gamma1z2z, diag_gamma2z1z) = Gamma_etf_diag(H.R[i],H.x_grid,H.y_grid,H.z_grid,H.ddx1,H.ddy1,H.ddz1,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
+
+        ke  = xp.zeros([Nx,Ny,Nz])
+        ke += xp.diag(H.ddx2)[:,None,None]
+        ke += xp.diag(H.ddy2)[None,:,None]
+        ke += xp.diag(H.ddz2)[None,None,:]
+        ke += (((H.M_2**2*diag_gammasq1x)+(H.M_1**2*diag_gammasq2x)-(H.M_1*H.M_2*diag_gamma1x2x)-(H.M_1*H.M_2*diag_gamma2x1x))/(H.M_1+H.M_2)**2)
+        ke += (((H.M_2**2*diag_gammasq1y)+(H.M_1**2*diag_gammasq2y)-(H.M_1*H.M_2*diag_gamma1y2y)-(H.M_1*H.M_2*diag_gamma2y1y))/(H.M_1+H.M_2)**2)
+        ke += (((H.M_2**2*diag_gammasq1z)+(H.M_1**2*diag_gammasq2z)-(H.M_1*H.M_2*diag_gamma1z2z)-(H.M_1*H.M_2*diag_gamma2z1z))/(H.M_1+H.M_2)**2) 
+        ke *= -1 / (2*H.mur)
+        
+        diag = H.Vgrid[Ri] + ke #XXXXXFix Vgrid
+        return diag.ravel()
+
 
     for i in range(NR):
-        print("Atom Ri",i)
+        print("Atom Ri",i,flush=True)
         diag = buildDiag(H,i)
+        
         def Hbo_dav(xdav):
             x = xdav.reshape((-1,)+H.boshape)
             
@@ -318,8 +426,6 @@ if __name__ == '__main__':
             return Hbodav.reshape(xdav.shape)
 
         guess_bo = xp.exp(-(H.Vgrid[i] - xp.min(H.Vgrid[i]))**2/27.211**2).ravel()
-       
-       # with timer_ctx(f"Davidson of size {H.size}"):
         conv, e_approx, evecs = lib.davidson1(
             Hbo_dav,
             guess_bo,
@@ -338,7 +444,66 @@ if __name__ == '__main__':
         print(conv)#
         Ad_n[i] = e_approx[0]
         ival[i,0] = e_approx[0]
-    
+
+        r1e2, r2e2 = H.V(H.R[i], H.x_grid, H.y_grid, H.z_grid, spitvals=True)
+        #diagsq = buildDiagpssq(H,i)
+
+        for j in range(H.shape[0]):
+            print("Atom Ri",i,"Atom Rj",j,flush=True)
+        
+            def ps_ham(xdav):           
+                x = xdav.reshape((-1,)+H.boshape)
+                Tx = -1/(2*H.mur)*(
+                    xp.einsum('ij,Bjkl->Bikl',H.ddx2,x)\
+                    +xp.einsum('ij,Bkjl->Bkil',H.ddy2,x)\
+                    +xp.einsum('ij,Bklj->Bkli',H.ddz2,x)\
+                    )
+                gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z = Gamma_etf(H.R[i],H.x_grid,H.y_grid,H.z_grid,H.ddx1,H.ddy1,H.ddz1,H.M_1,H.M_2,H.mu12,r1e2,r2e2,x)
+                gamma1x = gammaetf1x
+                gamma2x = gammaetf2x
+                gamma1y = gammaetf1y
+                gamma2y = gammaetf2y
+                gamma1z = gammaetf1z
+                gamma2z = gammaetf2z
+                Gammatotx = (H.M_2*gamma1x-H.M_1*gamma2x)/(H.M_1+H.M_2)
+                Gammatoty = (H.M_2*gamma1y-H.M_1*gamma2y)/(H.M_1+H.M_2)
+                Gammatotz = (H.M_2*gamma1z-H.M_1*gamma2z)/(H.M_1+H.M_2)
+
+                gammasq1x, gammasq1y, gammasq1z, gammasq2x, gammasq2y, gammasq2z = Gamma_etf(H.R[i],H.x_grid,H.y_grid,H.z_grid,H.ddx1,H.ddy1,H.ddz1,H.M_1,H.M_2,H.mu12,r1e2,r2e2, gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z)
+                gamma1x2x, gamma1y2y, gamma1z2z, gamma2x1x, gamma2y1y, gamma2z1z = Gamma_etf(H.R[i],H.x_grid,H.y_grid,H.z_grid,H.ddx1,H.ddy1,H.ddz1,H.M_1,H.M_2,H.mu12,r1e2,r2e2, gammaetf2x, gammaetf2y, gammaetf2z, gammaetf1x, gammaetf1y, gammaetf1z)
+
+                Gammasqtotx = ((H.M_2**2*gammasq1x)+(H.M_1**2*gammasq2x)-(H.M_1*H.M_2*gamma1x2x)-(H.M_1*H.M_2*gamma2x1x))/(H.M_1+H.M_2)**2
+                Gammasqtoty = ((H.M_2**2*gammasq1y)+(H.M_1**2*gammasq2y)-(H.M_1*H.M_2*gamma1y2y)-(H.M_1*H.M_2*gamma2y1y))/(H.M_1+H.M_2)**2
+                Gammasqtotz = ((H.M_2**2*gammasq1z)+(H.M_1**2*gammasq2z)-(H.M_1*H.M_2*gamma1z2z)-(H.M_1*H.M_2*gamma2z1z))/(H.M_1+H.M_2)**2
+
+                Hbodav = H.Vgrid[i]*x + Tx + (gammacoeff_R[j]*Gammatotx)+(gammacoeff_phi[i]*Gammatoty)+(gammacoeff_theta[i]*Gammatotz) 
+                #Htotsq = Hbodav - (Gammasqtotx +Gammasqtoty + Gammasqtotz)/(2*H.mu12) 
+                return Hbodav.reshape(xdav.shape)
+                #return Htotsq.reshape(xdav.shape)
+
+            guess_ps = xp.exp(-(H.Vgrid[i] - xp.min(H.Vgrid[i]))**2/27.211**2).ravel()
+            with timer_ctx(f"Davidson of size {H.size}"):
+                conv, e_approx, evecs = lib.davidson1(
+                    ps_ham,
+                    guess_ps,
+                    #H.diag,
+                    #_preconditioner_naive(H, dx, e, x0,i),
+                    #lambda dx, e, x0: dx/(diagsq-e+1e-5),
+                    lambda dx, e, x0: dx/(diag-e+1e-5),
+                    nroots=args.k,
+                    max_cycle=args.iterations,
+                    verbose=args.verbosity,
+                    max_space=args.subspace,
+                    max_memory=get_davidson_mem(0.75),
+                    #tol=1e-12, #FIXME:DEBUG
+                    tol=1e-10,
+                )
+
+            print("Davidson:", e_approx)
+            print(conv)#
+            #EPSsq[i, j] = e_approx[0]
+            EPS[i, j] = e_approx[0]      
+               
 
     Rval, Pval = H.RP_grid
 
@@ -355,4 +520,14 @@ if __name__ == '__main__':
     HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P_R)
     EPSv_bo = batch_eigvalsh(HPS_bo)
     print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
+
+    EPS += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2)
+    HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P_R)
+    EPSv = batch_eigvalsh(HPS)
+    print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
+
+    #EPSsq += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2)
+    #HPSsq = inverse_weyl_transform(EPSsq, H.shape[0], H.R, H.P_R)
+    #EPSvsq = batch_eigvalsh(HPSsq)
+    #print("PS vib gap sq",EPSvsq[1]-EPSvsq[0],flush=True)
 

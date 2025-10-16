@@ -121,7 +121,7 @@ class Hamiltonian:
         # gamma lest our cyclic grid be ill-formed and 2nd derivatives
         # all over the place
         self.th = xp.linspace(xp.pi/(2*(args.Nth+1)), xp.pi-xp.pi/(2*(args.Nth+1)), args.Nth, endpoint=True)
-        self.ph = xp.linspace(0, 2*xp.pi, args.Nph, endpoint=False)##XXXXX  check this
+        self.ph = xp.linspace(2*xp.pi/args.Nph, 2*xp.pi+2*xp.pi/args.Nph, args.Nph, endpoint=False)##XXXXX  check this
         #self.ph = xp.linspace(xp.pi/args.Nph, 2*xp.pi+xp.pi/args.Nph, args.Nph, endpoint=False)
         self.axes = (self.R, self.r, self.ph, self.th)
 
@@ -219,7 +219,7 @@ class Hamiltonian:
     #    return xp.squeeze(Hel)
 
     
-def Gamma_etf_polar(R,r,phi,theta,ddr,ddph,ddth,M_1,M_2,mu12,r1e2,r2e2):
+def Gamma_etf_old(R,r,phi,theta,ddr,ddph,ddth,M_1,M_2,mu12,r1e2,r2e2):
 
     Nth = len(ddth)
     Nr = len(ddr)
@@ -229,39 +229,45 @@ def Gamma_etf_polar(R,r,phi,theta,ddr,ddph,ddth,M_1,M_2,mu12,r1e2,r2e2):
     theta2 = xp.exp(-r2e2)
     partition = theta1 + theta2
 
-    costheta = xp.cos(theta)[0,0,:]
-    sintheta = xp.sin(theta)[0,0,:]
-    cosphi = xp.cos(phi)[0,:,0]
-    sinphi = xp.sin(phi)[0,:,0]
+    costheta = xp.diag(xp.cos(theta)[0,0,:])
+    sintheta = xp.diag(xp.sin(theta)[0,0,:])
+    cosphi = xp.diag(xp.cos(phi)[0,:,0])
+    sinphi = xp.diag(xp.sin(phi)[0,:,0])
 
+    costheta_diag = (xp.cos(theta)[0,0,:])
+    sintheta_diag = (xp.sin(theta)[0,0,:])
+    cosphi_diag = (xp.cos(phi)[0,:,0])
+    sinphi_diag = (xp.sin(phi)[0,:,0])
+ 
     re = r[:,0,0]
-    invr = 1/re
+    invr = xp.diag(1/re)
 
     t1 = xp.diag((theta1/partition).ravel())
     t2 = xp.diag((theta2/partition).ravel())
 
-    #xp.fill_diagonal(spg, xp.diag(spg) * singamma[0,:])
-    #xp.fill_diagonal(cpg, xp.diag(cpg) * cosgamma[0,:])
+    #xdav = xp.random.rand(1,H.shape[1],H.shape[2],H.shape[3])
+    #orig = px_old@xdav.flatten()
+   
+    pxra_old = -xp.kron(xp.kron((invr),cosphi),sintheta)
+    pxrb_old = xp.kron(xp.kron(ddr,cosphi),sintheta)
+    pxta_old = -xp.kron(xp.kron((0.5*invr),cosphi),xp.diag(costheta_diag/sintheta_diag))
+    pxtb_old = xp.kron(xp.kron(invr,cosphi),costheta@ddth)
+    pxpa_old = -xp.kron(xp.kron((invr),sinphi@ddph),xp.diag(1/sintheta_diag))
+    px = pxra_old+ pxrb_old+ pxta_old+ pxtb_old+ pxpa_old
+   
+    pyra_old = -xp.kron(xp.kron((invr),sinphi),sintheta)
+    pyrb_old = xp.kron(xp.kron(ddr,sinphi),sintheta)
+    pyta_old = -xp.kron(xp.kron((0.5*invr),sinphi),xp.diag(costheta_diag/sintheta_diag))
+    pytb_old = xp.kron(xp.kron(invr,sinphi),costheta@ddth)
+    pypa_old = -xp.kron(xp.kron((invr),cosphi@ddph),xp.diag(1/sintheta_diag))
+    py = pyra_old+ pyrb_old+ pyta_old+ pytb_old+ pypa_old
 
-      #xp.kron(xp.kron(ddr, xp.diag(cosphi)), xp.diag(sintheta))\
-          #+xp.kron(xp.kron(xp.diag(invr), xp.diag(cosphi)), xp.diag(costheta)*ddth)\
-    px_old =      -xp.kron(xp.kron(xp.diag(invr), ddph), xp.diag(1/sintheta))
-
-    xdav = xp.random.rand(H.shape[1],H.shape[2],H.shape[3])
-
-     #xp.einsum('ij,kl,mn,jln->ikm',ddr,xp.diag(cosphi),xp.diag(sintheta),xdav)\
-        #+ xp.einsum('i,j,kl,ijl->ijk',invr,cosphi,xp.diag(costheta)*ddth,xdav)
-    px = xp.einsum('i,kl,j,ilj->ikj',invr,xp.diag(sinphi)*ddph,1/sintheta,xdav)
-    orig = px_old@xdav.flatten()
-    #print("orig",orig)
-    
-    py =  xp.kron(xp.kron(ddr, xp.diag(singamma)), xp.diag(sinpsi)) +\
-          xp.kron(xp.kron(xp.diag(invr), xp.diag(singamma)*ddg), xp.diag(sinpsi)) +\
-          xp.kron(xp.kron(xp.diag(invr), xp.diag(singamma)), xp.diag(cospsi)*ddp)
-
-    pz =  xp.kron(xp.kron(ddr, xp.diag(cosgamma)), xp.eye(Np)) -\
-          xp.kron(xp.kron(xp.diag(invr), singamma*ddg), xp.eye(Np)) 
-
+    pzra_old = -xp.kron(xp.kron((invr),xp.eye(Nph,Nph)),costheta)
+    pzrb_old = xp.kron(xp.kron(ddr,xp.eye(Nph,Nph)),costheta)
+    pzta_old = xp.kron(xp.kron((invr),xp.eye(Nph,Nph)),xp.eye(Nth,Nth))
+    pztb_old = -xp.kron(xp.kron(invr,xp.eye(Nph,Nph)),sintheta@ddth)
+    pz = pzra_old+ pzrb_old+ pzta_old+ pztb_old
+ 
     t1px = xp.dot(t1,px)
     pxt1 = xp.dot(px,t1)
     t2px = xp.dot(t2,px)
@@ -284,8 +290,186 @@ def Gamma_etf_polar(R,r,phi,theta,ddr,ddph,ddth,M_1,M_2,mu12,r1e2,r2e2):
     gammaetf2x = -0.5*(t2px + pxt2)   
     gammaetf2y = -0.5*(t2py + pyt2)
     gammaetf2z = -0.5*(t2pz + pzt2)
+    
+    return gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z
+
+
+def Gamma_etf(R,r,phi,theta,ddr,ddph,ddth,M_1,M_2,mu12,r1e2,r2e2,*xdav):
+
+    if len(xdav)==1:
+        xdavx1 = xdavy1 = xdavz1 = xdavx2 = xdavy2 = xdavz2  = xdav[0]
+    else:
+        xdavx1, xdavy1, xdavz1, xdavx2, xdavy2, xdavz2 = xdav   
+
+    Nth = len(ddth)
+    Nr = len(ddr)
+    Nph = len(ddph)
+    
+    theta1 = xp.exp(-r1e2)
+    theta2 = xp.exp(-r2e2)
+    partition = theta1 + theta2
+
+    costheta = xp.diag(xp.cos(theta)[0,0,:])
+    sintheta = xp.diag(xp.sin(theta)[0,0,:])
+    cosphi = xp.diag(xp.cos(phi)[0,:,0])
+    sinphi = xp.diag(xp.sin(phi)[0,:,0])
+
+    costheta_diag = (xp.cos(theta)[0,0,:])
+    sintheta_diag = (xp.sin(theta)[0,0,:])
+    cosphi_diag = (xp.cos(phi)[0,:,0])
+    sinphi_diag = (xp.sin(phi)[0,:,0])
+    
+    re = r[:,0,0]
+    invr = xp.diag(1/re)
+
+    t1 = theta1/partition
+    t2 = theta2/partition
+
+    t1pxr = xp.einsum('ikl,ij,k,l,Bjkl->Bikl',t1,(ddr-invr),cosphi_diag,sintheta_diag,xdavx1)
+    t1pxt = xp.einsum('ijk,i,j,kl,Bijl->Bijk',t1,1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),xdavx1)
+    t1pxp = -xp.einsum('ijl,i,jk,l,Bikl->Bijl',t1,1/re,sinphi@ddph,1/sintheta_diag,xdavx1)
+    t1px = t1pxr + t1pxt + t1pxp
+
+    t2pxr = xp.einsum('ikl,ij,k,l,Bjkl->Bikl',t2,(ddr-invr),cosphi_diag,sintheta_diag,xdavx2)
+    t2pxt = xp.einsum('ijk,i,j,kl,Bijl->Bijk',t2,1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),xdavx2)
+    t2pxp = -xp.einsum('ijl,i,jk,l,Bikl->Bijl',t2,1/re,sinphi@ddph,1/sintheta_diag,xdavx2)
+    t2px = t2pxr + t2pxt + t2pxp
+
+    t1pyr = xp.einsum('ikl,ij,k,l,Bjkl->Bikl',t1,(ddr-invr),sinphi_diag,sintheta_diag,xdavy1)
+    t1pyt = xp.einsum('ijk,i,j,kl,Bijl->Bijk',t1,1/re,sinphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),xdavy1)
+    t1pyp = -xp.einsum('ijl,i,jk,l,Bikl->Bijl',t1,1/re,cosphi@ddph,1/sintheta_diag,xdavy1)
+    t1py = t1pyr + t1pyt + t1pyp
+
+    t2pyr = xp.einsum('ikl,ij,k,l,Bjkl->Bikl',t2,(ddr-invr),sinphi_diag,sintheta_diag,xdavy2)
+    t2pyt = xp.einsum('ijk,i,j,kl,Bijl->Bijk',t2,1/re,sinphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),xdavy2)
+    t2pyp = -xp.einsum('ijl,i,jk,l,Bikl->Bijl',t2,1/re,cosphi@ddph,1/sintheta_diag,xdavy2)
+    t2py = t2pyr + t2pyt + t2pyp
+
+    t1pzr = xp.einsum('ilk,ij,k,Bjlk->Bilk', t1, (ddr-invr),costheta_diag,xdavz1)
+    t1pzt = xp.einsum('ilj,i,jk,Bilk->Bilj', t1, 1/re,(xp.eye(Nth,Nth)-sintheta@ddth),xdavz1)
+    t1pz = t1pzr + t1pzt
+
+    t2pzr = xp.einsum('ilk,ij,k,Bjlk->Bilk', t2, (ddr-invr),costheta_diag,xdavz2)
+    t2pzt = xp.einsum('ilj,i,jk,Bilk->Bilj', t2, 1/re,(xp.eye(Nth,Nth)-sintheta@ddth),xdavz2)
+    t2pz = t2pzr + t2pzt
+    
+    pxrt1 = xp.einsum('ij,k,l,jkl,Bjkl->Bikl',(ddr-invr),cosphi_diag,sintheta_diag,t1,xdavx1)
+    pxtt1 = xp.einsum('i,j,kl,ijl,Bijl->Bijk',1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),t1,xdavx1)
+    pxpt1 = -xp.einsum('i,jk,l,ikl,Bikl->Bijl',1/re,sinphi@ddph,1/sintheta_diag,t1, xdavx1)
+    pxt1 = pxrt1 + pxtt1 + pxpt1
+
+    pxrt2 = xp.einsum('ij,k,l,jkl,Bjkl->Bikl',(ddr-invr),cosphi_diag,sintheta_diag,t2,xdavx2)
+    pxtt2 = xp.einsum('i,j,kl,ijl,Bijl->Bijk',1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),t2,xdavx2)
+    pxpt2 = -xp.einsum('i,jk,l,ikl,Bikl->Bijl',1/re,sinphi@ddph,1/sintheta_diag,t2, xdavx2)
+    pxt2 = pxrt2 + pxtt2 + pxpt2
+
+    pyrt1 = xp.einsum('ij,k,l,jkl,Bjkl->Bikl',(ddr-invr),sinphi_diag,sintheta_diag,t1,xdavy1)
+    pytt1 = xp.einsum('i,j,kl,ijl,Bijl->Bijk',1/re,sinphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),t1,xdavy1)
+    pypt1 = -xp.einsum('i,jk,l,ikl,Bikl->Bijl',1/re,cosphi@ddph,1/sintheta_diag,t1,xdavy1)
+    pyt1 = pyrt1 + pytt1 + pypt1
+
+    pyrt2 = xp.einsum('ij,k,l,jkl,Bjkl->Bikl',(ddr-invr),sinphi_diag,sintheta_diag,t2,xdavy2)
+    pytt2 = xp.einsum('i,j,kl,ijl,Bijl->Bijk',1/re,sinphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),t2,xdavy2)
+    pypt2 = -xp.einsum('i,jk,l,ikl,Bikl->Bijl',1/re,cosphi@ddph,1/sintheta_diag,t2,xdavy2)
+    pyt2 = pyrt2 + pytt2 + pypt2
+
+    pzrt1 = xp.einsum('ij,k,jlk,Bjlk->Bilk',(ddr-invr),costheta_diag,t1,xdavz1)
+    pztt1 = xp.einsum('i,jk,ilk,Bilk->Bilj',1/re,(xp.eye(Nth,Nth)-sintheta@ddth),t1,xdavz1)
+    pzt1 = pzrt1 + pztt1
+
+    pzrt2 = xp.einsum('ij,k,jlk,Bjlk->Bilk',(ddr-invr),costheta_diag,t2,xdavz2)
+    pztt2 = xp.einsum('i,jk,ilk,Bilk->Bilj',1/re,(xp.eye(Nth,Nth)-sintheta@ddth),t2,xdavz2)
+    pzt2 = pzrt2 + pztt2
+    
+    gammaetf1x = -0.5*(t1px + pxt1)
+    gammaetf1y = -0.5*(t1py + pyt1)
+    gammaetf1z = -0.5*(t1pz + pzt1)
+
+    gammaetf2x = -0.5*(t2px + pxt2)   
+    gammaetf2y = -0.5*(t2py + pyt2)
+    gammaetf2z = -0.5*(t2pz + pzt2)
 
     return gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z
+
+
+def Gamma_etf_sq_diag(R,r,phi,theta,ddr,ddph,ddth,M_1,M_2,mu12,r1e2,r2e2):
+
+    Nth = len(ddth)
+    Nr = len(ddr)
+    Nph = len(ddph)
+    
+    theta1 = xp.exp(-r1e2)
+    theta2 = xp.exp(-r2e2)
+    partition = theta1 + theta2
+
+    costheta = xp.diag(xp.cos(theta)[0,0,:])
+    sintheta = xp.diag(xp.sin(theta)[0,0,:])
+    cosphi = xp.diag(xp.cos(phi)[0,:,0])
+    sinphi = xp.diag(xp.sin(phi)[0,:,0])
+
+    costheta_diag = (xp.cos(theta)[0,0,:])
+    sintheta_diag = (xp.sin(theta)[0,0,:])
+    cosphi_diag = (xp.cos(phi)[0,:,0])
+    sinphi_diag = (xp.sin(phi)[0,:,0])
+    
+    re = r[:,0,0]
+    invr = xp.diag(1/re)
+
+    t1 = theta1/partition
+    t2 = theta2/partition
+
+    t1pxr = xp.einsum('akl,ab,k,l->abkl',t1,(ddr-invr),cosphi_diag,sintheta_diag)
+    
+    t1pxt = xp.einsum('ijk,i,j,kl->ijl',t1,1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))))
+
+    t1pxp = -xp.einsum('ijl,i,jk,l->ikl',t1,1/re,sinphi@ddph,1/sintheta_diag)
+    t1px = t1pxr + t1pxt + t1pxp
+
+    pxrt1 = xp.einsum('ij,k,l,jkl->ikl',(ddr-invr),cosphi_diag,sintheta_diag,t1)
+    pxtt1 = xp.einsum('i,j,kl,ijl->ijk',1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),t1)
+    pxpt1 = -xp.einsum('i,jk,l,ikl->ijl',1/re,sinphi@ddph,1/sintheta_diag,t1)
+    pxt1 = pxrt1 + pxtt1 + pxpt1
+
+    gammasq1x = xp.einsum('ijk,ijk->ijk',(t1px+pxt1),(t1px+pxt1))
+    diag_gammasq1x = 0.25*xp.einsum('aaij->aij', gammasq1x)
+    
+
+
+
+    t1pxr = xp.einsum('abc,am,k,l->ambkcl',t1,(ddr-invr),cosphi_diag,sintheta_diag)
+    t1pxt = xp.einsum('abc,i,j,cd->aibjcd',t1,1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))))
+    t1pxp = -xp.einsum('abc,i,bd,l->aibdcl',t1,1/re,sinphi@ddph,1/sintheta_diag)
+    t1px = t1pxr + t1pxt + t1pxp
+
+
+    #t1pxr = xp.einsum('ikl,ij,k,l->jkl',t1,(ddr-invr),cosphi_diag,sintheta_diag)
+    #t1pxt = xp.einsum('ijk,i,j,kl->ijl',t1,1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))))
+    #t1pxp = -xp.einsum('ijl,i,jk,l->ikl',t1,1/re,sinphi@ddph,1/sintheta_diag)
+    #t1px = t1pxr + t1pxt + t1pxp
+
+    #pxr = xp.einsum('ij,k,l->ikl',(ddr-invr),cosphi_diag,sintheta_diag)
+    #pxt = xp.einsum('i,j,kl->ijk',1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))))
+    #pxp = -xp.einsum('i,jk,l->ijl',1/re,sinphi@ddph,1/sintheta_diag)
+    #t1px = xp.einsum('ijk,ijk')t1pxr + t1pxt + t1pxp
+    
+    #pxrt1 = xp.einsum('ab,k,l,bkl->abkl',(ddr-invr),cosphi_diag,sintheta_diag,t1)
+    #pxtt1 = xp.einsum('i,j,ab,ijb->ijab',1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),t1)
+    #pxpt1 = -xp.einsum('i,ab,l,ibl->iabl',1/re,sinphi@ddph,1/sintheta_diag,t1)
+    #pxt1 = pxrt1 + pxtt1 + pxpt1
+
+    pxrt1 = xp.einsum('ij,k,l,abc->jakblc',(ddr-invr),cosphi_diag,sintheta_diag,t1)
+    pxtt1 = xp.einsum('i,j,kc,abc->iajbkc',1/re,cosphi_diag,(costheta@ddth-xp.diag(costheta_diag/(2*sintheta_diag))),t1)
+    pxpt1 = -xp.einsum('i,jb,l,abc->iajblc',1/re,sinphi@ddph,1/sintheta_diag,t1)
+    pxt1 = pxrt1 + pxtt1 + pxpt1
+
+
+    gammasq1x = xp.einsum('abij,bcij->acij', (t1px+pxt1),(t1px+pxt1))
+    diag_gammasq1x = 0.25*xp.einsum('aaij->aij', gammasq1x)
+    
+    gammasq1x = xp.einsum('abijxy,bcijxy->acijxy', (t1px+pxt1),(t1px+pxt1))
+    diag_gammasq1x = 0.25*xp.einsum('aaij->aij', gammasq1x)
+
+    return diag_gammasq1x 
 
 def Gamma_erf_polar(R,r,p,g,ddr,ddp,ddg,M_1,M_2,mu12,r1e2,r2e2):
 
@@ -385,7 +569,7 @@ def parse_args():
     parser.add_argument('-phi', dest="Nph", metavar="Nph", default=250, type=int)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
-    parser.add_argument('--subspace', metavar='max_subspace', default=200, type=int)
+    parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--save', metavar="filename")
@@ -434,6 +618,207 @@ if __name__ == '__main__':
     
     NR,Nr,Nph,Nth = H.shape
     Nelec = Nr*Nth*Nph 
+
+    sinthiinv = 1/xp.sin(H.th)
+    sinthiinv[xp.abs(sinthiinv)>1e6]=0
+    sinthiinvsq = xp.square(sinthiinv)
+
+    Hel = -1/(2*H.mur)*(
+        xp.kron(xp.kron(H.ddr2, xp.eye(Nph)), xp.eye(Nth)) \
+        +xp.kron(xp.kron(xp.diag(H.rinv2),xp.eye(Nph)),H.ddth2)\
+        +xp.kron(xp.kron(xp.diag(0.5*H.rinv2),xp.eye(Nph)),xp.eye(Nth))\
+        +xp.kron(xp.kron(xp.diag(0.25*H.rinv2),xp.eye(Nph)),xp.diag(xp.cos(H.th)**2/xp.sin(H.th)**2))\
+        +xp.kron(xp.kron(xp.diag(H.rinv2), H.ddph2),xp.diag(sinthiinvsq))
+        )
+    
+
+    def Tx(xdav):
+        xdav = xdav.reshape((-1,) + H.boshape)
+        
+        Hel_dav = -1/(2*H.mur)*(           
+            xp.einsum('ij,Bjkl->Bikl',H.ddr2,xdav)\
+            +xp.einsum('i,jk,Bilk->Bilj',H.rinv2,H.ddth2,xdav)\
+            +xp.einsum('i,Bikj->Bikj',0.5*H.rinv2,xdav)
+            +xp.einsum('i,j,Bikj->Bikj',0.25*H.rinv2,(xp.cos(H.th)**2/xp.sin(H.th)**2),xdav)
+            +xp.einsum('i,j,kl,Bilj->Bikj',H.rinv2, sinthiinvsq, H.ddph2,xdav)
+        )
+        return Hel_dav.reshape(xdav.shape)
+
+    def _preconditioner_naive(H, dx, e, x0, Ri):
+        diagH = buildDiag(H,Ri)
+        diagd = diagH - (e - 1e-5)
+        return dx/diagd
+
+    def buildDiag(H,Ri):
+
+        rinv2 = 1/(H.r_grid)**2
+        tanthinv = 1/xp.tan(H.t_grid)
+        tanthinv[xp.abs(tanthinv)>1e6]=0
+        sinsqthinv = 1/xp.sin(H.t_grid)**2
+        sinsqthinv[xp.abs(sinsqthinv)>1e6]=0
+        sinthinv = 1/xp.sin(H.t_grid)
+        sinthinv[xp.abs(sinthinv)>1e6]=0
+        #print("tgrid",(H.t_grid).shape)
+        ke  = xp.zeros([Nr,Nph,Nth])
+        ke += xp.diag(H.ddr2)[:,None,None]
+        ke += rinv2*xp.diag(H.ddth2)[None,None,:]
+        ke += 0.5*H.rinv2[:,None,None]
+        ke += 0.25*rinv2*((xp.cos(H.th)**2/(xp.sin(H.th)**2)))[None,None,:]
+        ke += rinv2*sinsqthinv*xp.diag(H.ddph2)[None,:,None]
+        ke *= -1 / (2*H.mur)
+        diag = H.Vgrid[Ri] + ke
+        return diag.ravel()
+
+    Htot_bo = xp.zeros([NR,Nelec,Nelec])
+    Htot_bo[:] = Hel
+    Htot_bo[:,xp.arange(Nelec),xp.arange(Nelec)] += xp.reshape(H.Vgrid[:],(NR,Nelec))#XXXXXcheck this 
+    ival = xp.zeros([NR,1])
+    Ad_n = xp.zeros(NR)
+
+    gammacoeff_R = -1j*H.P_R/H.mu12 
+    gammacoeff_phi = -1j*(H.Pphi/H.R)/H.mu12
+    gammacoeff_theta = +1j*(H.Ptheta/H.R)/H.mu12
+
+    for i in range(H.shape[0]):
+        print("i",i,flush=True)
+
+        r1e2, r2e2 = H.V(H.R[i], H.r_grid, H.p_grid, H.t_grid, spitvals=True)
+        gammaetf1x_old, gammaetf1y_old, gammaetf1z_old, gammaetf2x_old, gammaetf2y_old, gammaetf2z_old = Gamma_etf_old(H.R[i],H.r_grid,H.p_grid,H.t_grid,H.ddr1,H.ddph1,H.ddth1,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
+        diag = buildDiag(H,i)
+        
+        for j in range(H.shape[0]):
+
+            print("j",j)
+
+            gamma1x_old = gammaetf1x_old
+            gamma2x_old = gammaetf2x_old
+            gamma1y_old = gammaetf1y_old
+            gamma2y_old = gammaetf2y_old
+            gamma1z_old = gammaetf1z_old
+            gamma2z_old = gammaetf2z_old
+
+            Gammatotx_old = (H.M_2*gamma1x_old-H.M_1*gamma2x_old)/(H.M_1+H.M_2)
+            Gammatoty_old = (H.M_2*gamma1y_old-H.M_1*gamma2y_old)/(H.M_1+H.M_2)
+            Gammatotz_old = (H.M_2*gamma1z_old-H.M_1*gamma2z_old)/(H.M_1+H.M_2)
+#
+            gammasq1x_old = xp.dot(gamma1x_old,gamma1x_old)
+            gammasq2x_old = xp.dot(gamma2x_old,gamma2x_old)
+            gamma1x2x_old = xp.dot(gamma1x_old,gamma2x_old)
+            gamma2x1x_old = xp.dot(gamma2x_old,gamma1x_old)
+            gammasq1y_old = xp.dot(gamma1y_old,gamma1y_old)
+            gammasq2y_old = xp.dot(gamma2y_old,gamma2y_old)       
+            gamma1y2y_old = xp.dot(gamma1y_old,gamma2y_old)
+            gamma2y1y_old = xp.dot(gamma2y_old,gamma1y_old)
+
+            gammasq1z_old = xp.dot(gamma1z_old,gamma1z_old)
+            gammasq2z_old = xp.dot(gamma2z_old,gamma2z_old)       
+            gamma1z2z_old = xp.dot(gamma1z_old,gamma2z_old)
+            gamma2z1z_old = xp.dot(gamma2z_old,gamma1z_old)
+            Gammasqtotx_old = ((H.M_2**2*gammasq1x_old)+(H.M_1**2*gammasq2x_old)-(H.M_1*H.M_2*gamma1x2x_old)-(H.M_1*H.M_2*gamma2x1x_old))/(H.M_1+H.M_2)**2
+            Gammasqtoty_old = ((H.M_2**2*gammasq1y_old)+(H.M_1**2*gammasq2y_old)-(H.M_1*H.M_2*gamma1y2y_old)-(H.M_1*H.M_2*gamma2y1y_old))/(H.M_1+H.M_2)**2
+            Gammasqtotz_old = ((H.M_2**2*gammasq1z_old)+(H.M_1**2*gammasq2z_old)-(H.M_1*H.M_2*gamma1z2z_old)-(H.M_1*H.M_2*gamma2z1z_old))/(H.M_1+H.M_2)**2 
+#
+ #
+            #Htot_old = Htot_bo[i]
+            Htot_old = Htot_bo[i]+(gammacoeff_R[j]*Gammatotx_old)+(gammacoeff_phi[i]*Gammatoty_old)+(gammacoeff_theta[i]*Gammatotz_old)
+            Htotsq_old = Htot_old - (Gammasqtotx_old +Gammasqtoty_old + Gammasqtotz_old)/(2*H.mu12)
+            e_approxsq = xp.linalg.eigvalsh(Htotsq_old)
+
+            #gammasq1x = Gamma_etf_sq_diag(H.R[i],H.r_grid,H.p_grid,H.t_grid,H.ddr1,H.ddph1,H.ddth1,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
+
+            #xdav = xp.random.rand(1,H.shape[1],H.shape[2],H.shape[3])
+            #gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z = Gamma_etf(H.R[i],H.r_grid,H.p_grid,H.t_grid,H.ddr1,H.ddph1,H.ddth1,H.M_1,H.M_2,H.mu12,r1e2,r2e2,xdav)
+##
+            #print("diff",xp.sum((gammasq1x-xp.diag(gammasq1x_old))**2))
+        
+            print("e_approx",e_approxsq[0:5])
+
+            
+            def ps_ham(xdav):
+
+                x = xdav.reshape((-1,)+H.boshape)
+
+                Tx = -1/(2*H.mur)*(           
+                    xp.einsum('ij,Bjkl->Bikl',H.ddr2,x)\
+                    +xp.einsum('i,jk,Bilk->Bilj',H.rinv2,H.ddth2,x)\
+                    +xp.einsum('i,Bikj->Bikj',0.5*H.rinv2,x)
+                    +xp.einsum('i,j,Bikj->Bikj',0.25*H.rinv2,(xp.cos(H.th)**2/xp.sin(H.th)**2),x)
+                    +xp.einsum('i,j,kl,Bilj->Bikj',H.rinv2, sinthiinvsq, H.ddph2,x)
+                )
+                
+                gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z = Gamma_etf(H.R[i],H.r_grid,H.p_grid,H.t_grid,H.ddr1,H.ddph1,H.ddth1,H.M_1,H.M_2,H.mu12,r1e2,r2e2,x)
+                gamma1x = gammaetf1x
+                gamma2x = gammaetf2x
+                gamma1y = gammaetf1y
+                gamma2y = gammaetf2y
+                gamma1z = gammaetf1z
+                gamma2z = gammaetf2z
+                Gammatotx = (H.M_2*gamma1x-H.M_1*gamma2x)/(H.M_1+H.M_2)
+                Gammatoty = (H.M_2*gamma1y-H.M_1*gamma2y)/(H.M_1+H.M_2)
+                Gammatotz = (H.M_2*gamma1z-H.M_1*gamma2z)/(H.M_1+H.M_2)
+
+                gammasq1x, gammasq1y, gammasq1z, gammasq2x, gammasq2y, gammasq2z = Gamma_etf(H.R[i],H.r_grid,H.p_grid,H.t_grid,H.ddr1,H.ddph1,H.ddth1,H.M_1,H.M_2,H.mu12,r1e2,r2e2, gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z)
+                gamma1x2x, gamma1y2y, gamma1z2z, gamma2x1x, gamma2y1y, gamma2z1z = Gamma_etf(H.R[i],H.r_grid,H.p_grid,H.t_grid,H.ddr1,H.ddph1,H.ddth1,H.M_1,H.M_2,H.mu12,r1e2,r2e2, gammaetf2x, gammaetf2y, gammaetf2z, gammaetf1x, gammaetf1y, gammaetf1z)
+
+                
+                Gammasqtotx = ((H.M_2**2*gammasq1x)+(H.M_1**2*gammasq2x)-(H.M_1*H.M_2*gamma1x2x)-(H.M_1*H.M_2*gamma2x1x))/(H.M_1+H.M_2)**2
+                Gammasqtoty = ((H.M_2**2*gammasq1y)+(H.M_1**2*gammasq2y)-(H.M_1*H.M_2*gamma1y2y)-(H.M_1*H.M_2*gamma2y1y))/(H.M_1+H.M_2)**2
+                Gammasqtotz = ((H.M_2**2*gammasq1z)+(H.M_1**2*gammasq2z)-(H.M_1*H.M_2*gamma1z2z)-(H.M_1*H.M_2*gamma2z1z))/(H.M_1+H.M_2)**2
+
+                
+                #Hbodav = H.Vgrid[i]*x + Tx
+                Hbodav = H.Vgrid[i]*x + Tx + (gammacoeff_R[j]*Gammatotx)+(gammacoeff_phi[i]*Gammatoty)+(gammacoeff_theta[i]*Gammatotz)
+                Htotsq = Hbodav - (Gammasqtotx +Gammasqtoty + Gammasqtotz)/(2*H.mu12) 
+
+                #print("diffx",xp.sum((Htotsq_old@xdav.flatten()-Htotsq.flatten())**2))
+                #print("diffy",xp.sum((Htotsq_old@xdav.flatten()-Htotsq.flatten())**2))
+                #print("diffz",xp.sum((Htotsq_old@xdav.flatten()-Htotsq.flatten())**2))
+
+
+                return Htotsq.reshape(xdav.shape)
+##
+            #xdav = xp.random.rand(1,H.shape[1],H.shape[2],H.shape[3])
+            #print("diff",xp.sum((Htotsq_old@xdav.flatten()-ps_ham(xdav).flatten())**2))
+
+            #print(xp.sum((Htotsq@xdav.flatten()-ps_ham(xdav).flatten())**2))
+        
+            guess_ps = xp.exp(-(H.Vgrid[i] - xp.min(H.Vgrid[i]))**2/27.211**2).ravel()
+            with timer_ctx(f"Davidson of size {H.size}"):
+                conv, e_approx, evecs = lib.davidson1(
+                    ps_ham,
+                    guess_ps,
+                    #H.diag,
+                    #_preconditioner_naive(H, dx, e, x0,i),
+                    lambda dx, e, x0: dx/(diag-e+1e-5),
+                    nroots=args.k,
+                    max_cycle=args.iterations,
+                    verbose=args.verbosity,
+                    max_space=args.subspace,
+                    max_memory=get_davidson_mem(0.75),
+                    #tol=1e-12, #FIXME:DEBUG
+                    tol=1e-10,
+                )
+
+            print("Davidson:", e_approx)
+            print(conv)#        
+
+
+    exit()
+
+
+    for i in range(H.shape[0]):
+        print("i",i,flush=True)
+
+        r1e2, r2e2 = H.V(H.R[i], H.r_grid, H.p_grid, H.t_grid, spitvals=True)
+
+        Gamma_etf_polar(H.R[i],H.r_grid,H.p_grid,H.t_grid,H.ddr1,H.ddph1,H.ddth1,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
+
+    
+    
+    exit()
+
+
+    '''
     
     
     
@@ -466,21 +851,39 @@ if __name__ == '__main__':
     #ddth1_new = H.ddth1.copy()
     #xp.fill_diagonal(ddth1_new, xp.diag(H.ddth1) * xp.sin(H.th))
     
-    thbig = xp.diag(sinthiinv)@(H.ddth1@(xp.diag(xp.sin(H.th))@H.ddth1))
+    #thbig = xp.diag(sinthiinv)@(H.ddth1@(xp.diag(xp.sin(H.th))@H.ddth1))
+    thbig = (H.ddth1@(xp.diag(xp.sin(H.th))@H.ddth1))
+    
+    #print("check herm",xp.sum(((H.ddth1@(xp.diag(xp.sin(H.th))@H.ddth1))-xp.conj((H.ddth1@(xp.diag(xp.sin(H.th))@H.ddth1)).T))**2))
+    #print("ddth1",xp.sum((1j*H.ddth1-xp.conj(1j*H.ddth1.T))**2))
+    #exit()
+    #Hel = -1/(2*H.mur)*(
+    #    xp.kron(xp.kron(H.ddr2, xp.eye(Nph)), xp.eye(Nth)) \
+    #    +xp.kron(xp.kron(xp.diag(H.rinv2),xp.eye(Nph)),thbig)\
+    #    +xp.kron(xp.kron(xp.diag(H.rinv2), H.ddph2),xp.diag(sinthiinvsq))
+    #    )
+
+    
+    
+    #exit()
+
+    #Hel_old = -1/(2*H.mur)*(
+    #   xp.kron(xp.kron(H.ddr2, xp.eye(Nph)), xp.eye(Nth)) \
+    #   +xp.kron(xp.kron(xp.eye(Nr), xp.eye(Nph) ), H.ddth1)\
+    #   +xp.kron(xp.kron(xp.diag(H.rinv2), xp.eye(Nph)), H.ddth2)\
+    #   +xp.kron(xp.kron(xp.diag(H.rinv2), H.ddph2),xp.diag(sinthiinvsq))
+    #   )
 
     Hel = -1/(2*H.mur)*(
         xp.kron(xp.kron(H.ddr2, xp.eye(Nph)), xp.eye(Nth)) \
-        +xp.kron(xp.kron(xp.diag(H.rinv2),xp.eye(Nph)),thbig)\
+        +xp.kron(xp.kron(xp.diag(H.rinv2),xp.eye(Nph)),H.ddth2)\
+        +xp.kron(xp.kron(xp.diag(0.5*H.rinv2),xp.eye(Nph)),xp.eye(Nth))\
+        +xp.kron(xp.kron(xp.diag(0.25*H.rinv2),xp.eye(Nph)),xp.diag(xp.cos(H.th)**2/xp.sin(H.th)**2))\
         +xp.kron(xp.kron(xp.diag(H.rinv2), H.ddph2),xp.diag(sinthiinvsq))
         )
-
-    Hel_old = -1/(2*H.mur)*(
-       xp.kron(xp.kron(H.ddr2, xp.eye(Nph)), xp.eye(Nth)) \
-       +xp.kron(xp.kron(xp.eye(Nr), xp.eye(Nph) ), H.ddth1)\
-       +xp.kron(xp.kron(xp.diag(H.rinv2), xp.eye(Nph)), H.ddth2)\
-       +xp.kron(xp.kron(xp.diag(H.rinv2), H.ddph2),xp.diag(sinthiinvsq))
-       )
     
+    
+    print("check herm",xp.sum((Hel-xp.conj(Hel.T))**2))
     
 
     def Tx(xdav):
@@ -514,15 +917,21 @@ if __name__ == '__main__':
         #    +xp.einsum('i,j,kl,Bilj->Bikj',H.rinv2, sinthiinvsq, H.ddph2,xdav)
         #    )
 
+        #thbig = (H.ddth1@(xp.diag(xp.sin(H.th))@H.ddth1))
+
         Hel_dav = -1/(2*H.mur)*(           
             xp.einsum('ij,Bjkl->Bikl',H.ddr2,xdav)\
-            +xp.einsum('i,jk,Bilk->Bilj',H.rinv2,thbig,xdav)\
+            +xp.einsum('i,jk,Bilk->Bilj',H.rinv2,H.ddth2,xdav)\
+            +xp.einsum('i,Bikj->Bikj',0.5*H.rinv2,xdav)
+            +xp.einsum('i,j,Bikj->Bikj',0.25*H.rinv2,(xp.cos(H.th)**2/xp.sin(H.th)**2),xdav)
             +xp.einsum('i,j,kl,Bilj->Bikj',H.rinv2, sinthiinvsq, H.ddph2,xdav)
-            )
+        )
+            
 
         return Hel_dav.reshape(xdav.shape)
 
    
+    
     #orig = Hel@xdav.flatten()
     #print("orig",orig.shape)
     #print("orig",orig)
@@ -531,8 +940,8 @@ if __name__ == '__main__':
     #print("diff",xp.linalg.norm(orig-new.flatten()))
 
 
-    xdav = xp.random.rand(H.shape[1],H.shape[2],H.shape[3])
-    xdot = xdav.flatten()
+    #xdav = xp.random.rand(H.shape[1],H.shape[2],H.shape[3])
+    #xdot = xdav.flatten()
  
     
     def _preconditioner_naive(H, dx, e, x0, Ri):
@@ -541,21 +950,7 @@ if __name__ == '__main__':
         return dx/diagd
 
     def buildDiag(H,Ri):
-        #rinv2 = 1/(H.r_grid)**2
-        #tanthinv = 1/xp.tan(H.t_grid)
-        #tanthinv[xp.abs(tanthinv)>1e6]=0
-        #sinsqthinv = 1/xp.sin(H.t_grid)**2
-        #sinsqthinv[xp.abs(sinsqthinv)>1e6]=0
-#
-        #ke  = xp.zeros([Nr,Nph,Nth])
-        #ke += xp.diag(H.ddr2)[:,None,None]
-        ##ke += xp.diag(H.ddr1)[:,None,None]
-        #ke += rinv2*tanthinv*xp.diag(H.ddth1)[None,:,None]
-        #ke += rinv2*xp.diag(H.ddth2)[None,:,None]
-        #ke += rinv2*sinsqthinv*xp.diag(H.ddph2)[None,None,:]
-        #ke *= -1 / (2*H.mur)
-        #diag = H.Vgrid[Ri] + ke
-
+        
         rinv2 = 1/(H.r_grid)**2
         tanthinv = 1/xp.tan(H.t_grid)
         tanthinv[xp.abs(tanthinv)>1e6]=0
@@ -563,15 +958,22 @@ if __name__ == '__main__':
         sinsqthinv[xp.abs(sinsqthinv)>1e6]=0
         sinthinv = 1/xp.sin(H.t_grid)
         sinthinv[xp.abs(sinthinv)>1e6]=0
-        print("tgrid",(H.t_grid).shape)
+        #print("tgrid",(H.t_grid).shape)
        
+
+       #ke  = xp.zeros([Nr,Nph,Nth])
+       #ke += xp.diag(H.ddr2)[:,None,None]
+       ##ke += rinv2*tanthinv*xp.diag(H.ddth1)[None,None,:]
+       ##ke += xp.diag(H.ddth1)[None,None,:]
+       #ke += rinv2*xp.diag(thbig)[None,None,:]
+       ##ke += rinv2*xp.diag(H.ddth2)[None,None,:]
+       #ke += rinv2*sinsqthinv*xp.diag(H.ddph2)[None,:,None]
 
         ke  = xp.zeros([Nr,Nph,Nth])
         ke += xp.diag(H.ddr2)[:,None,None]
-        #ke += rinv2*tanthinv*xp.diag(H.ddth1)[None,None,:]
-        #ke += xp.diag(H.ddth1)[None,None,:]
-        ke += rinv2*xp.diag(thbig)[None,None,:]
-        #ke += rinv2*xp.diag(H.ddth2)[None,None,:]
+        ke += rinv2*xp.diag(H.ddth2)[None,None,:]
+        ke += 0.5*H.rinv2[:,None,None]
+        ke += 0.25*rinv2*((xp.cos(H.th)**2/(xp.sin(H.th)**2)))[None,None,:]
         ke += rinv2*sinsqthinv*xp.diag(H.ddph2)[None,:,None]
         ke *= -1 / (2*H.mur)
         diag = H.Vgrid[Ri] + ke
@@ -580,9 +982,9 @@ if __name__ == '__main__':
     Htot_bo = xp.zeros([NR,Nelec,Nelec])
     Htot_bo[:] = Hel
     Htot_bo[:,xp.arange(Nelec),xp.arange(Nelec)] += xp.reshape(H.Vgrid[:],(NR,Nelec))#XXXXXcheck this
-    Htot_bo_old = xp.zeros([NR,Nelec,Nelec])
-    Htot_bo_old[:] = Hel_old
-    Htot_bo_old[:,xp.arange(Nelec),xp.arange(Nelec)] += xp.reshape(H.Vgrid[:],(NR,Nelec)) 
+    #Htot_bo_old = xp.zeros([NR,Nelec,Nelec])
+    #Htot_bo_old[:] = Hel_old
+    #Htot_bo_old[:,xp.arange(Nelec),xp.arange(Nelec)] += xp.reshape(H.Vgrid[:],(NR,Nelec)) 
     ival = xp.zeros([NR,1])
     Ad_n = xp.zeros(NR)
 
@@ -590,35 +992,40 @@ if __name__ == '__main__':
     eigvals_list = []
     for i in range(NR):
         print("Atom Ri",i)
-        diag = buildDiag(H,i)
+        #diag = buildDiag(H,i)
         def Hbo_dav(xdav):
             x = xdav.reshape((-1,)+H.boshape)
             Hbodav = H.Vgrid[i]*x + Tx(x)
             return Hbodav.reshape(xdav.shape)
         
-        xdav = xp.random.rand(H.shape[1],H.shape[2],H.shape[3])
+        #xdav = xp.random.rand(H.shape[1],H.shape[2],H.shape[3])
 
-        orig = Htot_bo[i]@xdav.flatten()     
+        #orig = Htot_bo[i]@xdav.flatten()     
         #print("orig",orig.shape)
         #print("orig",orig)
-        new = Hbo_dav(xdav)
+        #new = Hbo_dav(xdav)
         #print("new",new)
-        print("diff1",xp.linalg.norm(orig-new.flatten()))
+        #print("diff1",xp.linalg.norm(orig-new.flatten()))
+
+        
 #
-        origdiag = xp.diag(Htot_bo[i]) 
-        newdiag = buildDiag(H,i)
+        #origdiag = xp.diag(Htot_bo[i]) 
+        diag = buildDiag(H,i)
 
-        #print("new",newdiag)
-        print("diff2",xp.linalg.norm(origdiag-newdiag))
+        #print("new",origdiag)
+        #print("diff2",xp.sum((origdiag-diag)**2))
 
-        print("check",xp.sum((Htot_bo[i]-xp.conj(Htot_bo[i].T))))
+        #print("check",(Htot_bo[i]))
 
+        #print("check",xp.sum((Htot_bo[i]-xp.conj(Htot_bo[i].T))**2))
+
+        
 
 
         eigvals = xp.linalg.eigvalsh(Htot_bo[i])
-        eigvals_old = xp.linalg.eigvalsh(Htot_bo_old[i])
+        #eigvals_old = xp.linalg.eigvalsh(Htot_bo_old[i])
         print("eigvals",eigvals[0:5]) 
-        print("eigval_old",eigvals_old[0:5])
+        #print("eigval_old",eigvals_old[0:5])
         
         #eigvals_list.append(eigvals[0:5].tolist())
         ##
@@ -640,14 +1047,14 @@ if __name__ == '__main__':
             )
         print("Davidson:", e_approx)
         print(conv)#
-        #Ad_n[i] = e_approx[0]
-        #ival[i,0] = e_approx[0]
+        Ad_n[i] = e_approx[0]
+        ival[i,0] = e_approx[0]
         #eigvals = xp.linalg.eigvalsh(Htot_bo[i])
         #print("eigvals",eigvals) 
         #print("diff",e_approx[0]-eigvals[0])
         #exit()
 
-    print("eigval",eigvals_list)
+    #print("eigval",eigvals_list)
 
     Rval, Pval = H.RP_grid
 
@@ -764,4 +1171,4 @@ if __name__ == '__main__':
     end_script = perf_counter()  
     print("Numpy time",end_script-start_script,flush=True)
 
-    
+    '''
