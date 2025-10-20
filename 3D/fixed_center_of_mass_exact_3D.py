@@ -107,9 +107,9 @@ class Hamiltonian:
         self.R     = xp.linspace(*R_range,     args.NR)
         self.R_lab = xp.linspace(*R_range_lab, args.NR)
 
-        # require Ng to be even
-        if args.Ng % 2 != 0:
-            raise RuntimeError(f"Ng must be even!")
+        # # require Ng to be even
+        # if args.Ng % 2 != 0:
+        #     raise RuntimeError(f"Ng must be even!")
 
         # N.B.: We don't have consistent meaning for gamma in the
         # phase-space and exact codes. In the present (exact) case,
@@ -122,7 +122,7 @@ class Hamiltonian:
         # odd functions.
 
         #self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)  # can't use this form for torch
-        self.g = xp.asarray([i*xp.pi/(args.Ng-1) for i in range(args.Ng)]) # include the endpoint
+        self.g = xp.asarray([i*xp.pi/(args.Nint-1) for i in range(args.Nint)]) # include the endpoint
 
         self.j  = xp.arange(0,args.Ng)
         self.Om = xp.arange(-self.J, self.J+1)
@@ -134,7 +134,7 @@ class Hamiltonian:
 
         assert not xp.any(self.Vgrid)==xp.nan
 
-        self.shape = self.Vgrid.shape + (len(self.Om),)
+        self.shape = (len(self.R), len(self.r), len(self.j), len(self.Om))
 
         with timer_ctx("Build Vsph from Vgrid"):
             # self.Vsph, self.Vint, self.Pjk  = self.buildVsph()
@@ -774,6 +774,7 @@ def parse_args():
     parser.add_argument('-R', dest="NR", metavar="NR", default=80, type=int)
     parser.add_argument('-r', dest="Nr", metavar="Nr", default=80, type=int)
     parser.add_argument('-g', dest="Ng", metavar="Ng", default=80, type=int)
+    parser.add_argument('-int', dest="Nint", metavar="number of int points for Vjj'Om", default=None, type=int)
     parser.add_argument('--potential', choices=['soft_coulomb', 'borgis', 'erf_coulomb'],
                         default='borgis')
     parser.add_argument('--extent', metavar="X", action=ArrayAction,
@@ -791,11 +792,16 @@ def parse_args():
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--save', metavar="filename")
 
+   
+    
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = parse_args()
+    if args.Nint==None: # if none, override to number of Ng
+        args.Nint = args.Ng
+
     print(args)
 
     # you can only select the backend once and it must be before you use any xp functions
