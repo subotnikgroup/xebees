@@ -65,7 +65,7 @@ extents_soft_coulomb = _extents_log_factory(
     [8,   5,   4,   3.5, 3.5]
 )
 
-def erf_coulomb(R, r1e, r2e, charges, alpha=0.5, beta=1):
+def erf_coulomb(R, r1e, r2e, charges, alpha=0.01, beta=1):
     Q1,Q2 = charges
     V1  = -Q1 *      erf(2*r1e/alpha) / r1e
     V2  = -Q2 *      erf(2*r2e/alpha) / r2e

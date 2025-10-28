@@ -21,6 +21,7 @@ import potentials
 from constants import *
 from hamiltonian import  KE, KE_Borisov_3D
 from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen
+from analysis import get_wfc_proj
 
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
@@ -757,7 +758,7 @@ class Hamiltonian:
 
 def parse_args():
     parser = ap.ArgumentParser(
-        prog='3body-2D',
+        prog='3body-3D',
         description="computes the lowest k eigenvalues of a 3-body potential in 2D")
 
     class ArrayAction(ap.Action):
@@ -852,6 +853,13 @@ if __name__ == '__main__':
 
     print("Davidson:", e_approx)
     print(conv)
+    char,proj = get_wfc_proj(evecs,H)
+    print("e_approx, char, proj:")
+
+    with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
+        for i in range(args.k):
+            print("{:9e}".format(e_approx[i]), char[i], proj[i,:])
+
 
     if args.evecs:
         if hasattr(evecs, 'get'):
@@ -859,7 +867,7 @@ if __name__ == '__main__':
         # warning: even though evecs will be cpu readable, H will only be readable on a node with gpu
         # best to reconstruct H from args on a cpu for plotting purposes 
         # H_new = Hamiltonian(Namespace(**NPZFILE['args'].item()))
-        numpy.savez_compressed(args.evecs, guess=evecs, H=H, args=vars(args), e_approx=e_approx)
+        numpy.savez_compressed(args.evecs, guess=evecs, args=vars(args), e_approx=e_approx)
         print("Wrote eigenvectors to", args.evecs)
 
     if args.bo_spectrum:

@@ -3,17 +3,25 @@ import matplotlib.animation
 import numpy
 import xp
 from matplotlib.widgets import Slider
+import matplotlib as mpl
 
 def fromgpu(tensor):
     return tensor.get() if hasattr(tensor, 'get') else tensor
 
-def plot_psi3D_fixedPsi(wfc, H, levels=None, psi=0, Ngamma=150, scale='linear', save=None):
+def plot_psi3D_fixedPsi(wfc, H, levels=None, psi=0, Ngamma=150, scale='linear', save=None, figsize=(5,6)):
     '''plot polar slice of exact wfc, shape (NR,Nr,Nj,NOm) as a function of R for fixed psi'''
-    fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(6,5))
+    from scipy.special import sph_harm_y
+    fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=figsize)
     # for the potential plotting
     g     = fromgpu(H.g)
     r_lab = fromgpu(H.r_lab)
     Vgrid = fromgpu(H.Vgrid)
+
+    if len(wfc.shape)==1:
+        assert wfc.size%H.size==0
+        #assert number block is integer number of wfcs or H mismatch has occured
+        wfc = xp.reshape(wfc,H.shape)
+    
 
     wfc = wfc[:,:,:,:]/fromgpu(H.r[None,:,None,None]) # rescale the radial wfc for 3D
     wfc = wfc[:,:,:,:]/fromgpu(H.R[:,None,None,None])
@@ -123,13 +131,21 @@ def plot_psi3D_fixedPsi(wfc, H, levels=None, psi=0, Ngamma=150, scale='linear', 
         ani.save(save+'.gif', writer=writer)
     return ani
 
-def plot_psi3D_BO(wfc, H, levels=None, iR=20, Ngamma=150, Npsi=10, scale='linear', save=None):
+def plot_psi3D_BO(wfc, H, levels=None, iR=20, Ngamma=150, Npsi=10, scale='linear', save=None, figsize=(5,6)):
     ''' plot a BO wfc, wfc slice, shape (Nr,Nj,NOm), as function of psi'''
-    fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(6,5))
+    from scipy.special import sph_harm_y
+    fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=figsize)
     # for the potential plotting
     g     = fromgpu(H.g)
     r_lab = fromgpu(H.r_lab)
     Vgrid = fromgpu(H.Vgrid)
+
+    if len(wfc.shape)==1:
+        assert wfc.size%H.size==0
+        #assert number block is integer number of wfcs or H mismatch has occured
+        wfc = xp.reshape(wfc,H.shape)[iR,:,:,:]
+    elif wfc.shape==H.shape:
+        wfc = wfc[iR,:,:,:]
 
     wfc = wfc[:,:,:]/fromgpu(H.r[:,None,None]) # rescale the radial wfc for 3D
 
@@ -229,15 +245,16 @@ def plot_psi3D_BO(wfc, H, levels=None, iR=20, Ngamma=150, Npsi=10, scale='linear
                       antialiased=True,
                       vmin=lowlimit, vmax=toplimit)#, shading='gouraud')
         ax.text(xp.pi/2,xp.max(r_lab)*.75,r"$\psi$={:.2f}$\pi$".format(phi[val]/xp.pi), ha='center')
+        ax.text(xp.pi/2,xp.max(r_lab)*.85,r"$\psi$={:.2f}$\pi$".format(H.R_lab[iR]), ha='center')
 
-    ani = mpl.animation.FuncAnimation(fig, update_R, frames=H.R_lab.size)
+    ani = mpl.animation.FuncAnimation(fig, update_psi, frames=phi.size//2)
     
     if save!= None:
         writer = mpl.animation.PillowWriter(fps=10, metadata=dict(artist='xebees 3D code'))
         ani.save(save+'.gif', writer=writer)
     return ani
 
-def plot_psi3D_fixedPsi_multi(wfcs, H, levels=None, psi=0, Ngamma=150, scale='linear', imag=False, save=None, figsize=(12,12)):
+def plot_psi3D_fixedPsi_multi(wfcs, H, levels=None, psi=0, Ngamma=150, scale='linear', imag=False, save=None, figsize=(9,9)):
     '''plot polar slice of exact wfc, shape (NR,Nr,Nj,NOm) as a function of R for fixed psi'''
     from scipy.special import sph_harm_y
     # for the potential plotting
