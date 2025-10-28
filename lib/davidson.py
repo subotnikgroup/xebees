@@ -41,6 +41,22 @@ def get_davidson_guess(guessfile, grid_dims):
     else:
         print("WARNING: Loaded guess of improper dimension; discarding!")
         return
+    
+def get_davidson_guess_3D(guessfile, H):
+    if guessfile is None:
+        return
+
+    if not guessfile.exists():
+        print(f"WARNING: requested guess-file, {guessfile}, does not exist!")
+        return
+
+    guess = numpy.load(guessfile)['guess']
+    if guess.shape[1] == H.size:
+        print("Loaded guess from", guessfile)
+        return guess
+    else:
+        print("WARNING: Loaded guess of improper dimension; discarding!")
+        ret
 
 
 # FIXME: There's probably a way to do some kind of interpolation on

@@ -20,7 +20,7 @@ import linalg_helper as lib
 import potentials
 from constants import *
 from hamiltonian import  KE, KE_Borisov_3D
-from davidson import phase_match, get_interpolated_guess, get_davidson_mem, solve_exact_gen
+from davidson import phase_match, get_davidson_guess_3D, get_davidson_mem, solve_exact_gen
 from analysis import get_wfc_proj
 
 from debug import prms, timer, timer_ctx
@@ -816,7 +816,7 @@ if __name__ == '__main__':
         H = Hamiltonian(args)
 
     with timer_ctx("Load/make guesses"):
-        guess = get_interpolated_guess(args.guess, (H.R, H.r, H.g))
+        guess = get_davidson_guess_3D(args.guess, H)
         if guess is None:
             guess = H.make_guess(args.k)
 
