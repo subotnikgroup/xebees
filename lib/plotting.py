@@ -8,7 +8,7 @@ import matplotlib as mpl
 def fromgpu(tensor):
     return tensor.get() if hasattr(tensor, 'get') else tensor
 
-def plot_psi3D_fixedPsi(wfc, H, levels=None, psi=0, Ngamma=150, scale='linear', save=None, figsize=(5,6)):
+def plot_psi3D_fixedPsi(wfc, H, levels=None, psi=0, Ngamma=150, scale='linear', save=None, figsize=(6,5)):
     '''plot polar slice of exact wfc, shape (NR,Nr,Nj,NOm) as a function of R for fixed psi'''
     from scipy.special import sph_harm_y
     fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=figsize)
@@ -131,7 +131,7 @@ def plot_psi3D_fixedPsi(wfc, H, levels=None, psi=0, Ngamma=150, scale='linear', 
         ani.save(save+'.gif', writer=writer)
     return ani
 
-def plot_psi3D_BO(wfc, H, levels=None, iR=20, Ngamma=150, Npsi=10, scale='linear', save=None, figsize=(5,6)):
+def plot_psi3D_BO(wfc, H, levels=None, iR=20, Ngamma=150, Npsi=10, scale='linear', save=None, figsize=(6,5)):
     ''' plot a BO wfc, wfc slice, shape (Nr,Nj,NOm), as function of psi'''
     from scipy.special import sph_harm_y
     fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=figsize)
