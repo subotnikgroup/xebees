@@ -144,7 +144,7 @@ class Hamiltonian:
         # Clebsch-Gordon Coefficients between adjacent Ω
         self.VOm = self.buildVOm()
 
-        self.size = xp.prod(xp.asarray(self.shape))
+        self.size = int(xp.prod(xp.asarray(self.shape)))
 
         dR = self.R[1] - self.R[0]
         dr = self.r[1] - self.r[0]
@@ -527,8 +527,12 @@ class Hamiltonian:
 
     def _make_guess_naive(self, min_guess):
         Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
-        guesses = xp.exp(-(Vdiag - xp.min(Vdiag))**2/27.211**2).ravel()
-        #return xp.random.random(guesses.shape)
+        g = xp.exp(-(Vdiag - xp.min(Vdiag))**2/27.211**2)
+
+        *_, NOm = self.shape;
+        mask = xp.eye(NOm, dtype=g.dtype).reshape(NOm, 1, 1, 1, NOm)  # shape (NOm, 1, 1, 1, NOm)
+        guesses = (mask * g).reshape(NOm, -1)
+
         return guesses
 
     #@partial(jax.jit, static_argnums=0)
@@ -857,7 +861,7 @@ if __name__ == '__main__':
     print("e_approx, char, proj:")
 
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
-        for i in range(args.k):
+        for i, _ in enumerate(evecs):
             print("{:9e}".format(e_approx[i]), char[i], proj[i,:])
 
 
