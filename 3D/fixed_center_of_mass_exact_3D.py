@@ -861,8 +861,8 @@ if __name__ == '__main__':
     print("e_approx, char, proj:")
 
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
-        for i, _ in enumerate(evecs):
-            print("{:9e}".format(e_approx[i]), char[i], proj[i,:])
+        for e, M, prj, in zip(e_approx, char, proj):
+            print(f"{e:9e}", M, prj)
 
 
     if args.evecs:
