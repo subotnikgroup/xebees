@@ -1,19 +1,15 @@
 import xp
 
 def get_wfc_proj(evecs, H):
-    char = ['s','p','d','f','g']
+    symb = ['s','p','d'] + [chr(c) for c in range(ord('f'), ord('z')+1)]
     J = H.J
-    if len(evecs.shape)==1:
-        proj = xp.sum((evecs.reshape(H.shape))**2, axis=(0,1,2))
-        flat = xp.asarray([xp.round(proj[i]+proj[-i-1],1) for i in range(J+1)])
-        return char[int(xp.argmax(xp.flip(flat)))],proj
-    else:
-        chars = []
-        projs = []
-        for e,w in enumerate(evecs):
-            proj = xp.sum((w.reshape(H.shape))**2, axis=(0,1,2))
-            flat = xp.asarray([xp.round(proj[i]+proj[-i-1],1) for i in range(J+1)])
-            projs.append(proj)
-            chars.append(char[int(xp.argmax(xp.flip(flat)))])
-        return chars, xp.array(projs)
-        
+
+    ev = evecs.reshape((-1,) + H.shape)
+    prj = xp.sum(ev**2, axis=(1,2,3))
+
+    d = prj[: ,J:] # 0..J
+    #d[:, 1:] += prj[:, :J][:, ::-1]  # -J..-1 with flip along 2nd axis (J)
+    d[:, 1:] += xp.fliplr(prj[:, :J]) # -J..-1 with flip along 2nd axis (J)
+
+    symbols = list(map(lambda x: symb[int(xp.argmax(x))], d))
+    return symbols, prj
