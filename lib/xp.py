@@ -120,15 +120,23 @@ def _torch_iscomplexobj(original_func, backend, backend_name, A):
     return backend.is_complex(A)
 
 @override.register('numpy', 'assoc_legendre_p_all')
-@override.register('cupy',        'assoc_legendre_p_all', "using cpu fallback for assoc_legendre_p_all")
-@override.register('torch',       'assoc_legendre_p_all', "using cpu fallback for assoc_legendre_p_all")
-@override.register('cupynumeric', 'assoc_legendre_p_all', "using cpu fallback for assoc_legendre_p_all")
+@override.register('cupy',  'assoc_legendre_p_all', "using cpu fallback for assoc_legendre_p_all")
+@override.register('torch', 'assoc_legendre_p_all', "using cpu fallback for assoc_legendre_p_all")
 def _assoc_legendre_p_all(original_func, backend, backend_name, *args, **kwargs):
     from scipy.special import assoc_legendre_p_all
     n, m, z = args
     if hasattr(z, 'get'):
         z = z.get()
     return backend.asarray(assoc_legendre_p_all(n, m, z, **kwargs))
+
+# Not sure why cupynumeric needs the copy, but it does.
+@override.register('cupynumeric', 'assoc_legendre_p_all', "using cpu fallback for assoc_legendre_p_all")
+def _assoc_legendre_p_all_cpn(original_func, backend, backend_name, *args, **kwargs):
+    from scipy.special import assoc_legendre_p_all
+    n, m, z = args
+    if hasattr(z, 'get'):
+        z = z.get()
+    return backend.asarray(assoc_legendre_p_all(n, m, z, **kwargs).copy())
 
 @override.register('numpy', 'factorial')
 @override.register('cupy',        'factorial', "using cpu fallback for factorial")
@@ -142,13 +150,13 @@ def _factorial(original_func, backend, backend_name, n, **kwargs):
 
 
 # Workaround for cupynumeric issue 1211
-@override.register('cupynumeric', 'linalg.qr', "Working around cupynumeric issue 1211")
+#@override.register('cupynumeric', 'linalg.qr', "Working around cupynumeric issue 1211")
 def _cupynumeric_qr_1211(original_func, backend, backend_name, A, *args, **kwargs):
     # FIXME: excessive copy, https://github.com/nv-legate/cupynumeric/issues/1211
     return original_func(A.copy(), *args, **kwargs)
 
 # Workaround for cupynumeric issue 1216 - batched eigh memory fragmentation
-@override.register('cupynumeric', 'linalg.eigh', "Working around cupynumeric issue 1216")
+#@override.register('cupynumeric', 'linalg.eigh', "Working around cupynumeric issue 1216")
 def _cupynumeric_eigh_1216(original_func, backend, backend_name, A, *args, **kwargs):
     # FIXME: https://github.com/nv-legate/cupynumeric/issues/1216
     # Issue occurs when M > 2**8 * NGPU and M*N*N > 2**16
