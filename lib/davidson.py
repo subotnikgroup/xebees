@@ -34,7 +34,7 @@ def get_davidson_guess(guessfile, grid_dims):
         print(f"WARNING: requested guess-file, {guessfile}, does not exist!")
         return
 
-    guess = numpt.load(guessfile)['guess']
+    guess = numpy.load(guessfile)['guess']
     if guess.shape[1] == numpy.prod(grid_dims):
         print("Loaded guess from", guessfile)
         return guess
@@ -56,7 +56,7 @@ def get_davidson_guess_3D(guessfile, H):
         return guess
     else:
         print("WARNING: Loaded guess of improper dimension; discarding!")
-        ret
+        return
 
 
 # FIXME: There's probably a way to do some kind of interpolation on
@@ -85,7 +85,7 @@ def get_interpolated_guess(guessfile, axes, method='cubic'):
                                         H.axes,
                                         axes,
                                         method=method).ravel(),
-            guess)))
+                                        guess)))
 
 
 # FIXME: Interpolator only works on CPU with numpy backend; explore GPU options?
