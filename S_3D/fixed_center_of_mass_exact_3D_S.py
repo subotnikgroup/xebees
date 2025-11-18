@@ -314,14 +314,17 @@ class Hamiltonian:
         # Pja corresponds to spin alpha component: P_l^(Ω-0.5) 
         # Pjb corresponds to spin beta  component: P_l^(Ω+0.5) 
         # where l is an int, we deal with l = j + sg for the sake of indexing inside the sn,sm loops
+        # print(xp.assoc_legendre_p_all(
+        #         Nj, int(self.J+0.5),
+        #         xp.cos(self.g), norm=False).shape)
+        
         Pja = xp.assoc_legendre_p_all(
-                Nj, int(self.J-0.5),
+                Nj, int(self.J+0.5),
                 xp.cos(self.g), norm=False)[0, :, ma]
         Pjb = xp.assoc_legendre_p_all(
                 Nj, int(self.J+0.5),
                 xp.cos(self.g), norm=False)[0, :, mb]
         # index with [|Ω|, j, ɣ]
-
 
         # phase magnitudes for each j, Om
         def phase(j, Om):  # eq. 31 less sign
@@ -493,10 +496,8 @@ class Hamiltonian:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
 
         #vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, self.Vsph, **kwargs)
-        print("V(x) shapes",xa.shape, self.Vint.shape, self.Pjkst.shape, self.Cspin.shape)
+        # print("V(x) shapes",xa.shape, self.Vint.shape, self.Pjkst.shape, self.Cspin.shape)
         vout =  xp.einsum('BRrjsO, Rrg, Ojkstag, jkstOa-> BRrktO', xa, self.Vint, self.Pjkst, self.Cspin, **kwargs) 
-        
-        print("hello!")
         # vout = xp.einsum('BRrjO,Rrg,Ojkg->BRrkO', xa, self.Vint, self.Pjk, **kwargs)
         #assert xp.allclose(vout1, vout)
         return vout.reshape(x.shape)
@@ -537,7 +538,7 @@ class Hamiltonian:
         kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
         kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)
         # kej = xa*self.j_grid*(self.j_grid+1) # we don't have a j_grid defined yet?
-        ke -= (self.Rinv2 + self.rinv2)*kej  # -j(j+1)(1/r² + 1/R²)
+        ke -= (self.Rinv2)*kej + (self.rinv2*kel)  # -j(j+1)/R² - l(l+1)/r²
 
 
         # Angular Kinetic Energy J terms
@@ -619,14 +620,16 @@ class Hamiltonian:
     def _make_guess_naive(self, min_guess):
         kwargs = dict(optimize=True)
         Vdiag = xp.einsum('Rrg, Ojkstag, jkstOa-> RrktO', self.Vint, self.Pjkst, self.Cspin, **kwargs) 
+        # self.shape: R, r, j, s, Om
         # Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
         g = xp.exp(-(Vdiag - xp.min(Vdiag))**2/27.211**2)
 
-        *_, NOm = self.shape;
+        *_, Nsg, NOm = self.shape;
         mask = xp.eye(NOm, dtype=g.dtype).reshape(NOm, 1, 1, 1, 1, NOm)  # shape (NOm, 1, 1, 1, NOm)
+        # mask = xp.kron(xp.eye(Nsg, dtype=g.dtype),xp.eye(NOm, dtype=g.dtype)).reshape(NOm*Nsg, 1, 1, 1, Nsg, NOm)  # shape (NOm, 1, 1, 1, NOm)
+        # guesses = (mask * g).reshape(NOm*Nsg, -1)
         guesses = (mask * g).reshape(NOm, -1)
-
-        guesses = xp.exp(-(Vdiag - xp.min(Vdiag))**2/27.211**2).ravel()
+        print("guesses", guesses.shape, self.size, self.shape)
         return guesses
 
     #@partial(jax.jit, static_argnums=0)
