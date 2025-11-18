@@ -40,7 +40,7 @@ class Hamiltonian:
         'axes', 'dtype', 'args',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
-        'Vgrid', 'Vint', 'Pjkst', 'Ca', 'Cb', 'VOm', 'ddR2', 'ddr2',
+        'Vgrid', 'Vint', 'Pjkst', 'Cspin', 'VOm', 'ddR2', 'ddr2',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2'
@@ -144,7 +144,7 @@ class Hamiltonian:
         with timer_ctx("Build Vsph from Vgrid"):
             # self.Vsph, self.Vint, self.Pjk  = self.buildVsph()
             self.Vint, self.Pjkst  = self.buildVsph()
-            self.Ca, self.Cb = self.buildVspincoef()
+            self.Cspin = self.buildVspincoef()
 
         ## basic test V(x)
         xa = xp.ones(self.shape)
@@ -187,7 +187,7 @@ class Hamiltonian:
         self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
 
         # since we need these in Hx
-        R_grid, r_grid, _ , _ = xp.meshgrid(self.R, self.r, self.j, self.Om, indexing='ij')
+        R_grid, r_grid, _ , _ , _ = xp.meshgrid(self.R, self.r, self.j, self.sg, self.Om, indexing='ij')
         self.Rinv2 = 1.0/(R_grid)**2
         self.rinv2 = 1.0/(r_grid)**2
 
@@ -442,7 +442,7 @@ class Hamiltonian:
 
         assert (not xp.any(xp.isnan(Ca))), "C_alpha has nan!!"
         assert (not xp.any(xp.isnan(Cb))), "C_beta  has nan!!"
-        return Ca, Cb
+        return xp.stack((Ca,Cb), axis=5)
 
 
     def buildVOm(self):
@@ -493,9 +493,9 @@ class Hamiltonian:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
 
         #vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, self.Vsph, **kwargs)
-        print("V(x) shapes",xa.shape, self.Vint.shape, self.Pjkst[:,:,:,:,:,0,:].shape, self.Ca.shape)
-        vout =  xp.einsum('BRrjsO, Rrg, Ojkstg, jkstO-> BRrktO', xa, self.Vint, self.Pjkst[:,:,:,:,:,0,:], self.Ca, **kwargs) # alpha
-        vout += xp.einsum('BRrjsO, Rrg, Ojkstg, jkstO-> BRrktO', xa, self.Vint, self.Pjkst[:,:,:,:,:,1,:], self.Cb, **kwargs) # beta
+        print("V(x) shapes",xa.shape, self.Vint.shape, self.Pjkst.shape, self.Cspin.shape)
+        vout =  xp.einsum('BRrjsO, Rrg, Ojkstag, jkstOa-> BRrktO', xa, self.Vint, self.Pjkst, self.Cspin, **kwargs) 
+        
         print("hello!")
         # vout = xp.einsum('BRrjO,Rrg,Ojkg->BRrkO', xa, self.Vint, self.Pjk, **kwargs)
         #assert xp.allclose(vout1, vout)
@@ -587,19 +587,23 @@ class Hamiltonian:
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
         ke  = xp.zeros(self.shape)
-        ke += xp.diag(self.ddR2)[:, None, None, None]
-        ke += xp.diag(self.ddr2)[None, :, None, None]
-        ke -= (self.Rinv2 + self.rinv2) * (self.j*(self.j+1))[None, None, :,None]
-
+        ke += xp.diag(self.ddR2)[:, None, None, None, None] # ∂²/∂R²
+        ke += xp.diag(self.ddr2)[None, :, None, None, None] # ∂²/∂r²
+        # l(l+1)/r²
+        ke -= (self.rinv2) * ((self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1))[None, None, :, :, None]
+        ke -= (self.Rinv2)*(self.j*(self.j+1))[None,None,:,None,None] # j(j+1)/R²
         # Angular Kinetic Energy J terms
-        if self.J != 0:
+        if self.J != 0: # (J(J+1)-2Ω²)/R²
             ke += self.Rinv2 * ( 2*self.Om**2
-                -self.J*(self.J+1) )[None,None,None,:]
+                -self.J*(self.J+1) )[None,None,None,None,:]
 
         # mass portion of KE
         ke *= -1 / (2*self.mu)
 
-        Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
+        kwargs = dict(optimize=True)
+        # Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
+        Vdiag = xp.einsum('Rrg, Ojkstag, jkstOa-> RrktO', self.Vint, self.Pjkst, self.Cspin, **kwargs) 
+
         #Vdiag1 = xp.einsum('RrjjO-> RrjO', self.Vsph)
         #assert xp.allclose(Vdiag, Vdiag1)
 
@@ -613,16 +617,16 @@ class Hamiltonian:
     # @partial(jax.jit, static_argnums=0) fashion will break; not sure why.
 
     def _make_guess_naive(self, min_guess):
-        Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
+        kwargs = dict(optimize=True)
+        Vdiag = xp.einsum('Rrg, Ojkstag, jkstOa-> RrktO', self.Vint, self.Pjkst, self.Cspin, **kwargs) 
+        # Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
         g = xp.exp(-(Vdiag - xp.min(Vdiag))**2/27.211**2)
 
         *_, NOm = self.shape;
-        mask = xp.eye(NOm, dtype=g.dtype).reshape(NOm, 1, 1, 1, NOm)  # shape (NOm, 1, 1, 1, NOm)
+        mask = xp.eye(NOm, dtype=g.dtype).reshape(NOm, 1, 1, 1, 1, NOm)  # shape (NOm, 1, 1, 1, NOm)
         guesses = (mask * g).reshape(NOm, -1)
 
         guesses = xp.exp(-(Vdiag - xp.min(Vdiag))**2/27.211**2).ravel()
-        # print("guess proj", xp.sum((guesses.reshape(self.shape)), axis=(0,1,2)))
-        #return xp.random.random(guesses.shape)
         return guesses
 
     #@partial(jax.jit, static_argnums=0)
