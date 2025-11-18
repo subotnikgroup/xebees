@@ -21,7 +21,7 @@ import potentials
 from constants import *
 from hamiltonian import  KE, KE_Borisov_3D
 from davidson import phase_match, get_davidson_guess_3D, get_davidson_mem, solve_exact_gen
-from analysis import get_wfc_proj
+from analysis import get_wfc_Om_proj_wS
 
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
@@ -530,22 +530,22 @@ class Hamiltonian:
         ke = xp.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
-        ke += xp.einsum('BRrjO,RS->BSrjO', xa, self.ddR2, **kwargs)  # ∂²/∂R²
-        ke += xp.einsum('BRrjO,rs->BRsjO', xa, self.ddr2, **kwargs)  # ∂²/∂r²
+        ke += xp.einsum('BRrjnO, RS -> BSrjnO', xa, self.ddR2, **kwargs)  # ∂²/∂R²
+        ke += xp.einsum('BRrjnO, rs -> BRsjnO', xa, self.ddr2, **kwargs)  # ∂²/∂r²
 
         # Angular electronic ke terms: -j(j+1)(1/r² + 1/R²)
-        kej = xp.einsum('BRrjO, j-> BRrjO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+        kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+        kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)
         # kej = xa*self.j_grid*(self.j_grid+1) # we don't have a j_grid defined yet?
         ke -= (self.Rinv2 + self.rinv2)*kej  # -j(j+1)(1/r² + 1/R²)
 
 
         # Angular Kinetic Energy J terms
-        if self.J != 0:
-            keJdiag  = -xa * self.J * (self.J+1)                       # -J(J+1)
-            keJdiag += 2*xp.einsum('BRrjO,O-> BRrjO', xa, self.Om**2, **kwargs)  # -J(J+1)+2Ω²
+        keJdiag  = -xa * self.J * (self.J+1)                       # -J(J+1)
+        keJdiag += 2*xp.einsum('BRrjsO,O-> BRrjsO', xa, self.Om**2, **kwargs)  # -J(J+1)+2Ω²
 
-            keJoffdiag = xp.einsum('BRrjO,jOP-> BRrjP', xa, self.VOm, **kwargs)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
-            ke += self.Rinv2*(keJdiag + keJoffdiag)
+        keJoffdiag = xp.einsum('BRrjsO,jOP-> BRrjsP', xa, self.VOm, **kwargs)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
+        ke += self.Rinv2*(keJdiag + keJoffdiag)
 
         # mass portion of KE
         ke *= -1/(2*self.mu)
@@ -951,7 +951,7 @@ if __name__ == '__main__':
 
     print("Davidson:", e_approx)
     print(conv)
-    char,proj = get_wfc_proj(evecs,H)
+    char,proj = get_wfc_Om_proj_wS(evecs,H)
     print("e_approx, char, proj:")
 
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
