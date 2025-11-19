@@ -146,10 +146,7 @@ class Hamiltonian:
             self.Vint, self.Pjkst  = self.buildVsph()
             self.Cspin = self.buildVspincoef()
 
-        ## basic test V(x)
-        xa = xp.ones(self.shape)
-        xb = self.Vx(xa)
-        print(xp.any(xp.isnan(xb)))
+
         # Clebsch-Gordon Coefficients between adjacent Ω
         self.VOm = self.buildVOm()
 
@@ -454,7 +451,6 @@ class Hamiltonian:
         else:
             xa = x.reshape( self.shape[1:]).astype(self.dtype)
 
-        #vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, self.Vsph, **kwargs)
         vout =  xp.einsum('rjsO, rg, Ojkstag, jkstOa-> rktO', xa, self.Vint[iR], self.Pjkst, self.Cspin, **kwargs) 
         # vout = xp.einsum('rjO,rg,Ojkg->rkO', xa, self.Vint[iR], self.Pjk, **kwargs)
         #assert xp.allclose(vout1, vout)
@@ -581,8 +577,8 @@ class Hamiltonian:
 
     def BO_spectrum(self, nroots=0, Hel_func=None):
         print("Building BO spectrum")
-        NR, Nr, Ng, NOm = self.shape
-        Nelec = Nr*Ng*NOm
+        NR, Nr, Ng, Nsg, NOm = self.shape
+        Nelec = Nr*Ng*Nsg*NOm
 
         if Hel_func is None:
             Hel_func = self.build_Hel
@@ -591,7 +587,13 @@ class Hamiltonian:
         memory_constrained = self.size > mem_thresh
 
         print(f"memory constraint threshold = {mem_thresh}, {memory_constrained}")
+        # Hel0 = Hel_func(0)
+        # xa = xp.random.random(Nelec)
+        # xHel = Hel0@xa
+        # xVBO = self.Vx_BO(xa, iR=0)
 
+        # print(xp.sum(xp.abs(xHel-xVBO)), "test Hel")
+        # exit()
         if xp.backend == 'numpy':
             threadctl = ThreadpoolController()
             with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
@@ -621,8 +623,12 @@ class Hamiltonian:
 
     # NR x (NrNgNOm) x (NrNgNOm)
     def build_Hel(self, Ridx=None):
-        NR, Nr, Nj, NOm = self.shape
-        Nsph = Nj * NOm
+        kwargs = dict(optimize=True)
+        if xp.backend == 'torch':
+            kwargs = {}
+        NR, Nr, Nj, Nsg, NOm = self.shape
+        Nsph = Nj * Nsg * NOm 
+        Nl = Nj * Nsg
         Nelec = Nr * Nsph
 
         if Ridx is None:
@@ -631,44 +637,49 @@ class Hamiltonian:
             Ridx = xp.atleast_1d(Ridx)
             NR,  = Ridx.shape
 
-        def kron3(Or, Oj, OO):
-            return xp.kron(Or, xp.kron(Oj, OO))
+        def kron3(Or, Ol, OO):
+            return xp.kron(Or, xp.kron(Ol, OO))
+        
+        def kron4(Or, Oj, Os, OO):
+            return xp.kron(Or, xp.kron(Oj, xp.kron(Os,OO)))
+        
 
         # Hel = -1/2/μ · (Te + VOm) + V
-        # Te  =  ∂²/∂r² - (1/r²)j(j+1) - (1/R²)(j(j+1) + J(J+1) - 2Ω²)
+        # Te  =  ∂²/∂r² - (1/r²)l(l+1) - (1/R²)(j(j+1) + J(J+1) - 2Ω²)
         # VOm = (1/R²)√(J(J+1) - Ω(Ω ± 1))√(j(j+1) - Ω(Ω ± 1)) ; (1/R²)*self.VOm
         # N.B. self.ddr2 = ∂²/∂r² + 1/4/r²
         Hel = xp.empty((NR, Nelec, Nelec), dtype=self.dtype)
 
         # build *bare* Te first
         # R-independent terms: ∂²/∂r² - (1/r²)j(j+1)
+        ## Check outer product shapes!!
+        l = (self.j[:,None]+self.sg[None,:]).ravel() #shape Nl
+
         Hel[:] = (
             xp.kron(self.ddr2, xp.eye(Nsph)) -   # ∂²/∂r²
-            kron3(xp.diag(1 / self.r**2),        # -(1/r²)j(j+1)
-                  xp.diag(self.j*(self.j+1)),
+            kron3(xp.diag(1 / self.r**2),        # -(1/r²)l(l+1)
+                  xp.diag(l*(l+1)),
                   xp.eye(NOm))
         )
 
 
         # R-dependent terms: (1/R²)j(j+1)
         Rinv2 = (1 / self.R**2)[Ridx, None, None]  # (1/R²), ready for broadcasting
-        Hel -= Rinv2 * kron3(xp.eye(Nr),           # -(1/R²) * j(j+1)
-                             xp.diag(self.j*(self.j+1)),
+        Hel -= Rinv2 * kron4(xp.eye(Nr),           # -(1/R²) * j(j+1)
+                             xp.diag(self.j*(self.j+1)), xp.eye(Nsg),
                              xp.eye(NOm))[None]
 
         # J terms: -(1/R²)J(J+1) + 2Ω²/R²
-        if self.J != 0:
-            Hel[:, xp.arange(Nelec), xp.arange(Nelec)] -= (
-                Rinv2[0] * self.J * (self.J+1)  # -(1/R²) J(J+1)
-            )
-            Hel += 2 * kron3(xp.eye(Nr), xp.eye(Nj), xp.diag(self.Om**2)) * Rinv2 # + 2Ω²/R²
+        Hel[:, xp.arange(Nelec), xp.arange(Nelec)] -= (
+            Rinv2[0] * self.J * (self.J+1)  # -(1/R²) J(J+1)
+        )
+        Hel += 2 * kron4(xp.eye(Nr), xp.eye(Nj), xp.eye(Nsg), xp.diag(self.Om**2)) * Rinv2 # + 2Ω²/R²
 
-        kwargs = dict(optimize=True)
-        if xp.backend == 'torch':
-            kwargs = {}
+
 
         # VOm term:
-        VOm_big = xp.einsum('jOP,ij->iOjP', self.VOm, xp.eye(Nj), **kwargs).reshape(Nsph, Nsph)
+
+        VOm_big = xp.einsum('jOP,ij,st->isOjtP', self.VOm, xp.eye(Nj), xp.eye(Nsg), **kwargs).reshape(Nsph, Nsph)
 
         Hel += xp.kron(xp.eye(Nr), VOm_big) * Rinv2
         Hel *= -1 / (2 * self.mu)  # -1/2/μ · (Te + VOm)
@@ -678,16 +689,10 @@ class Hamiltonian:
         # that we have Rx(Nelec)x(Nelec) => Rx(rjO)x(skP). This
         # repeats the ordering of the indices that matches kron3.
 
-        # Vsph_big1 = xp.einsum("rs,OP,RrjkO->RjrOksP",
-        #                      xp.eye(Nr), xp.eye(NOm),
-        #                      self.Vsph[Ridx]).reshape(NR, Nelec, Nelec)
-
-        Hel += xp.einsum("rs,OP,Rrg,Ojkg->RrjOskP",
+        Hel += xp.einsum("rs,OP,Rrg,Ojkabqg,jkabOq ->RrjaOskbP",
                          xp.eye(Nr), xp.eye(NOm),
-                         self.Vint[Ridx], self.Pjk, **kwargs).reshape(NR, Nelec, Nelec)
-        # V_sph = xp.einsum('Rrg, Ojkg-->Rj' , self.Vint[Ridx], self.Pjk,**kwargs)
+                         self.Vint[Ridx], self.Pjkst,self.Cspin, **kwargs).reshape(NR, Nelec, Nelec)
 
-        # assert xp.allclose(Vsph_big, Vsph_big1)
         return xp.squeeze(Hel)
 
 
@@ -918,7 +923,8 @@ if __name__ == '__main__':
         print("BO gap", bo)
         if all(conv):
             ex = e_approx[1] - e_approx[0]
-            print("exact, bo, error:", ex, bo, (bo-ex)/ex)
+            ex2 = e_approx[2] -e_approx[0]
+            print("exact, exact2, bo, error2:", ex,ex2, bo, (bo-ex2)/ex2)
     elif all(conv):
         ex = e_approx[1] - e_approx[0]
         print("exact gap", ex)
