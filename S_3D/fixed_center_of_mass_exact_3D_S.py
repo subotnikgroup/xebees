@@ -37,11 +37,12 @@ class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
         'R', 'r', 'g', 'j', 'Om','sg',
+        'soc_const',
         'axes', 'dtype', 'args',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
         'Vgrid', 'Vint', 'Pjkst', 'Cspin', 'VOm', 'ddR2', 'ddr2',
-        'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
+        'Rinv2', 'rinv2','rinv3', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2'
     )
@@ -57,6 +58,7 @@ class Hamiltonian:
 
         self.g_1 = args.g_1
         self.g_2 = args.g_2
+
 
         self.J   = args.J
         assert ((2*self.J)%1==0 and self.J!=0),"Failed! J is a half integer: 0.5, 1.5 .... n+1/2" 
@@ -76,6 +78,11 @@ class Hamiltonian:
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.aa   = numpy.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
+
+        self.soc_const = 1/137**2/self.m_e**2/self.aa**3 # 1/c²me²/aa^3, where aa accounts for the rescaling in r
+        print("soc const, aa", self.soc_const, self.aa)
+        # exit()
+
         self._Vfunc, extent_func = {
             'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb),
             'borgis': (partial(potentials.borgis, asymmetry_param=1), potentials.extents_borgis),
@@ -187,6 +194,7 @@ class Hamiltonian:
         R_grid, r_grid, _ , _ , _ = xp.meshgrid(self.R, self.r, self.j, self.sg, self.Om, indexing='ij')
         self.Rinv2 = 1.0/(R_grid)**2
         self.rinv2 = 1.0/(r_grid)**2
+        self.rinv3 = 1.0/(r_grid)**3
 
         self.diag = self.buildDiag()
 
@@ -426,7 +434,10 @@ class Hamiltonian:
 
     #@partial(jax.jit, static_argnums=0)
     def Hx(self, x):
-        return self.Tx(x) + self.Vx(x)
+        out = self.Tx(x) + self.Vx(x)
+        if self.args.soc =='lazy':
+            out += self.SOCx_lazy(x)
+        return out
 
     def Vx(self,x):
         kwargs = dict(optimize=True)
@@ -522,6 +533,18 @@ class Hamiltonian:
         ke *= -1/(2*self.mu)
         return ke.reshape(x.shape)
 
+    def SOCx_lazy(self,x):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        ### lazy SOC term const*l.s/r^3 = const/2*(j(j+1)-l(l+1)-s(s+1))
+        kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+        kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
+        out = self.soc_const/2*(kej-kel-3/4)*self.rinv3
+        return out.reshape(x.shape)
 
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
@@ -839,6 +862,7 @@ def parse_args():
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
+    parser.add_argument('--soc', metavar="None/lazy/full", type=str, default=None)
     parser.add_argument('--save', metavar="filename")
 
    
