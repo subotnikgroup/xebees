@@ -16,7 +16,7 @@ def get_wfc_proj(evecs, H):
 
 def get_wfc_Om_proj_wS(evecs, H):
     #### symbols are currently meaningless!!!! Need to rethink how we want to describe Om for half int J!
-    symb = ['s','p','d'] + [chr(c) for c in range(ord('f'), ord('z')+1)]
+    symb = ['s','s','p','d'] + [chr(c) for c in range(ord('f'), ord('z')+1)]
     J = int(H.J-0.5)
 
     ev = evecs.reshape((-1,) + H.shape)

@@ -242,62 +242,6 @@ class Hamiltonian:
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
 
 
-    def sph_transform(self, Vgrid, j1, j2, Om):
-        ''' returns (int dγ sin(γ)
-                        P1(j1,Ω1,γ) V(r,R,γ, ψ=0) P2(j2,Ω2, γ) )'''
-
-        NR, Nr, Ng, NOm = self.shape
-
-        if j1 < xp.abs(Om) or j2 < xp.abs(Om):  # these terms are excluded from the sum; c.f. eq. 32
-            return xp.zeros((NR, Nr))
-
-        def phase(j, Om):  # eq. 31
-            c = ((xp.sqrt((2*j + 1) / 2) *
-                  xp.sqrt(
-                      xp.factorial(j - xp.abs(Om)) /
-                      xp.factorial(j + xp.abs(Om))
-                  )
-                ))
-
-            #if Om > 0 and Om % 2 == 1:  # N.B. lpmv includes the Condon-Shortley phase.
-            #    c *= -1
-
-            return c
-
-        # eq. 30
-        P1 = phase(j1, Om)*lpmv(xp.abs(Om), j1, xp.cos(self.g))
-        P2 = phase(j2, Om)*lpmv(xp.abs(Om), j2, xp.cos(self.g))
-
-        dg = self.g[1]-self.g[0]
-        V_jjOmOm = xp.sum(
-            (dg*P1*P2*xp.sin(self.g))[None,None,:]*Vgrid,
-            axis=-1)
-
-        return V_jjOmOm
-
-
-    def buildVsph_serial(self):
-        ''' V(R,r,j,j',Ω=Ω') '''
-        NR, Nr, Nj, NOm = self.shape
-        Vsph = xp.zeros((NR, Nr, Nj, Nj, NOm))
-
-        Vsph_ = self.buildVsph_vec()
-
-        for iOm, Om in enumerate(self.Om):
-            for ij1, j1 in enumerate(self.j):
-                for ij2, j2 in enumerate(self.j):
-                    Vsph[:,:,ij1,ij2,iOm] = self.sph_transform(self.Vgrid, j1, j2, Om)
-                    # devi = xp.sum(xp.abs(Vsph[:,:,ij1,ij2,iOm] - Vsph_[:,:,ij1,ij2,iOm]))
-                    # if devi > 1e-10:
-                        # print(devi, f"({ij1},{ij2},{iOm})", f"({j1},{j2},{Om})")
-
-        assert not xp.any(xp.isnan(Vsph))
-        # prms(Vsph, Vsph_, "diff Vsph_")
-        assert (xp.allclose(Vsph, Vsph_))
-        return Vsph
-        #return Vsph_
-
-
     def buildVsph(self):
         # builds <jΩ|V(R,r)|j'Ω> by transforming over the ɣ and ψ
         # coordinates. (V is not a function of ψ so that part is
@@ -511,7 +455,8 @@ class Hamiltonian:
             xa = x.reshape( self.shape[1:]).astype(self.dtype)
 
         #vout = xp.einsum('BRrjO, RrjkO-> BRrkO', xa, self.Vsph, **kwargs)
-        vout = xp.einsum('rjO,rg,Ojkg->rkO', xa, self.Vint[iR], self.Pjk, **kwargs)
+        vout =  xp.einsum('rjsO, rg, Ojkstag, jkstOa-> rktO', xa, self.Vint[iR], self.Pjkst, self.Cspin, **kwargs) 
+        # vout = xp.einsum('rjO,rg,Ojkg->rkO', xa, self.Vint[iR], self.Pjk, **kwargs)
         #assert xp.allclose(vout1, vout)
         return vout.reshape(x.shape)
 
@@ -563,22 +508,19 @@ class Hamiltonian:
         ke = xp.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
-        # ke += xp.einsum('BRrjO,RS->BSrjO', xa, self.ddR2, **kwargs)  # ∂²/∂R²
         ke += xp.einsum('rjO,rs->sjO', xa, self.ddr2, **kwargs)  # ∂²/∂r²
 
         # Angular electronic ke terms: -j(j+1)(1/r² + 1/R²)
-        kej = xp.einsum('rjO, j-> rjO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
-        # kej = xa*self.j_grid*(self.j_grid+1) # we don't have a j_grid defined yet?
-        ke -= (self.Rinv2[iR] + self.rinv2[iR])*kej  # -j(j+1)(1/r² + 1/R²)
+        kej = xp.einsum('rjsO, j  -> rjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+        kel = xp.einsum('rjsO, js -> rjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)
+        ke -= (self.Rinv2)*kej + (self.rinv2*kel)  # -j(j+1)/R² - l(l+1)/r²
+
         
-
         # Angular Kinetic Energy J terms
-        if self.J != 0:
-            keJdiag  = -xa * self.J * (self.J+1)                       # -J(J+1)
-            keJdiag += 2*xp.einsum('rjO,O-> rjO', xa, self.Om**2, **kwargs)  # -J(J+1)+2Ω²
-
-            keJoffdiag = xp.einsum('rjO,jOP-> rjP', xa, self.VOm, **kwargs)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
-            ke += self.Rinv2[iR]*(keJdiag + keJoffdiag)
+        keJdiag  = -xa * self.J * (self.J+1)                       # -J(J+1)
+        keJdiag += 2*xp.einsum('rjsO,O-> rjsO', xa, self.Om**2, **kwargs)  # -J(J+1)+2Ω²
+        keJoffdiag = xp.einsum('rjsO,jOP-> rjsP', xa, self.VOm, **kwargs)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
+        ke += self.Rinv2*(keJdiag + keJoffdiag)
 
         # mass portion of KE
         ke *= -1/(2*self.mu)
