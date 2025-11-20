@@ -710,8 +710,10 @@ class Hamiltonian:
     def _preconditioner_BO(self, dx, e, _):
         Ad_vn, U_n, U_v, *_ = self._preconditioner_data
         diagd = Ad_vn - (e - 1e-5)
-        NR, *Nother = self.shape
-        dx_ = dx.reshape((-1, NR, xp.prod(Nother)))
+        NR, Nr, Nj, NOm = self.shape
+        Nelec = Nr*Nj*NOm
+
+        dx_ = dx.reshape((-1, NR, Nelec))
 
         #FIXME: precompute optimal einsum path and provide that
         kwargs = dict(optimize=True)
