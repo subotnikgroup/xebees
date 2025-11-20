@@ -61,7 +61,7 @@ class Hamiltonian:
 
 
         self.J   = args.J
-        assert ((2*self.J)%1==0 and self.J!=0),"Failed! J is a half integer: 0.5, 1.5 .... n+1/2" 
+        assert ((2*self.J)%1==0 and (self.J%1!=0)),"Failed! J must be a half integer: 0.5, 1.5 .... n+1/2"
         self.dtype = xp.float64
 
         # Potential function selection
