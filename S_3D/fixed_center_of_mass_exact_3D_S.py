@@ -953,7 +953,8 @@ if __name__ == '__main__':
             print("exact, exact2, bo, error2:", ex,ex2, bo, (bo-ex2)/ex2)
     elif all(conv):
         ex = e_approx[1] - e_approx[0]
-        print("exact gap", ex)
+        ex2 = e_approx[2] - e_approx[0]
+        print("exact gap, exact gap2", ex, ex2)
 
     if args.save is not None:
         if all(conv):
