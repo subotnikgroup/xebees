@@ -543,8 +543,35 @@ class Hamiltonian:
         ### lazy SOC term const*l.s/r^3 = const/2*(j(j+1)-l(l+1)-s(s+1))
         kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
         kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
-        out = self.soc_const/2*(kej-kel-3/4)*self.rinv3
+        out = self.soc_const/2*(kej-kel-3/4*xa)*self.rinv3
         return out.reshape(x.shape)
+    
+    def SOCx_full(self,x):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        
+        def stage_ls(self, xa):
+            ''' Applies the 'vector' part of the SOC Efield: l.s '''
+            kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+            kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
+            return (kej-kel-0.75*xa)/2
+        
+        def stage_scnab(self,xa):
+            ''' Applies the 'vector' part of the SOC Efield: s.c x ∇ '''
+            return xa
+        
+        def stage_2(self,xa):
+            '''Applies the 'scalar' part of the SOC Efield:
+               1/|r_e - R_1|^3 for instance for Coulomb potential
+            ''' 
+            return xa
+        out = stage_2(self, stage_1(self,xa))
+        return out.reshape(x.shape)
+
 
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
