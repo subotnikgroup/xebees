@@ -81,6 +81,16 @@ extents_erf_coulomb = _extents_log_factory(
 )
 # extents for 2e2 not benchmarked at same R/r grid density as others
 
+def Efield_coulomb(r1e, Q1, alpha=0.01):
+    '''Returns the scalar part of the E-field associated with the Coulomb
+    potential between the electron and ONE ion: 
+    $E(r) = \vec{r} 1/|r|^3$, function returns 1/|r|^3'''
+
+    E1  = -Q1 *erf(2*r1e/alpha) / r1e**3
+    # near core-correction from erf function
+    E1 += 4*Q1*xp.exp(-4*r1e**2/alpha**2)/alpha/xp.sqrt(xp.pi)/r1e**2
+    return E1
+
 def soft_coulomb_barrier(R, r1e, r2e, charges, dv=0.5, G=1, p=2, A=1):
     Q1, Q2 = charges
 
@@ -130,6 +140,18 @@ def borgis(R_au, r1e_au, r2e_au, charges, asymmetry_param=1):
     VN = Q1 * Q2 * (A*xp.exp(-B*R) - C/R**6)
 
     return KCALMOLE_TO_HARTREE * (D1 + D2 + VN)
+
+def Efield_borgis(r1e_au, Q1, asymmetry_param=1):
+    '''Returns the scalar part of the E-field associated with the borgis
+    potential between the electron and ONE ion.'''
+    r1e = r1e_au / ANGSTROM_TO_BOHR
+
+    D, d, a, c = 60, 0.95, 2.52, asymmetry_param
+
+    E1 = 2 * a * Q1 * D * c * (-1*xp.exp(-(2*a/c) * (r1e-d))
+                                + xp.exp(-(  a/c) * (r1e-d)))
+    E1 /= r1e
+    return KCALMOLE_TO_HARTREE * E1
 
 extents_borgis = _extents_log_factory(
     numpy.array([1,   2,   10,  50,  1e2, 1e3])*AMU_TO_AU,
