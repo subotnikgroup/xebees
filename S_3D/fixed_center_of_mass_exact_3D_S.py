@@ -598,8 +598,8 @@ class Hamiltonian:
             '''Applies the 'scalar' part of the SOC Efield:
                1/|r_e - R_1|^3 for instance for Coulomb potential
             ''' 
-            ### TO DO
-            return xa
+            vout =  xp.einsum('BRrjsO, Rrg, Ojkstag, jkstOa-> BRrktO', xa, Efield, self.Pjkst, self.Cspin, **kwargs) 
+            return vout
         # r_e - R_1 contributions
         out = apply_dipole(self,apply_ls(xa) - self.mu12/self.M1*apply_scnab(self,xa), self.E1)
         #r_e - R_2 contributions
