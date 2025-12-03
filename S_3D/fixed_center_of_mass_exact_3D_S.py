@@ -40,7 +40,7 @@ class Hamiltonian:
         'soc_const',
         'axes', 'dtype', 'args',
         'max_threads',
-        'preconditioner', 'make_guess', '_Vfunc',
+        'preconditioner', 'make_guess', '_Vfunc','_Efunc'
         'Vgrid', 'Vint', 'Pjkst', 'Cspin', 'VOm', 'ddR2', 'ddr2',
         'Rinv2', 'rinv2','rinv3', 'diag', '_preconditioner_data',
         'shape', 'size',
@@ -84,10 +84,10 @@ class Hamiltonian:
         print("soc const, aa", self.soc_const, args.alpha, self.aa)
         # exit()
 
-        self._Vfunc, extent_func = {
-            'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb),
-            'borgis': (partial(potentials.borgis, asymmetry_param=1), potentials.extents_borgis),
-            'erf_coulomb':(potentials.erf_coulomb, potentials.extents_erf_coulomb)
+        self._Vfunc, extent_func, self._Efunc = {
+            'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb, None),
+            'borgis': (partial(potentials.borgis, asymmetry_param=1), potentials.extents_borgis, potentials.Efield_borgis),
+            'erf_coulomb':(potentials.erf_coulomb, potentials.extents_erf_coulomb, potentials.Efield_coulomb)
             }[args.potential]
 
         extent = extent_func(self.mu12)
@@ -145,6 +145,7 @@ class Hamiltonian:
         R_rgrid, r_rgrid, g_rgrid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V(R_rgrid, r_rgrid, g_rgrid)
 
+
         assert not xp.any(self.Vgrid)==xp.nan
 
         self.shape = (len(self.R), len(self.r), len(self.j), len(self.sg), len(self.Om))
@@ -162,6 +163,11 @@ class Hamiltonian:
 
         dR = self.R[1] - self.R[0]
         dr = self.r[1] - self.r[0]
+        dg = self.g[1] - self.g[0]
+
+        self.E1, self.E2 = self.Efield(R_rgrid,r_rgrid, g_rgrid)
+        self.E1 *= dg
+        self.E2 *= dg
 
         # FIXME: the representations of the operators we build are
         # 'dumb' in the sense that they do not know how to apply
@@ -262,7 +268,7 @@ class Hamiltonian:
         r1e = xp.sqrt(xp.where(r1e2 < 0, 0, r1e2))
         r2e = xp.sqrt(xp.where(r2e2 < 0, 0, r2e2))
 
-        return# self._Efunc
+        return (self._Efunc(r1e,self.g_1)*xp.sin(gamma), self._Efunc(r2e,self.g_2)*xp.sin(gamma))
 
 
     def buildVsph(self):
