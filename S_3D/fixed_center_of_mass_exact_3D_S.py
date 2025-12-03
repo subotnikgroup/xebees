@@ -44,7 +44,8 @@ class Hamiltonian:
         'Vgrid', 'Vint', 'Pjkst', 'Cspin', 'VOm', 'ddR2', 'ddr2',
         'Rinv2', 'rinv2','rinv3', 'diag', '_preconditioner_data',
         'shape', 'size',
-        '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2'
+        '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2',
+        'E_1', 'E_2'
     )
 
     def __init__(self, args):
@@ -79,8 +80,8 @@ class Hamiltonian:
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.aa   = numpy.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
 
-        self.soc_const = 4e6* 1/137**2/self.m_e**2/self.aa**3 # 1/c²me²/aa^3, where aa accounts for the rescaling in r
-        print("soc const, aa", self.soc_const, self.aa)
+        self.soc_const =  args.alpha/137**2/self.m_e**2/self.aa**3/2 # g_e/c²me²/aa^3/4, where aa accounts for the rescaling in r
+        print("soc const, aa", self.soc_const, args.alpha, self.aa)
         # exit()
 
         self._Vfunc, extent_func = {
@@ -261,7 +262,7 @@ class Hamiltonian:
         r1e = xp.sqrt(xp.where(r1e2 < 0, 0, r1e2))
         r2e = xp.sqrt(xp.where(r2e2 < 0, 0, r2e2))
 
-        return 
+        return# self._Efunc
 
 
     def buildVsph(self):
@@ -950,7 +951,8 @@ def parse_args():
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
-    parser.add_argument('--soc', metavar="None/lazy/full", type=str, default=None)
+    parser.add_argument('--soc', metavar="SOC type:None/lazy/full", type=str, default=None)
+    parser.add_argument('--alpha', metavar="SOC enhancement", type=float, default=1.)
     parser.add_argument('--save', metavar="filename")
 
    
