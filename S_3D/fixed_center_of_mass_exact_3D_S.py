@@ -79,7 +79,7 @@ class Hamiltonian:
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.aa   = numpy.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
 
-        self.soc_const = 1/137**2/self.m_e**2/self.aa**3 # 1/c²me²/aa^3, where aa accounts for the rescaling in r
+        self.soc_const = 4e6* 1/137**2/self.m_e**2/self.aa**3 # 1/c²me²/aa^3, where aa accounts for the rescaling in r
         print("soc const, aa", self.soc_const, self.aa)
         # exit()
 
@@ -206,6 +206,7 @@ class Hamiltonian:
         builder, self.preconditioner, self.make_guess = {
             'BO':     (self._build_preconditioner_BO, self._preconditioner_BO,    self._make_guess_BO),
             'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
+            'davBO':  (lambda: (self.diag), self._preconditioner_naive, self._make_guess_davBO),
             None:     (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
             }[args.preconditioner]
 
@@ -245,6 +246,22 @@ class Hamiltonian:
         r2e = xp.sqrt(xp.where(r2e2 < 0, 0, r2e2))
 
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
+    
+    def Efield(self, R, r, gamma):
+        mu12 = self.mu12
+        aa = self.aa
+        M_1 = self.M_1
+        M_2 = self.M_2
+
+        kappa2 = r*R*xp.cos(gamma)
+
+        r1e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_1)**2 - 2*kappa2*mu12/M_1
+        r2e2 = (aa*r)**2 + (R/aa)**2*(mu12/M_2)**2 + 2*kappa2*mu12/M_2
+
+        r1e = xp.sqrt(xp.where(r1e2 < 0, 0, r1e2))
+        r2e = xp.sqrt(xp.where(r2e2 < 0, 0, r2e2))
+
+        return 
 
 
     def buildVsph(self):
@@ -254,7 +271,6 @@ class Hamiltonian:
         Nj = len(self.j)
         ma = xp.abs(self.Om -0.5).astype(int)
         mb = xp.abs(self.Om +0.5).astype(int)
-        print(ma, mb)
 
         # Precompute all the associated Legendre functions up to Nj, through order J
         # N.B. P has shape (1, Nj+1, 2J+1, ...) with the 2nd axis in order -J,..0...J
@@ -437,7 +453,12 @@ class Hamiltonian:
         out = self.Tx(x) + self.Vx(x)
         if self.args.soc =='lazy':
             out += self.SOCx_lazy(x)
+        elif self.args.soc == 'full':
+            out += self.SOCx_full(x)
         return out
+    
+    def Hx_BO(self,x, iR=None):
+        return self.Tx_BO(x, iR=iR)+self.Vx_BO(x, iR=iR)
 
     def Vx(self,x):
         kwargs = dict(optimize=True)
@@ -457,12 +478,12 @@ class Hamiltonian:
     def Vx_BO(self,x, iR=None):
         kwargs = dict(optimize=True)
         if xp.backend == 'torch':
-            xa = x.reshape(self.shape[1:]).type(self.dtype)
+            xa = x.reshape((-1,)+self.shape[1:]).type(self.dtype)
             kwargs = {}
         else:
-            xa = x.reshape( self.shape[1:]).astype(self.dtype)
+            xa = x.reshape((-1,)+self.shape[1:]).astype(self.dtype)
 
-        vout =  xp.einsum('rjsO, rg, Ojkstag, jkstOa-> rktO', xa, self.Vint[iR], self.Pjkst, self.Cspin, **kwargs) 
+        vout =  xp.einsum('BrjsO, rg, Ojkstag, jkstOa-> BrktO', xa, self.Vint[iR], self.Pjkst, self.Cspin, **kwargs) 
         # vout = xp.einsum('rjO,rg,Ojkg->rkO', xa, self.Vint[iR], self.Pjk, **kwargs)
         #assert xp.allclose(vout1, vout)
         return vout.reshape(x.shape)
@@ -506,28 +527,29 @@ class Hamiltonian:
 
     def Tx_BO(self, x, iR=None):
         if xp.backend == 'torch':
-            xa = x.reshape(self.shape[1:]).type(self.dtype)
+            xa = x.reshape((-1,)+self.shape[1:]).type(self.dtype)
             kwargs = {}
         else:
-            xa = x.reshape(self.shape[1:]).astype(self.dtype)
+            xa = x.reshape((-1,)+self.shape[1:]).astype(self.dtype)
             kwargs = dict(optimize=True)
 
         ke = xp.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
-        ke += xp.einsum('rjO,rs->sjO', xa, self.ddr2, **kwargs)  # ∂²/∂r²
+        print("xa shape", xa.shape)
+        ke += xp.einsum('BrjsO,rt->BtjsO', xa, self.ddr2, **kwargs)  # ∂²/∂r²
 
         # Angular electronic ke terms: -j(j+1)(1/r² + 1/R²)
-        kej = xp.einsum('rjsO, j  -> rjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
-        kel = xp.einsum('rjsO, js -> rjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)
-        ke -= (self.Rinv2)*kej + (self.rinv2*kel)  # -j(j+1)/R² - l(l+1)/r²
+        kej = xp.einsum('BrjsO, j  -> BrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+        kel = xp.einsum('BrjsO, js -> BrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)
+        ke -= (self.Rinv2[iR])*kej + (self.rinv2[iR]*kel)  # -j(j+1)/R² - l(l+1)/r²
 
         
         # Angular Kinetic Energy J terms
         keJdiag  = -xa * self.J * (self.J+1)                       # -J(J+1)
-        keJdiag += 2*xp.einsum('rjsO,O-> rjsO', xa, self.Om**2, **kwargs)  # -J(J+1)+2Ω²
-        keJoffdiag = xp.einsum('rjsO,jOP-> rjsP', xa, self.VOm, **kwargs)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
-        ke += self.Rinv2*(keJdiag + keJoffdiag)
+        keJdiag += 2*xp.einsum('BrjsO,O-> BrjsO', xa, self.Om**2, **kwargs)  # -J(J+1)+2Ω²
+        keJoffdiag = xp.einsum('BrjsO,jOP-> BrjsP', xa, self.VOm, **kwargs)  # √(J(J+1)-Ω(Ω±1))√(j(j+1)-Ω(Ω±1))
+        ke += self.Rinv2[iR]*(keJdiag + keJoffdiag)
 
         # mass portion of KE
         ke *= -1/(2*self.mu)
@@ -554,22 +576,27 @@ class Hamiltonian:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
             kwargs = dict(optimize=True)
         
-        def stage_ls(self, xa):
+        def apply_ls(self, xa):
             ''' Applies the 'vector' part of the SOC Efield: l.s '''
             kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
             kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
             return (kej-kel-0.75*xa)/2
         
-        def stage_scnab(self,xa):
-            ''' Applies the 'vector' part of the SOC Efield: s.c x ∇ '''
+        def apply_scnab(self,xa):
+            ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
+            ### TO DO
             return xa
         
-        def stage_2(self,xa):
+        def apply_dipole(self,xa, Efield):
             '''Applies the 'scalar' part of the SOC Efield:
                1/|r_e - R_1|^3 for instance for Coulomb potential
             ''' 
+            ### TO DO
             return xa
-        out = stage_2(self, stage_1(self,xa))
+        # r_e - R_1 contributions
+        out = apply_dipole(self,apply_ls(xa) - self.mu12/self.M1*apply_scnab(self,xa), self.E1)
+        #r_e - R_2 contributions
+        out += apply_dipole(self,apply_ls(xa) + self.mu12/self.M2*apply_scnab(self,xa), self.E2)
         return out.reshape(x.shape)
 
 
@@ -821,6 +848,38 @@ class Hamiltonian:
 
         return tr_.reshape(dx.shape)
 
+    def _make_guess_davBO(self, min_guess):
+        iR = xp.unravel_index(xp.argmin(self.Vgrid), self.Vgrid.shape)[0]
+        print("DavBO guess evaluated at iR,R_lab = ", iR, self.R_lab[iR])
+        diag = xp.reshape(self.diag, self.shape)[iR]
+        from functools import partial
+
+        with timer_ctx(f"DAVBO: Davidson of size {diag.size}"):
+            conv, e_approx, evecs = lib.davidson1(
+                partial(self.Hx_BO, iR=iR),
+                xp.random.random(diag.size),
+                diag.ravel(),
+                nroots=self.args.k,
+                max_cycle=self.args.iterations,
+                verbose=self.args.verbosity,
+                max_space=self.args.subspace,
+                max_memory=get_davidson_mem(0.75),
+                #tol=1e-12, #FIXME:DEBUG
+                tol=1e-10,
+            )
+        sR = (self.R[-1]-self.R[0])/4
+        nuc_wfc = xp.exp(-(self.R-self.R[iR])**2/sR**2)
+        hermite = xp.stack([xp.ones(self.R.size),
+                   self.R-self.R[iR],
+                   (self.R-self.R[iR])**2 -1,
+                   (self.R-self.R[iR])**3 -3*self.R-self.R[iR]])
+        
+        guess = (xp.reshape(evecs[0], diag.shape)[None,None,:,:,:,:]*nuc_wfc[None,:,None,None,None,None]
+                                                *hermite[:,:,None,None,None,None])
+        print("guess shape", guess.shape, guess.size, self.shape, self.size, nuc_wfc.shape)
+
+        return xp.reshape(guess, (hermite.shape[0],-1))
+
 
     # Below here are a bunch of things related to immutability
     # https://docs.jax.dev/en/latest/faq.html#how-to-use-jit-with-methods
@@ -883,7 +942,7 @@ def parse_args():
                         "(typically set automatically)")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
-    parser.add_argument('--preconditioner', choices=['naive', 'BO'],
+    parser.add_argument('--preconditioner', choices=['naive', 'BO', 'davBO'],
                         default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--backend', default='numpy')
