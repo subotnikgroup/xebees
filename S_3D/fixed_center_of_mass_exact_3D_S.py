@@ -551,7 +551,6 @@ class Hamiltonian:
         ke = xp.zeros_like(xa)
 
         # Radial Kinetic Energy terms, easy
-        print("xa shape", xa.shape)
         ke += xp.einsum('BrjsO,rt->BtjsO', xa, self.ddr2, **kwargs)  # ∂²/∂r²
 
         # Angular electronic ke terms: -j(j+1)(1/r² + 1/R²)
@@ -910,10 +909,62 @@ class Hamiltonian:
         return tr_.reshape(dx.shape)
 
     def _make_guess_davBO(self, min_guess):
+        NR, Nr, Nj, Nsg, NOm = self.shape
+        Nelec = Nr*Nj*Nsg*NOm
+
+        U_n   = xp.zeros((NR, Nelec, min_guess))
+        Ad_n  = xp.zeros((NR, min_guess))
+
+        guess = xp.random.random((min_guess, Nelec))
+        max_memory = get_davidson_mem(0.75)
+
+        with timer_ctx(f"DAVBO: {NR} Davidson of size {Nelec}"):
+            for i, R in enumerate(self.R):
+                conv, Ad_n[i], guess = lib.davidson1(
+                    partial(self.Hx_BO, iR=i),
+                    guess,
+                    xp.reshape(self.diag, self.shape)[i].ravel(),
+                    #callback=reporter,
+                    nroots=min_guess,
+                    max_cycle=500,
+                    verbose=1,
+                    max_space=1000,
+                    max_memory=max_memory,
+                    tol=1e-10,
+                )
+
+                if not all(conv):
+                    raise Warning("All roots not converged")
+                print(Ad_n[i])
+                U_n[i] = guess.T
+
+        phase_match(U_n)
+
+        with timer_ctx("Build Hbo"):
+            Hbo = xp.empty((min_guess, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+            Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
+            Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
+
+        with timer_ctx("Diag  Hbo"):
+            Ad_vn, U_v = xp.linalg.eigh(Hbo)  # xp.linalg.eigh(Hbo)
+            Ad_vn = Ad_vn.T
+
+        with timer_ctx("Phase match U_v"):
+            phase_match(U_v)
+
+        s = int(numpy.ceil(numpy.sqrt(min_guess)))
+        guesses = xp.stack([
+            (U_n[:,:,n] * U_v[n,:,v,xp.newaxis]).ravel()
+            for n in range(s) for v in range(s)
+        ])
+
+        return guesses
+
+
+    def _make_guess_davBO_single(self, min_guess):
         iR = xp.unravel_index(xp.argmin(self.Vgrid), self.Vgrid.shape)[0]
         print("DavBO guess evaluated at iR,R_lab = ", iR, self.R_lab[iR])
         diag = xp.reshape(self.diag, self.shape)[iR]
-        from functools import partial
 
         with timer_ctx(f"DAVBO: Davidson of size {diag.size}"):
             conv, e_approx, evecs = lib.davidson1(
@@ -921,7 +972,7 @@ class Hamiltonian:
                 xp.random.random(diag.size),
                 diag.ravel(),
                 nroots=self.args.k,
-                max_cycle=self.args.iterations,
+                max_cycle=1000,
                 verbose=self.args.verbosity,
                 max_space=self.args.subspace,
                 max_memory=get_davidson_mem(0.75),
@@ -934,7 +985,7 @@ class Hamiltonian:
                    self.R-self.R[iR],
                    (self.R-self.R[iR])**2 -1,
                    (self.R-self.R[iR])**3 -3*self.R-self.R[iR]])
-        
+
         guess = (xp.reshape(evecs[0], diag.shape)[None,None,:,:,:,:]*nuc_wfc[None,:,None,None,None,None]
                                                 *hermite[:,:,None,None,None,None])
         print("guess shape", guess.shape, guess.size, self.shape, self.size, nuc_wfc.shape)
