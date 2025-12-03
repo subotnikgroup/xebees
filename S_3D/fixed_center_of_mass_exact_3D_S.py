@@ -66,8 +66,8 @@ class Hamiltonian:
         assert ((2*self.J)%1==0 and (self.J%1!=0)),"Failed! J must be a half integer: 0.5, 1.5 .... n+1/2"
 
         self.dtype = xp.float64
-        if args.soc=='full':
-            self.dtype=xp.complex128
+        # if args.soc=='full':
+        #     self.dtype=xp.complex128
 
         # Potential function selection
         if not hasattr(args, "potential"):
@@ -164,7 +164,9 @@ class Hamiltonian:
         # Clebsch-Gordon Coefficients between adjacent Ω
         self.VOm = self.buildVOm()
         # coef for full soc, build later
-        self.C_scnab = None
+        if args.soc=='full':
+            self.C_scnab = self.buildC_scnab()
+        else: self.C_scnab = None
 
         self.size = int(xp.prod(xp.asarray(self.shape)))
 
@@ -590,48 +592,48 @@ class Hamiltonian:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
             kwargs = dict(optimize=True)
         
-        def apply_ls(self, xa):
+        def apply_ls(xa):
             ''' Applies the 'vector' part of the SOC Efield: l.s '''
             kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
             kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
             return (kej-kel-0.75*xa)/2
         
-        def apply_scnab(self,xa):
+        def apply_scnab(xa):
             ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
-            if self.C_scnab==None:
-                self.C_scnab = self.buildC_scnab()
             ### 1. term sg --> -sg
             # radial ke
-            ddrxa =  xp.einsum('BrjsO,rt -> BtjsO', xa, self.ddr1, **kwargs) # ddr1
+            ddrxa =  xp.einsum('BRrjsO,rt -> BRtjsO', xa, self.ddr1, **kwargs) # ddr1
             # angular ke
-            l1 += xp.einsum('BrjsO, js, r -> BrjsO', xa, (self.j[:,None]+self.sg[None,:]+1),1./self.r, **kwargs) # (j+sg+1)/r
+            l1 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]+1),1./self.r, **kwargs) # (j+sg+1)/r
             # coef and rotate angular basis
-            t1 = xp.einsum('BrjsO, jkstO ->BrktO', ddrxa+l1, self.C_scnab[0])
+            t1 = xp.einsum('BRrjsO, jkstO ->BRrktO', ddrxa+l1, self.C_scnab[0])
 
             ### 2. term j-->j+1
             # note different angular ke
-            l0 = xp.einsum('BrjsO, js, r -> BrjsO', xa, (self.j[:,None]+self.sg[None,:]),1./self.r, **kwargs) # (j+sg)/r
-            t2 = xp.einsum('BrjsO,jkstO -> BrktO', ddrxa-l0, self.C_scnab[1])
+            l0 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]),1./self.r, **kwargs) # (j+sg)/r
+            t2 = xp.einsum('BRrjsO,jkstO -> BRrktO', ddrxa-l0, self.C_scnab[1])
 
             ### 3. term j-->j-1
-            t3 = xp.einsum('BrjsO, jkstO -> BrktO', ddrxa+l1, self.C_scnab[2])
+            t3 = xp.einsum('BRrjsO, jkstO -> BRrktO', ddrxa+l1, self.C_scnab[2])
             return t1+t2+t3
         
-        def apply_dipole(self,xa, Efield):
+        def apply_dipole(xa, Efield):
             '''Applies the 'scalar' part of the SOC Efield:
                1/|r_e - R_1|^3 for instance for Coulomb potential
             ''' 
             vout =  xp.einsum('BRrjsO, Rrg, Ojkstag, jkstOa -> BRrktO', xa, Efield, self.Pjkst, self.Cspin, **kwargs) 
             return vout
         # r_e - R_1 contributions
-        out = apply_dipole(self, self,apply_ls(self,xa) - self.mu12/self.M_1*apply_scnab(self,xa), self.E1)
+        out = apply_dipole(apply_ls(xa) - self.mu12/self.M_1*apply_scnab(xa), self.E1)
         #r_e - R_2 contributions
-        out += apply_dipole(self, self,apply_ls(self,xa) + self.mu12/self.M_2*apply_scnab(self,xa), self.E2)
-        return out.reshape(x.shape)
+        out += apply_dipole(apply_ls(xa) + self.mu12/self.M_2*apply_scnab(xa), self.E2)
+        return self.soc_const*out.reshape(x.shape)
 
     def buildC_scnab(self):
         '''builds array with coefs out the front of s.c nab terms'''
-        coef0 = ((0+1j)*2*self.sg[None,:,None]*self.Om[None,None,:]*(self.j[:,None,None]+self.sg[None,:,None])
+        # coef0 = ((0+1j)*2*self.sg[None,:,None]*self.Om[None,None,:]*(self.j[:,None,None]+self.sg[None,:,None])
+        #         /(self.j[:,None,None]*(self.j[:,None,None]+1)))
+        coef0 = (2*self.sg[None,:,None]*self.Om[None,None,:]*(self.j[:,None,None]+self.sg[None,:,None])
                 /(self.j[:,None,None]*(self.j[:,None,None]+1)))
         sigx = xp.array([[0,1],[1,0]]) # send sigma --> -sigma
         C0 = xp.einsum('jso, st, jk -> jksto',coef0, sigx, xp.eye(self.shape[2]), dtype=self.dtype)
@@ -645,9 +647,9 @@ class Hamiltonian:
                             if n != m: continue
                             if k != i+1: continue
                             if (ji+sn+0.5)**2-Oo**2 < 0: continue # check for Cb
-                            C1[i,k,n,m,o] = (0+1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
-
-        C2 = xp.zeros(C2.shape)
+                            # C1[i,k,n,m,o] = (0+1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
+                            C1[i,k,n,m,o] = xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
+        C2 = xp.zeros(C0.shape)
         for i,ji in enumerate(self.j):
             for k, _ in enumerate(self.j):
                 for n, sn in enumerate(self.sg):
@@ -656,7 +658,8 @@ class Hamiltonian:
                             if n != m: continue
                             if k != i-1: continue
                             if (ji+sn+0.5)**2-Oo**2 < 0: continue # check for Cb
-                            C2[i,k,n,m,o] = (0+1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
+                            # C2[i,k,n,m,o] = (0+1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
+                            C2[i,k,n,m,o] = xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
         return xp.stack((C0,C1,C2), axis=0)
 
 
