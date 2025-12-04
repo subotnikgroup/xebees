@@ -66,8 +66,8 @@ class Hamiltonian:
         assert ((2*self.J)%1==0 and (self.J%1!=0)),"Failed! J must be a half integer: 0.5, 1.5 .... n+1/2"
 
         self.dtype = xp.float64
-        # if args.soc=='full':
-        #     self.dtype=xp.complex128
+        if args.soc=='full':
+            self.dtype=xp.complex128
 
         # Potential function selection
         if not hasattr(args, "potential"):
@@ -84,9 +84,8 @@ class Hamiltonian:
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.aa   = numpy.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
 
-        self.soc_const =  args.alpha/137**2/self.m_e**2/self.aa**3/2 # g_e/c²me²/aa^3/4, where aa accounts for the rescaling in r
+        self.soc_const =  args.alpha/137**2/self.m_e**2/self.aa**3/2 # alpha* g_e/c²me²/aa^3/4, where aa accounts for the rescaling in r
         print("soc const, aa", self.soc_const, args.alpha, self.aa)
-        # exit()
 
         self._Vfunc, extent_func, self._Efunc = {
             'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb, None),
@@ -138,10 +137,10 @@ class Hamiltonian:
         #self.g = xp.linspace(0, xp.pi, args.Ng, endpoint=True)  # can't use this form for torch
         self.g = xp.asarray([i*xp.pi/(args.Nint-1) for i in range(args.Nint)]) # include the endpoint
 
-        self.j  = xp.arange(0.0,args.Ng, dtype=self.dtype)
+        self.j  = xp.arange(0.0,args.Ng, dtype=xp.float64)
         self.j[:] += 0.5
 
-        self.Om = xp.arange(-self.J, self.J+1, dtype=self.dtype)
+        self.Om = xp.arange(-self.J, self.J+1, dtype=xp.float64)
         self.sg = xp.array([-0.5, 0.5])
 
         self.axes = (self.R, self.r, self.j, self.Om, self.sg)
@@ -223,7 +222,8 @@ class Hamiltonian:
         builder, self.preconditioner, self.make_guess = {
             'BO':     (self._build_preconditioner_BO, self._preconditioner_BO,    self._make_guess_BO),
             'naive':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
-            'davBO':  (lambda: (self.diag), self._preconditioner_naive, self._make_guess_davBO),
+            'davBO':  (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_davBO),
+            'davBOs': (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_davBO_single),
             None:     (lambda: (self.diag,),          self._preconditioner_naive, self._make_guess_naive),
             }[args.preconditioner]
 
@@ -321,8 +321,8 @@ class Hamiltonian:
         for n, sn in enumerate(self.sg):
             for m, sm in enumerate(self.sg):
                 l1 = (self.j + sn)[:Nj]
-                signsa = xp.where((self.Om -0.5 > 0) & ((self.Om-0.5).astype(xp.float64) % 2 == 1), -1, 1)
-                signsb = xp.where((self.Om +0.5 > 0) & ((self.Om+0.5).astype(xp.float64) % 2 == 1), -1, 1)
+                signsa = xp.where((self.Om -0.5 > 0) & ((self.Om-0.5).astype(int) % 2 == 1), -1, 1)
+                signsb = xp.where((self.Om +0.5 > 0) & ((self.Om+0.5).astype(int) % 2 == 1), -1, 1)
                 phasesa = phase(l1, (self.Om-0.5)[:, None]) * signsa[:, None]
                 phasesb = phase(l1, (self.Om+0.5)[:, None]) * signsb[:, None]
                 # mask to remove j < |Ω|
@@ -631,14 +631,14 @@ class Hamiltonian:
 
     def buildC_scnab(self):
         '''builds array with coefs out the front of s.c nab terms'''
-        # coef0 = ((0+1j)*2*self.sg[None,:,None]*self.Om[None,None,:]*(self.j[:,None,None]+self.sg[None,:,None])
-        #         /(self.j[:,None,None]*(self.j[:,None,None]+1)))
-        coef0 = (2*self.sg[None,:,None]*self.Om[None,None,:]*(self.j[:,None,None]+self.sg[None,:,None])
+        coef0 = ((0-1j)*2*self.sg[None,:,None]*self.Om[None,None,:]*(self.j[:,None,None]+self.sg[None,:,None])
                 /(self.j[:,None,None]*(self.j[:,None,None]+1)))
+        # coef0 = (2*self.sg[None,:,None]*self.Om[None,None,:]*(self.j[:,None,None]+self.sg[None,:,None])
+                # /(self.j[:,None,None]*(self.j[:,None,None]+1)))
         sigx = xp.array([[0,1],[1,0]]) # send sigma --> -sigma
         C0 = xp.einsum('jso, st, jk -> jksto',coef0, sigx, xp.eye(self.shape[2]), dtype=self.dtype)
         
-        C1 = xp.zeros(C0.shape)
+        C1 = xp.zeros(C0.shape, dtype=self.dtype)
         for i,ji in enumerate(self.j):
             for k, _ in enumerate(self.j):
                 for n, sn in enumerate(self.sg):
@@ -647,9 +647,9 @@ class Hamiltonian:
                             if n != m: continue
                             if k != i+1: continue
                             if (ji+sn+0.5)**2-Oo**2 < 0: continue # check for Cb
-                            # C1[i,k,n,m,o] = (0+1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
-                            C1[i,k,n,m,o] = xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
-        C2 = xp.zeros(C0.shape)
+                            C1[i,k,n,m,o] = (0-1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
+                            # C1[i,k,n,m,o] = xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
+        C2 = xp.zeros(C0.shape, self.dtype)
         for i,ji in enumerate(self.j):
             for k, _ in enumerate(self.j):
                 for n, sn in enumerate(self.sg):
@@ -658,9 +658,9 @@ class Hamiltonian:
                             if n != m: continue
                             if k != i-1: continue
                             if (ji+sn+0.5)**2-Oo**2 < 0: continue # check for Cb
-                            # C2[i,k,n,m,o] = (0+1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
-                            C2[i,k,n,m,o] = xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
-        return xp.stack((C0,C1,C2), axis=0)
+                            C2[i,k,n,m,o] = (0+1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
+                            # C2[i,k,n,m,o] = xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
+        return xp.stack((C0,C1,C2), axis=0, dtype=self.dtype)
 
 
     # N.B. This section *must* be kept in sync with Hx above
@@ -681,13 +681,18 @@ class Hamiltonian:
 
         kwargs = dict(optimize=True)
         # Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
-        Vdiag = xp.einsum('Rrg, Ojkstag, jkstOa-> RrktO', self.Vint, self.Pjkst, self.Cspin, **kwargs) 
+        Vdiag = xp.einsum('Rrg, Ojjssag, jjssOa-> RrjsO', self.Vint, self.Pjkst, self.Cspin, **kwargs) 
 
         #Vdiag1 = xp.einsum('RrjjO-> RrjO', self.Vsph)
         #assert xp.allclose(Vdiag, Vdiag1)
 
         # Potential terms
         diag = Vdiag + ke
+
+        if self.args.soc=='lazy':
+            diag += 0.5*self.soc_const* (self.rinv3) * (self.j[:,None]*(self.j[:,None]+1) 
+                                    - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
+                                    - 0.75)[None,None,:,:,None]
 
         assert not xp.any(xp.isnan(diag))
         return diag.ravel()
@@ -915,7 +920,7 @@ class Hamiltonian:
         NR, Nr, Nj, Nsg, NOm = self.shape
         Nelec = Nr*Nj*Nsg*NOm
 
-        U_n   = xp.zeros((NR, Nelec, min_guess))
+        U_n   = xp.zeros((NR, Nelec, min_guess), dtype=self.dtype)
         Ad_n  = xp.zeros((NR, min_guess))
 
         guess = xp.random.random((min_guess, Nelec))
@@ -1057,7 +1062,7 @@ def parse_args():
                         "(typically set automatically)")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
-    parser.add_argument('--preconditioner', choices=['naive', 'BO', 'davBO'],
+    parser.add_argument('--preconditioner', choices=['naive', 'BO', 'davBO','davBOs'],
                         default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--backend', default='numpy')
@@ -1065,7 +1070,7 @@ def parse_args():
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
-    parser.add_argument('--soc', metavar="SOC type:None/lazy/full", type=str, default=None)
+    parser.add_argument('--soc', metavar="SOC type:None/lazy/full", choices=[None,'lazy','full'], type=str, default=None)
     parser.add_argument('--alpha', metavar="SOC enhancement", type=float, default=1.)
     parser.add_argument('--save', metavar="filename")
 

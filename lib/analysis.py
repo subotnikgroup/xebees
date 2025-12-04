@@ -20,7 +20,7 @@ def get_wfc_Om_proj_wS(evecs, H):
     J = int(H.J+0.5)
 
     ev = evecs.reshape((-1,) + H.shape)
-    prj = xp.sum(ev**2, axis=(1,2,3,4))
+    prj = xp.sum(xp.abs(ev)**2, axis=(1,2,3,4))
 
     d = prj[: ,J:].copy() # 1/2..J
     d += xp.fliplr(prj[:, :J]) # -J..-1/2 with flip along 2nd axis (J)
