@@ -37,7 +37,7 @@ else:  # mock this out for use in Jupyter Notebooks etc
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'mu12', 'mur', 'aa', 'g_1', 'g_2', 'J',
-        'R', 'r', 'g', 'j', 'Om','sg',
+        'R', 'r', 'g', 'j', 'Om','sg','ls',
         'soc_const',
         'axes', 'dtype', 'args',
         'max_threads',
@@ -142,6 +142,10 @@ class Hamiltonian:
 
         self.Om = xp.arange(-self.J, self.J+1, dtype=xp.float64)
         self.sg = xp.array([-0.5, 0.5])
+
+        self.ls = (self.j[:,None]*(self.j[:,None]+1) 
+                            - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
+                            - 0.75)/2
 
         self.axes = (self.R, self.r, self.j, self.Om, self.sg)
 
@@ -594,9 +598,11 @@ class Hamiltonian:
         
         def apply_ls(xa):
             ''' Applies the 'vector' part of the SOC Efield: l.s '''
-            kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
-            kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
-            return (kej-kel-0.75*xa)/2
+            # kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+            # kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
+            return xp.einsum('BRrjsO, js -> BRrjsO', xa, self.ls, **kwargs)# l(l+1)
+            # return (kej-kel-0.75*xa)/2
+
         
         def apply_scnab(xa):
             ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
@@ -606,16 +612,16 @@ class Hamiltonian:
             # angular ke
             l1 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]+1),1./self.r, **kwargs) # (j+sg+1)/r
             # coef and rotate angular basis
-            t1 = xp.einsum('BRrjsO, jkstO ->BRrktO', ddrxa+l1, self.C_scnab[0])
+            t0 = xp.einsum('BRrjsO, jkstO ->BRrktO', ddrxa+l1, self.C_scnab[0])
 
             ### 2. term j-->j+1
             # note different angular ke
             l0 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]),1./self.r, **kwargs) # (j+sg)/r
-            t2 = xp.einsum('BRrjsO,jkstO -> BRrktO', ddrxa-l0, self.C_scnab[1])
+            t1 = xp.einsum('BRrjsO,jkstO -> BRrktO', ddrxa-l0, self.C_scnab[1])
 
             ### 3. term j-->j-1
-            t3 = xp.einsum('BRrjsO, jkstO -> BRrktO', ddrxa+l1, self.C_scnab[2])
-            return t1+t2+t3
+            t2 = xp.einsum('BRrjsO, jkstO -> BRrktO', ddrxa+l1, self.C_scnab[2])
+            return t0+t1+t2
         
         def apply_dipole(xa, Efield):
             '''Applies the 'scalar' part of the SOC Efield:
@@ -693,6 +699,11 @@ class Hamiltonian:
             diag += 0.5*self.soc_const* (self.rinv3) * (self.j[:,None]*(self.j[:,None]+1) 
                                     - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
                                     - 0.75)[None,None,:,:,None]
+        # if self.args.soc=='full':
+        #     term_ls = xp.einsum('js, Rrg, Ojjssag, jjssOa -> RrjsO', 
+        #                       self.ls, self.E1 + self.E2, self.Pjkst, self.Cspin, **kwargs) 
+            
+            # diag += self.soc_const*(term_ls)
 
         assert not xp.any(xp.isnan(diag))
         return diag.ravel()
