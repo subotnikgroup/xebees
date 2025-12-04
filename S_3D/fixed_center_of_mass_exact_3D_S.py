@@ -583,9 +583,10 @@ class Hamiltonian:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
             kwargs = dict(optimize=True)
         ### lazy SOC term const*l.s/r^3 = const/2*(j(j+1)-l(l+1)-s(s+1))
-        kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
-        kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
-        out = self.soc_const/2*(kej-kel-3/4*xa)*self.rinv3
+        # kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+        # kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
+        # out = self.soc_const/2*(kej-kel-3/4*xa)*self.rinv3
+        out = self.soc_const* self.rinv3*xp.einsum('BRrjsO, js -> BRrjsO', xa, self.ls, **kwargs) 
         return out.reshape(x.shape)
     
     def SOCx_full(self,x):
@@ -600,34 +601,35 @@ class Hamiltonian:
             ''' Applies the 'vector' part of the SOC Efield: l.s '''
             # kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
             # kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
-            return xp.einsum('BRrjsO, js -> BRrjsO', xa, self.ls, **kwargs)# l(l+1)
             # return (kej-kel-0.75*xa)/2
-
-        
+            return xp.einsum('BRrjsO, js -> BRrjsO', xa, self.ls, **kwargs) 
+   
         def apply_scnab(xa):
             ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
             ### 1. term sg --> -sg
             # radial ke
             ddrxa =  xp.einsum('BRrjsO,rt -> BRtjsO', xa, self.ddr1, **kwargs) # ddr1
             # angular ke
-            l1 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]+1),1./self.r, **kwargs) # (j+sg+1)/r
+            l1 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]),1./self.r, **kwargs) # (j+sg+1)/r
             # coef and rotate angular basis
             t0 = xp.einsum('BRrjsO, jkstO ->BRrktO', ddrxa+l1, self.C_scnab[0])
 
             ### 2. term j-->j+1
             # note different angular ke
-            l0 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]),1./self.r, **kwargs) # (j+sg)/r
+            l0 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]-1),1./self.r, **kwargs) # (j+sg)/r
             t1 = xp.einsum('BRrjsO,jkstO -> BRrktO', ddrxa-l0, self.C_scnab[1])
 
             ### 3. term j-->j-1
             t2 = xp.einsum('BRrjsO, jkstO -> BRrktO', ddrxa+l1, self.C_scnab[2])
             return t0+t1+t2
+            
         
         def apply_dipole(xa, Efield):
             '''Applies the 'scalar' part of the SOC Efield:
                1/|r_e - R_1|^3 for instance for Coulomb potential
             ''' 
             vout =  xp.einsum('BRrjsO, Rrg, Ojkstag, jkstOa -> BRrktO', xa, Efield, self.Pjkst, self.Cspin, **kwargs) 
+
             return vout
         # r_e - R_1 contributions
         out = apply_dipole(apply_ls(xa) - self.mu12/self.M_1*apply_scnab(xa), self.E1)
@@ -671,6 +673,7 @@ class Hamiltonian:
 
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
+        diag = xp.zeros(self.shape, dtype=xp.float64) # DIAG IS REAL!
         ke  = xp.zeros(self.shape)
         ke += xp.diag(self.ddR2)[:, None, None, None, None] # ∂²/∂R²
         ke += xp.diag(self.ddr2)[None, :, None, None, None] # ∂²/∂r²
@@ -699,11 +702,38 @@ class Hamiltonian:
             diag += 0.5*self.soc_const* (self.rinv3) * (self.j[:,None]*(self.j[:,None]+1) 
                                     - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
                                     - 0.75)[None,None,:,:,None]
-        # if self.args.soc=='full':
-        #     term_ls = xp.einsum('js, Rrg, Ojjssag, jjssOa -> RrjsO', 
-        #                       self.ls, self.E1 + self.E2, self.Pjkst, self.Cspin, **kwargs) 
+        if self.args.soc=='full':
+            term_ls = xp.einsum('js, Rrg, Ojjssag, jjssOa -> RrjsO', 
+                              self.ls, self.E1 + self.E2, self.Pjkst, self.Cspin, **kwargs) 
+
             
-            # diag += self.soc_const*(term_ls)
+            # # L_scnab for single diag contraction, shape: Crjs, for C in [0,1,2]
+            # # such that L_scnab and C_scnab can be contracted to get all angular scnab terms at once
+            # # e.g. xout = xp.einsum('BRrjsO, CjkstO, Crjs -> BRrktO', xa, self.C_scnab, self.L_scnab)
+            # L_scnab = xp.stack(((self.j[None,:,None]+self.sg[None,None,:])/self.r[:,None,None], # (j+sg+1)/r
+            #                     -1*(self.j[None,:,None]+self.sg[None,None,:]-1)/self.r[:,None,None],  # -(j+sg)/r
+            #                     (self.j[None,:,None]+self.sg[None,None,:])/self.r[:,None,None]),  #
+            #                     axis=0)  
+            # # How to think through the trace of composition of einsums
+            # # consider the trace composition of two matrix multiplication einsum, e.g. Tr(AB)
+            # # 1.  A: ij
+            # # 2.  B: jk, matrix mult AB: ij,jk -> ik, trace then implies i==k
+            # # Tr(AB): ij, ji -> i
+            # # this means that for the js indices on the scnab application -> kt
+            # # followed by the dipole potential rotation kt -> lp
+            # # trace of whole expression implies l==j and s==p
+            # # so the rotation indices are tr(jkst, kltp -> lp) == jkst, kjts -> js
+            # # all other indices are along for the ride, i.e. 'diagonal' at their given stage
+            # term_E1_scnab = xp.einsum('CjkstO, Crjs, Rrg, Okjtsag, kjtsOa -> RrjsO', 
+            #                           self.C_scnab, L_scnab, self.E1, self.Pjkst, self.Cspin, dtype=self.dtype, **kwargs)
+            # term_E2_scnab = xp.einsum('CjkstO, Crjs, Rrg, Okjtsag, kjtsOa -> RrjsO', 
+            #                           self.C_scnab, L_scnab, self.E2, self.Pjkst, self.Cspin, dtype=self.dtype, **kwargs)
+            print(term_ls.dtype,  diag.dtype) # term_E1_scnab.dtype)
+            # print('diag imag', xp.sum(xp.imag(term_ls))) #, xp.sum(xp.imag(term_E1_scnab)))
+            # # print("test diag", xp.sum(xp.abs(term_ls)), xp.sum(xp.abs(term_E1_scnab)))
+            # # exit()
+
+            diag += self.soc_const*(term_ls)# - self.mu12/self.M_1*term_E1_scnab + self.mu12/self.M_2*term_E2_scnab)
 
         assert not xp.any(xp.isnan(diag))
         return diag.ravel()
@@ -848,7 +878,6 @@ class Hamiltonian:
         Hel += xp.einsum("rs,OP,Rrg,Ojkabqg,jkabOq ->RrjaOskbP",
                          xp.eye(Nr), xp.eye(NOm),
                          self.Vint[Ridx], self.Pjkst,self.Cspin, **kwargs).reshape(NR, Nelec, Nelec)
-
         return xp.squeeze(Hel)
 
 
