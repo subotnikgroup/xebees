@@ -66,8 +66,8 @@ class Hamiltonian:
         assert ((2*self.J)%1==0 and (self.J%1!=0)),"Failed! J must be a half integer: 0.5, 1.5 .... n+1/2"
 
         self.dtype = xp.float64
-        if args.soc=='full':
-            self.dtype=xp.complex128
+        # if args.soc=='full':
+        #     self.dtype=xp.complex128
 
         # Potential function selection
         if not hasattr(args, "potential"):
@@ -612,16 +612,22 @@ class Hamiltonian:
             # angular ke
             l1 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]),1./self.r, **kwargs) # (j+sg+1)/r
             # coef and rotate angular basis
-            t0 = xp.einsum('BRrjsO, jkstO ->BRrktO', ddrxa+l1, self.C_scnab[0])
+            t0 = xp.einsum('BRrjsO, jsktO ->BRrktO', ddrxa+l1, self.C_scnab[0])
+            # t0 = xp.einsum('BRrjsO, jsktO ->BRrktO', ddrxa, self.C_scnab[0])
 
             ### 2. term j-->j+1
             # note different angular ke
             l0 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]-1),1./self.r, **kwargs) # (j+sg)/r
             t1 = xp.einsum('BRrjsO,jkstO -> BRrktO', ddrxa-l0, self.C_scnab[1])
+            # t1 = xp.einsum('BRrjsO,jsktO -> BRrktO', ddrxa, self.C_scnab[1])
+            # t1 = xp.einsum('BRrjsO,jkstO -> BRrktO', xa, (self.C_scnab[0]))
 
             ### 3. term j-->j-1
             t2 = xp.einsum('BRrjsO, jkstO -> BRrktO', ddrxa+l1, self.C_scnab[2])
+            # t2 = xp.einsum('BRrjsO, jsktO -> BRrktO', ddrxa, self.C_scnab[2])
+
             return t0+t1+t2
+            # return xp.einsum('BRrjsO, jkstO, rp ->BRpktO', xa, self.C_scnab[0], self.ddr1)
             
         
         def apply_dipole(xa, Efield):
@@ -629,48 +635,80 @@ class Hamiltonian:
                1/|r_e - R_1|^3 for instance for Coulomb potential
             ''' 
             vout =  xp.einsum('BRrjsO, Rrg, Ojkstag, jkstOa -> BRrktO', xa, Efield, self.Pjkst, self.Cspin, **kwargs) 
-
+            # vout =  xp.einsum('BRrjsO, js, Rrg, Ojkstag, jkstOa -> BRrktO', xa, self.ls, Efield, self.Pjkst, self.Cspin, **kwargs) 
             return vout
+ 
         # r_e - R_1 contributions
-        out = apply_dipole(apply_ls(xa) - self.mu12/self.M_1*apply_scnab(xa), self.E1)
+        out = apply_dipole(apply_ls(xa), self.E1 )#- self.mu12/self.M_1*apply_scnab(xa), self.E1)
         #r_e - R_2 contributions
-        out += apply_dipole(apply_ls(xa) + self.mu12/self.M_2*apply_scnab(xa), self.E2)
+        out += apply_dipole(apply_ls(xa), self.E2 )#+ self.mu12/self.M_2*apply_scnab(xa), self.E2)
+
+        # out = apply_dipole(xa,self.E1)
+        # out = 0.5*(apply_dipole(apply_ls(xa), self.E1) + apply_ls(apply_dipole(xa,self.E1)))
+        # out += 0.5*(apply_dipole(apply_ls(xa), self.E2) + apply_ls(apply_dipole(xa,self.E2)))
+        # out = apply_scnab(xa)
         return self.soc_const*out.reshape(x.shape)
 
     def buildC_scnab(self):
         '''builds array with coefs out the front of s.c nab terms'''
-        coef0 = ((0-1j)*2*self.sg[None,:,None]*self.Om[None,None,:]*(self.j[:,None,None]+self.sg[None,:,None])
+        coef0 = (2*self.sg[None,:,None]*self.Om[None,None,:]*(2*self.j[:,None,None]+1)
                 /(self.j[:,None,None]*(self.j[:,None,None]+1)))
-        # coef0 = (2*self.sg[None,:,None]*self.Om[None,None,:]*(self.j[:,None,None]+self.sg[None,:,None])
-                # /(self.j[:,None,None]*(self.j[:,None,None]+1)))
         sigx = xp.array([[0,1],[1,0]]) # send sigma --> -sigma
-        C0 = xp.einsum('jso, st, jk -> jksto',coef0, sigx, xp.eye(self.shape[2]), dtype=self.dtype)
+        C0 = xp.einsum('jso, st, jk -> jskto',coef0, sigx, xp.eye(self.shape[2]))
         
-        C1 = xp.zeros(C0.shape, dtype=self.dtype)
+        # # alternate (lazy notation way) to translate C0
+        # C0_test = xp.zeros(C0.shape)
+        # for i,ji in enumerate(self.j):
+        #     for n, sn in enumerate(self.sg):
+        #         for m, sm in enumerate(self.sg):
+        #             for o, Oo in enumerate(self.Om):
+        #                 if sn==-1*sm:
+        #                     l = ji+1/2
+        #                     C0_test[i,n,m,o] = 4*sn*l*Oo/(ji*(ji+1))
+
+        with xp.printoptions( precision=3):
+            print("C0 check:") # should look like sigma_x matrices stamped acros j and Om space
+            print(C0[:,:,:,:,0].reshape(self.shape[2]*2, self.shape[2]*2)[:6,:6])
+            print(C0[:,:,:,:,0].reshape(self.shape[2]*2, self.shape[2]*2)[:6,:6])
+        
+        C1 = xp.zeros(C0.shape)
         for i,ji in enumerate(self.j):
             for k, _ in enumerate(self.j):
                 for n, sn in enumerate(self.sg):
                     for m, _ in enumerate(self.sg):
                         for o, Oo in enumerate(self.Om):
+                            kappa = sn*(2*ji+1)
+                            disc =(kappa+0.5)**2-Oo**2
                             if n != m: continue
-                            if k != i+1: continue
-                            if (ji+sn+0.5)**2-Oo**2 < 0: continue # check for Cb
-                            C1[i,k,n,m,o] = (0-1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
-                            # C1[i,k,n,m,o] = xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
-        C2 = xp.zeros(C0.shape, self.dtype)
-        for i,ji in enumerate(self.j):
-            for k, _ in enumerate(self.j):
-                for n, sn in enumerate(self.sg):
-                    for m, _ in enumerate(self.sg):
-                        for o, Oo in enumerate(self.Om):
-                            if n != m: continue
-                            if k != i-1: continue
-                            if (ji+sn+0.5)**2-Oo**2 < 0: continue # check for Cb
-                            C2[i,k,n,m,o] = (0+1j)*xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
-                            # C2[i,k,n,m,o] = xp.sqrt((ji+sn+0.5)**2-Oo**2)/(2*(ji*sn+0.5))
+                            # if i==0 and k==1 and n==0:
+                            #     print("help1!", m, ji,jk,sn, kappa, disc)
+                            #     C1[i,n,k,m,o] = 1
+                            if i != k-1: continue
+                            if  disc < 0: continue # check for Cb
+                            C1[i,n,k,m,o] = xp.sqrt(disc)/(xp.abs(2*kappa +1))
+                                
+        # C2 = xp.zeros(C0.shape)
+        # for i,ji in enumerate(self.j):
+        #     for k, jk in enumerate(self.j):
+        #         for n, sn in enumerate(self.sg):
+        #             for m, _ in enumerate(self.sg):
+        #                 for o, Oo in enumerate(self.Om):
+        #                     kappa = sn*(2*-1*ji+1)
+        #                     if n != m: continue
+        #                     disc =(kappa-0.5)**2-Oo**2
+        #                     # if i==1 and k==0 and n==0:
+        #                     #     print("help2!", m, ji,jk,sn, kappa, disc)
+        #                     #     C1[i,n,k,m,o] = 1
+        #                     if i != k+1: continue
+        #                     if disc < 0: continue 
+        #                     C2[i,n,k,m,o] = -1*xp.sqrt(disc)/(xp.abs(2*kappa -1))
+        C2 = -1*xp.einsum('inkmo->kmino',C1)
+        with xp.printoptions(precision=3, linewidth=xp.inf):
+            print("C1+C2 check:") # should be tridiagonal symmetric in j for fixed sg and Om
+            print(xp.einsum('inkmo, op-> inokmp', C1+C2, xp.eye(self.Om.size)).reshape((2*self.shape[-1]*self.shape[2], 2*self.shape[-1]*self.shape[2]))[:8,:8])
+
         return xp.stack((C0,C1,C2), axis=0, dtype=self.dtype)
-
-
+    
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
         diag = xp.zeros(self.shape, dtype=xp.float64) # DIAG IS REAL!
