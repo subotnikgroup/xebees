@@ -476,6 +476,7 @@ class Hamiltonian:
             out += self.SOCx_lazy(x)
         elif self.args.soc == 'full':
             out += self.SOCx_full(x)
+        # out = self.SOCx_full(x)
         return out
     
     def Hx_BO(self,x, iR=None):
@@ -606,28 +607,13 @@ class Hamiltonian:
    
         def apply_scnab(xa):
             ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
-            ### 1. term sg --> -sg
-            # radial ke
-            ddrxa =  xp.einsum('BRrjsO,rt -> BRtjsO', xa, self.ddr1, **kwargs) # ddr1
-            # angular ke
-            l1 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]),1./self.r, **kwargs) # (j+sg+1)/r
-            # coef and rotate angular basis
-            t0 = xp.einsum('BRrjsO, jsktO ->BRrktO', ddrxa+l1, self.C_scnab[0])
-            # t0 = xp.einsum('BRrjsO, jsktO ->BRrktO', ddrxa, self.C_scnab[0])
+            kappa = self.sg[None,:]*(2*self.j[:,None]+1)
 
-            ### 2. term j-->j+1
-            # note different angular ke
-            l0 = xp.einsum('BRrjsO, js, r -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:]-1),1./self.r, **kwargs) # (j+sg)/r
-            t1 = xp.einsum('BRrjsO,jkstO -> BRrktO', ddrxa-l0, self.C_scnab[1])
-            # t1 = xp.einsum('BRrjsO,jsktO -> BRrktO', ddrxa, self.C_scnab[1])
-            # t1 = xp.einsum('BRrjsO,jkstO -> BRrktO', xa, (self.C_scnab[0]))
-
-            ### 3. term j-->j-1
-            t2 = xp.einsum('BRrjsO, jkstO -> BRrktO', ddrxa+l1, self.C_scnab[2])
-            # t2 = xp.einsum('BRrjsO, jsktO -> BRrktO', ddrxa, self.C_scnab[2])
-
-            return t0+t1+t2
-            # return xp.einsum('BRrjsO, jkstO, rp ->BRpktO', xa, self.C_scnab[0], self.ddr1)
+            td = xp.einsum('BRrjsO, CjsktO,    rp -> BRpktO', xa, self.C_scnab, self.ddr1)           # C*ddr1
+            t0 = xp.einsum('BRrjsO,  jskto, js, r -> BRrktO', xa, self.C_scnab[0],  kappa, 1/self.r) # C0@(kappa/r)
+            t1 = xp.einsum('BRrjsO,  jskto, kt, r -> BRrktO', xa, self.C_scnab[1], -kappa, 1/self.r) # -(kappa)@C1/r
+            t2 = xp.einsum('BRrjsO,  jskto, js, r -> BRrktO', xa, self.C_scnab[2],  kappa, 1/self.r) # C2@(kappa/r)
+            return  td+t0+t1+t2
             
         
         def apply_dipole(xa, Efield):
@@ -635,18 +621,13 @@ class Hamiltonian:
                1/|r_e - R_1|^3 for instance for Coulomb potential
             ''' 
             vout =  xp.einsum('BRrjsO, Rrg, Ojkstag, jkstOa -> BRrktO', xa, Efield, self.Pjkst, self.Cspin, **kwargs) 
-            # vout =  xp.einsum('BRrjsO, js, Rrg, Ojkstag, jkstOa -> BRrktO', xa, self.ls, Efield, self.Pjkst, self.Cspin, **kwargs) 
             return vout
  
         # r_e - R_1 contributions
-        out = apply_dipole(apply_ls(xa), self.E1 )#- self.mu12/self.M_1*apply_scnab(xa), self.E1)
+        out = apply_dipole(apply_ls(xa) - self.mu12/self.M_1*apply_scnab(xa), self.E1)
         #r_e - R_2 contributions
-        out += apply_dipole(apply_ls(xa), self.E2 )#+ self.mu12/self.M_2*apply_scnab(xa), self.E2)
+        out += apply_dipole(apply_ls(xa) + self.mu12/self.M_2*apply_scnab(xa), self.E2)
 
-        # out = apply_dipole(xa,self.E1)
-        # out = 0.5*(apply_dipole(apply_ls(xa), self.E1) + apply_ls(apply_dipole(xa,self.E1)))
-        # out += 0.5*(apply_dipole(apply_ls(xa), self.E2) + apply_ls(apply_dipole(xa,self.E2)))
-        # out = apply_scnab(xa)
         return self.soc_const*out.reshape(x.shape)
 
     def buildC_scnab(self):
@@ -665,47 +646,33 @@ class Hamiltonian:
         #                 if sn==-1*sm:
         #                     l = ji+1/2
         #                     C0_test[i,n,m,o] = 4*sn*l*Oo/(ji*(ji+1))
-
-        with xp.printoptions( precision=3):
-            print("C0 check:") # should look like sigma_x matrices stamped acros j and Om space
-            print(C0[:,:,:,:,0].reshape(self.shape[2]*2, self.shape[2]*2)[:6,:6])
-            print(C0[:,:,:,:,0].reshape(self.shape[2]*2, self.shape[2]*2)[:6,:6])
+        # with xp.printoptions( precision=3):
+        #     print("C0 check:") # should look like sigma_x matrices stamped acros j and Om space
+        #     print(C0[:,:,:,:,0].reshape(self.shape[2]*2, self.shape[2]*2)[:6,:6])
+        #     print(C0[:,:,:,:,0].reshape(self.shape[2]*2, self.shape[2]*2)[:6,:6])
         
         C1 = xp.zeros(C0.shape)
+        C2 = xp.zeros(C0.shape)
         for i,ji in enumerate(self.j):
-            for k, _ in enumerate(self.j):
+            for k, jk in enumerate(self.j):
                 for n, sn in enumerate(self.sg):
                     for m, _ in enumerate(self.sg):
                         for o, Oo in enumerate(self.Om):
-                            kappa = sn*(2*ji+1)
-                            disc =(kappa+0.5)**2-Oo**2
                             if n != m: continue
-                            # if i==0 and k==1 and n==0:
-                            #     print("help1!", m, ji,jk,sn, kappa, disc)
-                            #     C1[i,n,k,m,o] = 1
-                            if i != k-1: continue
-                            if  disc < 0: continue # check for Cb
-                            C1[i,n,k,m,o] = xp.sqrt(disc)/(xp.abs(2*kappa +1))
+                            kappa = sn*(2*ji+1)
+                            kappai = sn*(2*ji+1)
+                            kappak = sn*(2*jk+1)
+                            #if   i == k-1:
+                            if   kappai == kappak-1:
+                                C1[i,n,k,m,o] =    xp.sqrt((kappa+0.5)**2-Oo**2)/(xp.abs(2*kappa +1))
+                            #elif i == k+1:
+                            elif kappai == kappak+1:
+                                C2[i,n,k,m,o] = -1*xp.sqrt((kappa-0.5)**2-Oo**2)/(xp.abs(2*kappa -1))
                                 
-        # C2 = xp.zeros(C0.shape)
-        # for i,ji in enumerate(self.j):
-        #     for k, jk in enumerate(self.j):
-        #         for n, sn in enumerate(self.sg):
-        #             for m, _ in enumerate(self.sg):
-        #                 for o, Oo in enumerate(self.Om):
-        #                     kappa = sn*(2*-1*ji+1)
-        #                     if n != m: continue
-        #                     disc =(kappa-0.5)**2-Oo**2
-        #                     # if i==1 and k==0 and n==0:
-        #                     #     print("help2!", m, ji,jk,sn, kappa, disc)
-        #                     #     C1[i,n,k,m,o] = 1
-        #                     if i != k+1: continue
-        #                     if disc < 0: continue 
-        #                     C2[i,n,k,m,o] = -1*xp.sqrt(disc)/(xp.abs(2*kappa -1))
-        C2 = -1*xp.einsum('inkmo->kmino',C1)
-        with xp.printoptions(precision=3, linewidth=xp.inf):
-            print("C1+C2 check:") # should be tridiagonal symmetric in j for fixed sg and Om
-            print(xp.einsum('inkmo, op-> inokmp', C1+C2, xp.eye(self.Om.size)).reshape((2*self.shape[-1]*self.shape[2], 2*self.shape[-1]*self.shape[2]))[:8,:8])
+        # C2 = -1*xp.einsum('inkmo->kmino',C1)
+        # with xp.printoptions(precision=3, linewidth=xp.inf):
+        #     print("C1+C2 check:")
+        #     print(xp.einsum('inkmo, op-> inokmp', C1+C2, xp.eye(self.Om.size)).reshape((2*self.shape[-1]*self.shape[2], 2*self.shape[-1]*self.shape[2]))[:8,:8])
 
         return xp.stack((C0,C1,C2), axis=0, dtype=self.dtype)
     
