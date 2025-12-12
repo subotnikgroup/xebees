@@ -609,10 +609,10 @@ class Hamiltonian:
             ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
             kappa = self.sg[None,:]*(2*self.j[:,None]+1)
 
-            td = xp.einsum('BRrjsO, CjsktO,    rp -> BRpktO', xa, self.C_scnab, self.ddr1)           # C*ddr1
-            t0 = xp.einsum('BRrjsO,  jsktO, js, r -> BRrktO', xa, self.C_scnab[0],  kappa, 1/self.r) # C0@(kappa/r)
-            t1 = xp.einsum('BRrjsO,  jsktO, kt, r -> BRrktO', xa, self.C_scnab[1], -kappa, 1/self.r) # -(kappa)@C1/r
-            t2 = xp.einsum('BRrjsO,  jsktO, js, r -> BRrktO', xa, self.C_scnab[2],  kappa, 1/self.r) # C2@(kappa/r)
+            td = xp.einsum('BRrjsO, R, CjsktO,    rp -> BRpktO', xa, self.R, self.C_scnab, self.ddr1)           # R*C*ddr1
+            t0 = xp.einsum('BRrjsO, R,  jsktO, js, r -> BRrktO', xa, self.R, self.C_scnab[0],  kappa, 1/self.r) # R*C0@(kappa/r)
+            t1 = xp.einsum('BRrjsO, R,  jsktO, kt, r -> BRrktO', xa, self.R, self.C_scnab[1], -kappa, 1/self.r) # R*(-kappa)@C1/r
+            t2 = xp.einsum('BRrjsO, R,  jsktO, js, r -> BRrktO', xa, self.R, self.C_scnab[2],  kappa, 1/self.r) # R*C2@(kappa/r)
             return  td+t0+t1+t2
             
         
@@ -624,15 +624,17 @@ class Hamiltonian:
             return vout
  
         # r_e - R_1 contributions
-        out = apply_dipole(apply_ls(xa) - self.mu12/self.M_1*apply_scnab(xa), self.E1)
+        out = apply_dipole(apply_ls(xa) + self.mu12/self.M_1*apply_scnab(xa)/2, self.E1)
         #r_e - R_2 contributions
-        out += apply_dipole(apply_ls(xa) + self.mu12/self.M_2*apply_scnab(xa), self.E2)
-
+        out += apply_dipole(apply_ls(xa) - self.mu12/self.M_2*apply_scnab(xa)/2, self.E2)
+        # out = apply_ls(xa) + self.mu12/self.M_2*apply_scnab(xa)/2
+        # out = apply_scnab(xa)
+        # out = apply_dipole(xa, self.E1)
         return self.soc_const*out.reshape(x.shape)
 
     def buildC_scnab(self):
         '''builds array with coefs out the front of s.c nab terms'''
-        coef0 = (2*self.sg[None,:,None]*self.Om[None,None,:]*(2*self.j[:,None,None]+1)
+        coef0 = (self.sg[None,:,None]*self.Om[None,None,:]*(2*self.j[:,None,None]+1)
                 /(self.j[:,None,None]*(self.j[:,None,None]+1)))
         sigx = xp.array([[0,1],[1,0]]) # send sigma --> -sigma
         C0 = xp.einsum('jso, st, jk -> jskto',coef0, sigx, xp.eye(self.shape[2]))
