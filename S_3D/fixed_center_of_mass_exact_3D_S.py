@@ -610,9 +610,9 @@ class Hamiltonian:
             kappa = self.sg[None,:]*(2*self.j[:,None]+1)
 
             td = xp.einsum('BRrjsO, CjsktO,    rp -> BRpktO', xa, self.C_scnab, self.ddr1)           # C*ddr1
-            t0 = xp.einsum('BRrjsO,  jskto, js, r -> BRrktO', xa, self.C_scnab[0],  kappa, 1/self.r) # C0@(kappa/r)
-            t1 = xp.einsum('BRrjsO,  jskto, kt, r -> BRrktO', xa, self.C_scnab[1], -kappa, 1/self.r) # -(kappa)@C1/r
-            t2 = xp.einsum('BRrjsO,  jskto, js, r -> BRrktO', xa, self.C_scnab[2],  kappa, 1/self.r) # C2@(kappa/r)
+            t0 = xp.einsum('BRrjsO,  jsktO, js, r -> BRrktO', xa, self.C_scnab[0],  kappa, 1/self.r) # C0@(kappa/r)
+            t1 = xp.einsum('BRrjsO,  jsktO, kt, r -> BRrktO', xa, self.C_scnab[1], -kappa, 1/self.r) # -(kappa)@C1/r
+            t2 = xp.einsum('BRrjsO,  jsktO, js, r -> BRrktO', xa, self.C_scnab[2],  kappa, 1/self.r) # C2@(kappa/r)
             return  td+t0+t1+t2
             
         
