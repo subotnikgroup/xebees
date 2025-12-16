@@ -479,7 +479,12 @@ class Hamiltonian:
         return out
     
     def Hx_BO(self,x, iR=None):
-        return self.Tx_BO(x, iR=iR)+self.Vx_BO(x, iR=iR)
+        out = self.Tx_BO(x, iR=iR)+self.Vx_BO(x, iR=iR)
+        if self.args.soc =='lazy':
+            out += self.SOCx_lazy_BO(x)
+        elif self.args.soc == 'full':
+            out += self.SOCx_full_BO(x, iR=iR)
+        return out
 
     def Vx(self,x):
         kwargs = dict(optimize=True)
@@ -583,6 +588,17 @@ class Hamiltonian:
         out = self.soc_const* self.rinv3*xp.einsum('BRrjsO, js -> BRrjsO', xa, self.ls, **kwargs) 
         return out.reshape(x.shape)
     
+    def SOCx_lazy_BO(self,x, iR=None):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,)+self.shape[1:]).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,)+self.shape[1:]).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        out = self.soc_const* xp.einsum('BrjsO, js, r-> BrjsO', xa, self.ls, self.r**(-3), **kwargs) 
+        return out.reshape(x.shape)
+    
+    
     def SOCx_full(self,x):
         if xp.backend == 'torch':
             xa = x.reshape((-1,) + self.shape).type(self.dtype)
@@ -598,7 +614,6 @@ class Hamiltonian:
         def apply_scnab(xa):
             ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
             kappa = self.sg[None,:]*(2*self.j[:,None]+1)
-
             td = xp.einsum('BRrjsO, R, CjsktO,    rp -> BRpktO', xa, self.R, self.C_scnab, self.ddr1, **kwargs)           # R*C*ddr1
             t0 = xp.einsum('BRrjsO, R,  jsktO, js, r -> BRrktO', xa, self.R, self.C_scnab[0],  kappa, 1/self.r, **kwargs) # R*C0@(kappa/r)
             t1 = xp.einsum('BRrjsO, R,  jsktO, kt, r -> BRrktO', xa, self.R, self.C_scnab[1], -kappa, 1/self.r, **kwargs) # R*(-kappa)@C1/r
@@ -620,6 +635,44 @@ class Hamiltonian:
         out += apply_ls(apply_dipole(xa,self.E2)) - self.mu12/self.M_2*apply_scnab(apply_dipole(xa, self.E2))
         out /= 2
         return self.soc_const*out.reshape(x.shape)
+    
+    def SOCx_full_BO(self,x, iR=None):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,)+self.shape[1:]).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,)+self.shape[1:]).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        
+        def apply_ls_BO(xa):
+            ''' Applies the 'vector' part of the SOC Efield: l.s '''
+            return xp.einsum('BrjsO, js -> BrjsO', xa, self.ls, **kwargs) 
+   
+        def apply_scnab_BO(xa):
+            ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
+            kappa = self.sg[None,:]*(2*self.j[:,None]+1)
+            td = xp.einsum('BrjsO, CjsktO,    rp -> BpktO', xa, self.C_scnab, self.ddr1, **kwargs)           # R*C*ddr1
+            t0 = xp.einsum('BrjsO,  jsktO, js, r -> BrktO', xa, self.C_scnab[0],  kappa, 1/self.r, **kwargs) # R*C0@(kappa/r)
+            t1 = xp.einsum('BrjsO,  jsktO, kt, r -> BrktO', xa, self.C_scnab[1], -kappa, 1/self.r, **kwargs) # R*(-kappa)@C1/r
+            t2 = xp.einsum('BrjsO,  jsktO, js, r -> BrktO', xa, self.C_scnab[2],  kappa, 1/self.r, **kwargs) # R*C2@(kappa/r)
+            return  self.R[iR]*(td+t0+t1+t2)
+            
+        
+        def apply_dipole_BO(xa, Efield):
+            '''Applies the 'scalar' part of the SOC Efield:
+               1/|r_e - R_1|^3 for instance for Coulomb potential
+            ''' 
+            vout =  xp.einsum('BrjsO, rg, Ojkstag, jkstOa -> BrktO', xa, Efield[iR], self.Pjkst, self.Cspin, **kwargs) 
+            return vout
+ 
+        ### must be symmetrized due to finite basis size
+        out = apply_dipole_BO(apply_ls_BO(xa) + self.mu12/self.M_1*apply_scnab_BO(xa), self.E1)
+        out += apply_dipole_BO(apply_ls_BO(xa) - self.mu12/self.M_2*apply_scnab_BO(xa), self.E2)
+        out += apply_ls_BO(apply_dipole_BO(xa,self.E1)) + self.mu12/self.M_1*apply_scnab_BO(apply_dipole_BO(xa, self.E1))
+        out += apply_ls_BO(apply_dipole_BO(xa,self.E2)) - self.mu12/self.M_2*apply_scnab_BO(apply_dipole_BO(xa, self.E2))
+        out /= 2
+        return self.soc_const*out.reshape(x.shape)
+    
 
     def buildC_scnab(self):
         '''builds array with coefs out the front of s.c nab terms'''
