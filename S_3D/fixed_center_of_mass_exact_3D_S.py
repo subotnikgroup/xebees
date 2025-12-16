@@ -701,15 +701,7 @@ class Hamiltonian:
         if self.args.soc=='full':
             term_ls = xp.einsum('js, Rrg, Ojjssag, jjssOa -> RrjsO', 
                               self.ls, self.E1 + self.E2, self.Pjkst, self.Cspin, **kwargs) 
-
             
-            # # L_scnab for single diag contraction, shape: Crjs, for C in [0,1,2]
-            # # such that L_scnab and C_scnab can be contracted to get all angular scnab terms at once
-            # # e.g. xout = xp.einsum('BRrjsO, CjkstO, Crjs -> BRrktO', xa, self.C_scnab, self.L_scnab)
-            # L_scnab = xp.stack(((self.j[None,:,None]+self.sg[None,None,:])/self.r[:,None,None], # (j+sg+1)/r
-            #                     -1*(self.j[None,:,None]+self.sg[None,None,:]-1)/self.r[:,None,None],  # -(j+sg)/r
-            #                     (self.j[None,:,None]+self.sg[None,None,:])/self.r[:,None,None]),  #
-            #                     axis=0)  
             # # How to think through the trace of composition of einsums
             # # consider the trace composition of two matrix multiplication einsum, e.g. Tr(AB)
             # # 1.  A: ij
@@ -720,15 +712,22 @@ class Hamiltonian:
             # # trace of whole expression implies l==j and s==p
             # # so the rotation indices are tr(jkst, kltp -> lp) == jkst, kjts -> js
             # # all other indices are along for the ride, i.e. 'diagonal' at their given stage
-            # term_E1_scnab = xp.einsum('CjkstO, Crjs, Rrg, Okjtsag, kjtsOa -> RrjsO', 
-            #                           self.C_scnab, L_scnab, self.E1, self.Pjkst, self.Cspin, dtype=self.dtype, **kwargs)
-            # term_E2_scnab = xp.einsum('CjkstO, Crjs, Rrg, Okjtsag, kjtsOa -> RrjsO', 
-            #                           self.C_scnab, L_scnab, self.E2, self.Pjkst, self.Cspin, dtype=self.dtype, **kwargs)
-            # print('diag imag', xp.sum(xp.imag(term_ls))) #, xp.sum(xp.imag(term_E1_scnab)))
-            # # print("test diag", xp.sum(xp.abs(term_ls)), xp.sum(xp.abs(term_E1_scnab)))
-            # # exit()
+            kappa = self.sg[None,:]*(2*self.j[:,None]+1)
 
-            diag += self.soc_const*(term_ls)# - self.mu12/self.M_1*term_E1_scnab + self.mu12/self.M_2*term_E2_scnab)
+            E1t0 = xp.einsum('R,  jsktO, js, r , Rrg, Okjtsag, kjtsOa -> RrjsO',
+                                 self.R, self.C_scnab[0],  kappa, 1/self.r, self.E1, self.Pjkst, self.Cspin, **kwargs) # Pjk@R*C0@(kappa/r)
+            E1t1 = xp.einsum('R,  jsktO, kt, r , Rrg, Okjtsag, kjtsOa -> RrjsO',
+                                 self.R, self.C_scnab[1], -kappa, 1/self.r, self.E1, self.Pjkst, self.Cspin, **kwargs) # R*(-kappa)@C1/r
+            E1t2 = xp.einsum('R,  jsktO, js, r , Rrg, Okjtsag, kjtsOa -> RrjsO',
+                                 self.R, self.C_scnab[2],  kappa, 1/self.r, self.E1, self.Pjkst, self.Cspin, **kwargs) # Pjk@R*C2@(kappa/r)
+            E2t0 = xp.einsum('R,  jsktO, js, r , Rrg, Okjtsag, kjtsOa -> RrjsO',
+                                 self.R, self.C_scnab[0],  kappa, 1/self.r, self.E2, self.Pjkst, self.Cspin, **kwargs) # Pjk@R*C0@(kappa/r)
+            E2t1 = xp.einsum('R,  jsktO, kt, r , Rrg, Okjtsag, kjtsOa -> RrjsO',
+                                 self.R, self.C_scnab[1], -kappa, 1/self.r, self.E2, self.Pjkst, self.Cspin, **kwargs) # R*(-kappa)@C1/r
+            E2t2 = xp.einsum('R,  jsktO, js, r , Rrg, Okjtsag, kjtsOa -> RrjsO',
+                                 self.R, self.C_scnab[2],  kappa, 1/self.r, self.E2, self.Pjkst, self.Cspin, **kwargs) # Pjk@R*C2@(kappa/r)
+
+            diag += self.soc_const*(term_ls + self.mu12/self.M_1*(E1t0+E1t1+E1t2) - self.mu12/self.M_2*(E2t0+E2t1+E2t2))
 
         assert not xp.any(xp.isnan(diag))
         return diag.ravel()
