@@ -925,6 +925,49 @@ class Hamiltonian:
         Hel += xp.einsum("rs,OP,Rrg,Ojkabqg,jkabOq ->RrjaOskbP",
                          xp.eye(Nr), xp.eye(NOm),
                          self.Vint[Ridx], self.Pjkst,self.Cspin, **kwargs).reshape(NR, Nelec, Nelec)
+        
+        ###SOC lazy # ls/r3
+        #self.soc_const* self.rinv3*xp.einsum('BRrjsO, js -> BRrjsO', xa, self.ls, **kwargs) 
+        if self.args.soc=='lazy':
+            Hel += xp.diag(0.5*self.soc_const* (self.rinv3) * (self.j[:,None]*(self.j[:,None]+1) 
+                                    - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
+                                    - 0.75)[None,None,:,:,None])
+        elif self.args.soc=='full':
+            kappa = self.sg[None,:]*(2*self.j[:,None]+1)
+            # term ls
+            E12ls = xp.einsum('js, Rrg, Ojkstag, jkstOa, rp, OP -> RrjsOpktP', 
+                              self.ls, self.E1 + self.E2, self.Pjkst,  self.Cspin, 
+                              xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
+            # terms from E1 and E2 scnab
+            E1td =  self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, CjsktO, rp, OP -> RrjsOpktP', 
+                                                self.E1, self.Pjkst, self.Cspin, self.R, self.C_scnab, 
+                                                self.ddr1, xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
+            E2td = -self.mu12/self.M_2*xp.einsum('Rrg, Ojkstag, jkstOa, R, CjsktO, rp, OP -> RrjsOpktP', 
+                                                self.E2, self.Pjkst, self.Cspin, self.R, self.C_scnab, 
+                                                self.ddr1, xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
+            E1t0 =  self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, js, rp, OP -> RrjsOpktP', 
+                                                self.E1, self.Pjkst, self.Cspin, self.R, self.C_scnab[0], 
+                                                kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
+            E2t0 = -self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, js, rp, OP -> RrjsOpktP', 
+                                                self.E2, self.Pjkst, self.Cspin, self.R, self.C_scnab[0], 
+                                                kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
+            E1t1 =  self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, kt, rp, OP -> RrjsOpktP', 
+                                                self.E1, self.Pjkst, self.Cspin, self.R, self.C_scnab[1], 
+                                                -kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
+            E1t1 = -self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, kt, rp, OP -> RrjsOpktP', 
+                                                self.E2, self.Pjkst, self.Cspin, self.R, self.C_scnab[1], 
+                                                -kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
+            E1t2 =  self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, js, rp, OP -> RrjsOpktP', 
+                                                self.E1, self.Pjkst, self.Cspin, self.R, self.C_scnab[2], 
+                                                kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
+            E2t2 = -self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, js, rp, OP -> RrjsOpktP', 
+                                                self.E2, self.Pjkst, self.Cspin, self.R, self.C_scnab[2], 
+                                                kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
+
+            Hsoc = (E12ls + E1td + E2td + E1t0 + E2t0 + E1t1 + E2t2+ E1t2 + E2t2)
+            Hel += self.soc_const*0.5*(Hsoc + xp.moveaxis(Hsoc, source=1, destination=2)) # symmetrize with batch matrix transpose
+
+
         return xp.squeeze(Hel)
 
 
