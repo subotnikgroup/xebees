@@ -476,7 +476,6 @@ class Hamiltonian:
             out += self.SOCx_lazy(x)
         elif self.args.soc == 'full':
             out += self.SOCx_full(x)
-        # out = self.SOCx_full(x)
         return out
     
     def Hx_BO(self,x, iR=None):
@@ -506,8 +505,6 @@ class Hamiltonian:
             xa = x.reshape((-1,)+self.shape[1:]).astype(self.dtype)
 
         vout =  xp.einsum('BrjsO, rg, Ojkstag, jkstOa-> BrktO', xa, self.Vint[iR], self.Pjkst, self.Cspin, **kwargs) 
-        # vout = xp.einsum('rjO,rg,Ojkg->rkO', xa, self.Vint[iR], self.Pjk, **kwargs)
-        #assert xp.allclose(vout1, vout)
         return vout.reshape(x.shape)
 
         # Hel += xp.einsum("rs,OP,Rrg,Ojkg->RjrOksP",
@@ -583,10 +580,6 @@ class Hamiltonian:
         else:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
             kwargs = dict(optimize=True)
-        ### lazy SOC term const*l.s/r^3 = const/2*(j(j+1)-l(l+1)-s(s+1))
-        # kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
-        # kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
-        # out = self.soc_const/2*(kej-kel-3/4*xa)*self.rinv3
         out = self.soc_const* self.rinv3*xp.einsum('BRrjsO, js -> BRrjsO', xa, self.ls, **kwargs) 
         return out.reshape(x.shape)
     
@@ -600,9 +593,6 @@ class Hamiltonian:
         
         def apply_ls(xa):
             ''' Applies the 'vector' part of the SOC Efield: l.s '''
-            # kej = xp.einsum('BRrjsO, j  -> BRrjsO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
-            # kel = xp.einsum('BRrjsO, js -> BRrjsO', xa, (self.j[:,None]+self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1), **kwargs)# l(l+1)
-            # return (kej-kel-0.75*xa)/2
             return xp.einsum('BRrjsO, js -> BRrjsO', xa, self.ls, **kwargs) 
    
         def apply_scnab(xa):
@@ -623,13 +613,12 @@ class Hamiltonian:
             vout =  xp.einsum('BRrjsO, Rrg, Ojkstag, jkstOa -> BRrktO', xa, Efield, self.Pjkst, self.Cspin, **kwargs) 
             return vout
  
-        # r_e - R_1 contributions
-        out = apply_dipole(apply_ls(xa) + self.mu12/self.M_1*apply_scnab(xa)/2, self.E1)
-        #r_e - R_2 contributions
-        out += apply_dipole(apply_ls(xa) - self.mu12/self.M_2*apply_scnab(xa)/2, self.E2)
-        # out = apply_ls(xa) + self.mu12/self.M_2*apply_scnab(xa)/2
-        # out = apply_scnab(xa)
-        # out = apply_dipole(xa, self.E1)
+        ### must be symmetrized due to finite basis size
+        out = apply_dipole(apply_ls(xa) + self.mu12/self.M_1*apply_scnab(xa), self.E1)
+        out += apply_dipole(apply_ls(xa) - self.mu12/self.M_2*apply_scnab(xa), self.E2)
+        out += apply_ls(apply_dipole(xa,self.E1)) + self.mu12/self.M_1*apply_scnab(apply_dipole(xa, self.E1))
+        out += apply_ls(apply_dipole(xa,self.E2)) - self.mu12/self.M_2*apply_scnab(apply_dipole(xa, self.E2))
+        out /= 2
         return self.soc_const*out.reshape(x.shape)
 
     def buildC_scnab(self):
@@ -676,7 +665,7 @@ class Hamiltonian:
         #     print("C1+C2 check:")
         #     print(xp.einsum('inkmo, op-> inokmp', C1+C2, xp.eye(self.Om.size)).reshape((2*self.shape[-1]*self.shape[2], 2*self.shape[-1]*self.shape[2]))[:8,:8])
 
-        return xp.stack((C0,C1,C2), axis=0, dtype=self.dtype)
+        return xp.stack((C0,C1,C2), axis=0, dtype=self.dtype)/2
     
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
@@ -735,7 +724,6 @@ class Hamiltonian:
             #                           self.C_scnab, L_scnab, self.E1, self.Pjkst, self.Cspin, dtype=self.dtype, **kwargs)
             # term_E2_scnab = xp.einsum('CjkstO, Crjs, Rrg, Okjtsag, kjtsOa -> RrjsO', 
             #                           self.C_scnab, L_scnab, self.E2, self.Pjkst, self.Cspin, dtype=self.dtype, **kwargs)
-            print(term_ls.dtype,  diag.dtype) # term_E1_scnab.dtype)
             # print('diag imag', xp.sum(xp.imag(term_ls))) #, xp.sum(xp.imag(term_E1_scnab)))
             # # print("test diag", xp.sum(xp.abs(term_ls)), xp.sum(xp.abs(term_E1_scnab)))
             # # exit()

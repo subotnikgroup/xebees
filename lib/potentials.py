@@ -65,10 +65,10 @@ extents_soft_coulomb = _extents_log_factory(
     [8,   5,   4,   3.5, 3.5]
 )
 
-def erf_coulomb(R, r1e, r2e, charges, alpha=0.01, beta=1):
+def erf_coulomb(R, r1e, r2e, charges, rcut=0.01):
     Q1,Q2 = charges
-    V1  = -Q1 *      erf(2*r1e/alpha) / r1e
-    V2  = -Q2 *      erf(2*r2e/alpha) / r2e
+    V1  = -Q1 *      erf(2*r1e/rcut) / r1e
+    V2  = -Q2 *      erf(2*r2e/rcut) / r2e
     # make the nuclear repulsion stronger w/ beta
     VN  =  Q1 * Q2 / R
     return V1 + V2 + VN
@@ -81,14 +81,14 @@ extents_erf_coulomb = _extents_log_factory(
 )
 # extents for 2e2 not benchmarked at same R/r grid density as others
 
-def Efield_coulomb(r1e, Q1, alpha=0.01):
+def Efield_coulomb(r1e, Q1, rcut=0.01):
     '''Returns the scalar part of the E-field associated with the Coulomb
     potential between the electron and ONE ion: 
     $E(r) = \vec{r} 1/|r|^3$, function returns 1/|r|^3'''
 
-    E1  = -Q1 *erf(2*r1e/alpha) / r1e**3
+    E1  = -Q1 *erf(2*r1e/rcut) / r1e**3
     # near core-correction from erf function
-    E1 += 4*Q1*xp.exp(-4*r1e**2/alpha**2)/alpha/xp.sqrt(xp.pi)/r1e**2
+    E1 += 4*Q1*xp.exp(-4*r1e**2/rcut**2)/rcut/xp.sqrt(xp.pi)/r1e**2
     return E1
 
 def soft_coulomb_barrier(R, r1e, r2e, charges, dv=0.5, G=1, p=2, A=1):
