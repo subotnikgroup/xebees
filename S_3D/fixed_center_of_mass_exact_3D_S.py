@@ -599,10 +599,10 @@ class Hamiltonian:
             ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
             kappa = self.sg[None,:]*(2*self.j[:,None]+1)
 
-            td = xp.einsum('BRrjsO, R, CjsktO,    rp -> BRpktO', xa, self.R, self.C_scnab, self.ddr1)           # R*C*ddr1
-            t0 = xp.einsum('BRrjsO, R,  jsktO, js, r -> BRrktO', xa, self.R, self.C_scnab[0],  kappa, 1/self.r) # R*C0@(kappa/r)
-            t1 = xp.einsum('BRrjsO, R,  jsktO, kt, r -> BRrktO', xa, self.R, self.C_scnab[1], -kappa, 1/self.r) # R*(-kappa)@C1/r
-            t2 = xp.einsum('BRrjsO, R,  jsktO, js, r -> BRrktO', xa, self.R, self.C_scnab[2],  kappa, 1/self.r) # R*C2@(kappa/r)
+            td = xp.einsum('BRrjsO, R, CjsktO,    rp -> BRpktO', xa, self.R, self.C_scnab, self.ddr1, **kwargs)           # R*C*ddr1
+            t0 = xp.einsum('BRrjsO, R,  jsktO, js, r -> BRrktO', xa, self.R, self.C_scnab[0],  kappa, 1/self.r, **kwargs) # R*C0@(kappa/r)
+            t1 = xp.einsum('BRrjsO, R,  jsktO, kt, r -> BRrktO', xa, self.R, self.C_scnab[1], -kappa, 1/self.r, **kwargs) # R*(-kappa)@C1/r
+            t2 = xp.einsum('BRrjsO, R,  jsktO, js, r -> BRrktO', xa, self.R, self.C_scnab[2],  kappa, 1/self.r, **kwargs) # R*C2@(kappa/r)
             return  td+t0+t1+t2
             
         
