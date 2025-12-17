@@ -936,32 +936,32 @@ class Hamiltonian:
             kappa = self.sg[None,:]*(2*self.j[:,None]+1)
             # term ls
             E12ls = xp.einsum('js, Rrg, Ojkstag, jkstOa, rp, OP -> RrjsOpktP', 
-                              self.ls, self.E1 + self.E2, self.Pjkst,  self.Cspin, 
+                              self.ls, self.E1[Ridx] + self.E2[Ridx], self.Pjkst,  self.Cspin, 
                               xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
             # terms from E1 and E2 scnab
             E1td =  self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, CjsktO, rp, OP -> RrjsOpktP', 
-                                                self.E1, self.Pjkst, self.Cspin, self.R, self.C_scnab, 
+                                                self.E1[Ridx], self.Pjkst, self.Cspin, self.R[Ridx], self.C_scnab, 
                                                 self.ddr1, xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
             E2td = -self.mu12/self.M_2*xp.einsum('Rrg, Ojkstag, jkstOa, R, CjsktO, rp, OP -> RrjsOpktP', 
-                                                self.E2, self.Pjkst, self.Cspin, self.R, self.C_scnab, 
+                                                self.E2[Ridx], self.Pjkst, self.Cspin, self.R[Ridx], self.C_scnab, 
                                                 self.ddr1, xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
             E1t0 =  self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, js, rp, OP -> RrjsOpktP', 
-                                                self.E1, self.Pjkst, self.Cspin, self.R, self.C_scnab[0], 
+                                                self.E1[Ridx], self.Pjkst, self.Cspin, self.R[Ridx], self.C_scnab[0], 
                                                 kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
             E2t0 = -self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, js, rp, OP -> RrjsOpktP', 
-                                                self.E2, self.Pjkst, self.Cspin, self.R, self.C_scnab[0], 
+                                                self.E2[Ridx], self.Pjkst, self.Cspin, self.R[Ridx], self.C_scnab[0], 
                                                 kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
             E1t1 =  self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, kt, rp, OP -> RrjsOpktP', 
-                                                self.E1, self.Pjkst, self.Cspin, self.R, self.C_scnab[1], 
+                                                self.E1[Ridx], self.Pjkst, self.Cspin, self.R[Ridx], self.C_scnab[1], 
                                                 -kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
             E1t1 = -self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, kt, rp, OP -> RrjsOpktP', 
-                                                self.E2, self.Pjkst, self.Cspin, self.R, self.C_scnab[1], 
+                                                self.E2[Ridx], self.Pjkst, self.Cspin, self.R[Ridx], self.C_scnab[1], 
                                                 -kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
             E1t2 =  self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, js, rp, OP -> RrjsOpktP', 
-                                                self.E1, self.Pjkst, self.Cspin, self.R, self.C_scnab[2], 
+                                                self.E1[Ridx], self.Pjkst, self.Cspin, self.R[Ridx], self.C_scnab[2], 
                                                 kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
             E2t2 = -self.mu12/self.M_1*xp.einsum('Rrg, Ojkstag, jkstOa, R, jsktO, js, rp, OP -> RrjsOpktP', 
-                                                self.E2, self.Pjkst, self.Cspin, self.R, self.C_scnab[2], 
+                                                self.E2[Ridx], self.Pjkst, self.Cspin, self.R[Ridx], self.C_scnab[2], 
                                                 kappa, xp.eye(Nr), xp.eye(NOm), **kwargs).reshape(NR,Nelec,Nelec)
 
             Hsoc = (E12ls + E1td + E2td + E1t0 + E2t0 + E1t1 + E2t2+ E1t2 + E2t2)
