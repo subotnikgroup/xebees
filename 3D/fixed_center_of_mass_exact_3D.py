@@ -620,7 +620,7 @@ class Hamiltonian:
         # J terms: -(1/R²)J(J+1) + 2Ω²/R²
         if self.J != 0:
             Hel[:, xp.arange(Nelec), xp.arange(Nelec)] -= (
-                Rinv2[0] * self.J * (self.J+1)  # -(1/R²) J(J+1)
+                Rinv2[:,:,0] * self.J * (self.J+1)  # -(1/R²) J(J+1)
             )
             Hel += 2 * kron3(xp.eye(Nr), xp.eye(Nj), xp.diag(self.Om**2)) * Rinv2 # + 2Ω²/R²
 
