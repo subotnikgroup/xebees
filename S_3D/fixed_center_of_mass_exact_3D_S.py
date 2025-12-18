@@ -85,7 +85,7 @@ class Hamiltonian:
         self.aa   = numpy.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
 
         self.soc_const =  args.alpha/137**2/self.m_e**2/self.aa**3/2 # alpha* g_e/c²me²/aa^3/4, where aa accounts for the rescaling in r
-        print("soc const, aa", self.soc_const, args.alpha, self.aa)
+        print("soc const, alpha, aa", self.soc_const, args.alpha, self.aa)
 
         self._Vfunc, extent_func, self._Efunc = {
             'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb, None),
@@ -827,21 +827,52 @@ class Hamiltonian:
 
         # print(xp.sum(xp.abs(xHel-xVBO)), "test Hel")
         # exit()
-        if xp.backend == 'numpy':
-            threadctl = ThreadpoolController()
-            with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
-                result = list(tqdm(ex.map(lambda i: (i, xp.linalg.eigvalsh(Hel_func(i))), range(NR)), total=NR))
-                Ad_n = xp.zeros((NR, Nelec))
-                for i, a in result:
-                    Ad_n[i] = a
-        elif memory_constrained:
-            Ad_n  = xp.zeros((NR, Nelec))
-            for i in tqdm(range(NR)):
-                Ad_n[i] = xp.linalg.eigvalsh(Hel_func(i))
-        else:
-            Ad_n = xp.linalg.eigvalsh(Hel_func())
+        if self.args.davBOspec:
+            min_guess = nroots
+            U_n   = xp.zeros((NR, Nelec, min_guess), dtype=self.dtype)
+            Ad_n  = xp.zeros((NR, min_guess))
 
-        Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
+            guess = xp.random.random((min_guess, Nelec))
+            max_memory = get_davidson_mem(0.75)
+
+            with timer_ctx(f"DAVBO: {NR} Davidson of size {Nelec}"):
+                for i, R in enumerate(self.R):
+                    conv, Ad_n[i], guess = lib.davidson1(
+                        partial(self.Hx_BO, iR=i),
+                        guess,
+                        xp.reshape(self.diag, self.shape)[i].ravel(),
+                        #callback=reporter,
+                        nroots=min_guess,
+                        max_cycle=500,
+                        verbose=1,
+                        max_space=1000,
+                        max_memory=max_memory,
+                        tol=1e-12,
+                    )
+
+                    if not all(conv):
+                        raise Warning("All roots not converged")
+                    print(Ad_n[i])
+                    U_n[i] = guess.T
+        else:
+            if xp.backend == 'numpy':
+                threadctl = ThreadpoolController()
+                with threadctl.limit(limits=1), cf.ThreadPoolExecutor(max_workers=self.max_threads) as ex:
+                    result = list(tqdm(ex.map(lambda i: (i, xp.linalg.eigvalsh(Hel_func(i))), range(NR)), total=NR))
+                    Ad_n = xp.zeros((NR, Nelec))
+                    for i, a in result:
+                        Ad_n[i] = a
+            elif memory_constrained:
+                Ad_n  = xp.zeros((NR, Nelec))
+                for i in tqdm(range(NR)):
+                    Ad_n[i] = xp.linalg.eigvalsh(Hel_func(i))
+            else:
+                Ad_n = xp.linalg.eigvalsh(Hel_func())
+
+        if self.args.davBOspec:
+            Hbo = xp.empty((nroots,NR,NR))
+        else:
+            Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
         Hbo[:] = -1 / 2 / self.mu * self.ddR2          #       -1/2/μ(∂²/∂R² + 1/4/R²)
         Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T # V_n
 
@@ -1203,6 +1234,7 @@ def parse_args():
     parser.add_argument('--soc', metavar="SOC type:None/lazy/full", choices=[None,'lazy','full'], type=str, default=None)
     parser.add_argument('--alpha', metavar="SOC enhancement", type=float, default=1.)
     parser.add_argument('--save', metavar="filename")
+    parser.add_argument('--davBOspec', action='store_true')
 
    
     
