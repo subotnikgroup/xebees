@@ -148,7 +148,7 @@ class Hamiltonian:
         self.ls = (self.j[:,None]*(self.j[:,None]+1) 
                             - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
                             - 0.75)/2
-        self.s_z, self.l_z = self.build_sz_lz()
+        
 
         self.axes = (self.R, self.r, self.j, self.Om, self.sg)
 
@@ -173,6 +173,7 @@ class Hamiltonian:
         if args.soc=='full':
             self.C_scnab = self.buildC_scnab()
         else: self.C_scnab = None
+        self.s_z, self.l_z = self.build_sz_lz()
 
         self.size = int(xp.prod(xp.asarray(self.shape)))
 
@@ -1020,10 +1021,37 @@ class Hamiltonian:
                                 xp.diag(1/self.r), self.R[Ridx], xp.eye(NOm))
                         + xp.einsum('jsktO, js, rp, R, OP -> RrjsOpktP', self.C_scnab[2], kappa,
                                 xp.diag(1/self.r), self.R[Ridx], xp.eye(NOm))).reshape(NR, Nelec,Nelec)
+            # same as above without factor of R 
+            zsxp = ( xp.einsum('CjsktO, rp, R, OP -> RrjsOpktP', self.C_scnab, self.ddr1,
+                                self.R[Ridx], xp.eye(NOm), **kwargs)
+                        + xp.einsum('jsktO, js, rp, R, OP -> RrjsOpktP', self.C_scnab[0], kappa,
+                                xp.diag(1/self.r), xp.ones(NR)[Ridx], xp.eye(NOm))
+                        + xp.einsum('jsktO, kt, rp, R, OP -> RrjsOpktP', self.C_scnab[1], -kappa,
+                                xp.diag(1/self.r), xp.ones(NR)[Ridx], xp.eye(NOm))
+                        + xp.einsum('jsktO, js, rp, R, OP -> RrjsOpktP', self.C_scnab[2], kappa,
+                                xp.diag(1/self.r), xp.ones(NR)[Ridx], xp.eye(NOm))).reshape(NR, Nelec,Nelec)
 
             E1mat = build_potential(self.E1)
             E2mat = build_potential(self.E2)
 
+            ### testing two ROI z commutators here
+            # z component of vec(r-mu12/M1 R) to make z direction Efield
+            rmR_z = (self.r[None,:,None]*xp.cos(self.g[None,None,:]) - self.mu12/self.M_1*self.R[:,None,None]) # shape Rrg
+            E1mat_z = build_potential(self.E1*rmR_z)
+            
+            # z component of typical 
+            Szmat = xp.einsum('jsktO, rp, R, OP -> RrjsOpktP', self.s_z, xp.eye(Nr),
+                                xp.ones(NR)[Ridx], xp.eye(NOm), **kwargs).reshape(NR, Nelec,Nelec)
+            Lzmat = xp.einsum('jsktO, rp, R, OP -> RrjsOpktP', self.l_z, xp.eye(Nr),
+                                xp.ones(NR)[Ridx], xp.eye(NOm), **kwargs).reshape(NR, Nelec,Nelec)
+            left1 = Szmat@Lzmat-self.mu12/self.M_1*scnab_mat
+            print("check Sz Lz commutator", xp.sum(xp.abs(Szmat@Lzmat - Lzmat@Szmat)))
+            print("try commutator 1:", self.R_lab[Ridx], xp.mean(xp.abs(left1@E1mat - E1mat@left1)))
+
+            print("try commutator 2:", self.R_lab[Ridx], xp.mean(xp.abs(zsxp@E1mat_z - E1mat_z@zsxp)))
+            ####
+
+            #### old commutator tests
             # r1els = ls_mat + self.mu12/self.M_1*scnab_mat/2
             # E1E2 = E1mat@E2mat-E2mat@E1mat
             # E1rls = E1mat@r1els-r1els@E1mat 
@@ -1388,4 +1416,4 @@ if __name__ == '__main__':
         print("WARNING: Not all eigenvalues converged")
         exit(1)
     else:
-        print("All eigenvalues converged")
+       
