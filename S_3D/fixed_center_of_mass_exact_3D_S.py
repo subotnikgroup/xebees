@@ -46,7 +46,8 @@ class Hamiltonian:
         'Rinv2', 'rinv2','rinv3', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2',
-        'E1', 'E2', 'C_scnab', 'ddr1'
+        'E1', 'E2', 'C_scnab', 'ddr1',
+        's_z', 'l_z'
     )
 
     def __init__(self, args):
@@ -119,6 +120,7 @@ class Hamiltonian:
         self.r_lab = xp.linspace(r_max_lab/args.Nr, r_max_lab, args.Nr)
         self.R     = xp.linspace(*R_range,     args.NR)
         self.R_lab = xp.linspace(*R_range_lab, args.NR)
+        
 
         # # require Ng to be even
         # if args.Ng % 2 != 0:
@@ -146,6 +148,7 @@ class Hamiltonian:
         self.ls = (self.j[:,None]*(self.j[:,None]+1) 
                             - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
                             - 0.75)/2
+        self.s_z, self.l_z = self.build_sz_lz()
 
         self.axes = (self.R, self.r, self.j, self.Om, self.sg)
 
@@ -720,6 +723,46 @@ class Hamiltonian:
 
         return xp.stack((C0,C1,C2), axis=0, dtype=self.dtype)/2
     
+    def build_sz_lz(self):
+        _, _, Nj, Nsg, NOm = self.shape
+        Sz = xp.zeros((Nj,Nsg,Nj,Nsg,NOm)) # jsktO ordering
+        Lz = xp.zeros(Sz.shape)
+
+        for j,ji in enumerate(self.j):
+            for k, jk in enumerate(self.j):
+                for s, sn in enumerate(self.sg):
+                    for t, sm in enumerate(self.sg):
+                        for o, Oo in enumerate(self.Om):
+                            kappaj = sn*(2*ji+1)
+                            kappak = sm*(2*jk+1)
+                            if kappak==kappaj: # diagonal term
+                                Sz[j,s,k,t,o] = -2*Oo/(2*kappaj+1)
+                                Lz[j,s,k,t,o] = 2*Oo*(kappaj+1)/(2*kappaj+1)
+                            if kappak== -kappaj-1: # spin flip term
+                                scoef = xp.sqrt((kappaj+0.5)**2-Oo**2)/(xp.abs(2*kappaj+1))
+                                Sz[j,s,k,t,o] = -2*scoef
+                                Lz[j,s,k,t,o] = scoef
+        return Sz, Lz
+    
+    def apply_Sz(self,x):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        
+        return xp.einsum('BRrjsO, jsktO -> BRrktO', xa, self.s_z, **kwargs).reshape(x.shape)
+    def apply_Lz(self,x):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        
+        return xp.einsum('BRrjsO, jsktO -> BRrktO', xa, self.l_z, **kwargs).reshape(x.shape)
+
     # N.B. This section *must* be kept in sync with Hx above
     def buildDiag(self):
         diag = xp.zeros(self.shape, dtype=xp.float64) # DIAG IS REAL!
@@ -981,12 +1024,19 @@ class Hamiltonian:
             E1mat = build_potential(self.E1)
             E2mat = build_potential(self.E2)
 
-            # r1els = ls_mat + self.mu12/self.M_1*scnab_mat
-            # print("E1E2 commutator", self.R_lab[Ridx], xp.mean(xp.abs(E1mat@E2mat-E2mat@E1mat)))
-            # print("r1elsE1 commutator", self.R_lab[Ridx], xp.mean(xp.abs(E1mat@r1els-r1els@E1mat)))
+            # r1els = ls_mat + self.mu12/self.M_1*scnab_mat/2
+            # E1E2 = E1mat@E2mat-E2mat@E1mat
+            # E1rls = E1mat@r1els-r1els@E1mat 
+
+            # print("E1E2 commutator", self.R_lab[Ridx], xp.mean(xp.abs(E1E2)))
+            # print("r1elsE1 commutator", self.R_lab[Ridx], xp.mean(xp.abs(E1rls)))
+            # print("double E1 with E1rls", xp.mean(xp.abs(E1mat@E1rls - E1rls@E1mat)))
+            # print("double, E2 with E1rls", xp.mean(xp.abs(E2mat@E1rls - E1rls@E2mat)))
+            # exit()
 
             E12ls = ls_mat@(E1mat+E2mat)
             E12scnab =  scnab_mat@(self.mu12/self.M_1*E1mat - self.mu12/self.M_2*E2mat)
+
             Hsoc = E12ls + E12scnab
             Hel += self.soc_const*0.5*(Hsoc + Hsoc.transpose((0,2,1))) # symmetrize with batch matrix transpose
 
