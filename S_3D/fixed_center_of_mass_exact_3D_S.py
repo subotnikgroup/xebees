@@ -67,8 +67,6 @@ class Hamiltonian:
         assert ((2*self.J)%1==0 and (self.J%1!=0)),"Failed! J must be a half integer: 0.5, 1.5 .... n+1/2"
 
         self.dtype = xp.float64
-        # if args.soc=='full':
-        #     self.dtype=xp.complex128
 
         # Potential function selection
         if not hasattr(args, "potential"):
@@ -169,8 +167,8 @@ class Hamiltonian:
 
         # Clebsch-Gordon Coefficients between adjacent Ω
         self.VOm = self.buildVOm()
-        # coef for full soc, build later
-        if args.soc=='full':
+        # coef for ROI soc, build later
+        if args.soc=='roi':
             self.C_scnab = self.buildC_scnab()
         else: self.C_scnab = None
         self.s_z, self.l_z = self.build_sz_lz()
@@ -478,8 +476,8 @@ class Hamiltonian:
         out = self.Tx(x) + self.Vx(x)
         if self.args.soc =='lazy':
             out += self.SOCx_lazy(x)
-        elif self.args.soc == 'full':
-            out += self.SOCx_full(x)
+        elif self.args.soc == 'roi':
+            out += self.SOCx_roi(x)
         return out
     
     def Hx_BO(self,x, iR=None):
@@ -487,8 +485,8 @@ class Hamiltonian:
         
         if self.args.soc =='lazy':
             out += self.SOCx_lazy_BO(x)
-        elif self.args.soc == 'full':
-            out += self.SOCx_full_BO(x, iR=iR)
+        elif self.args.soc == 'roi':
+            out += self.SOCx_roi_BO(x, iR=iR)
         return out
 
     def Vx(self,x):
@@ -604,7 +602,7 @@ class Hamiltonian:
         return out.reshape(x.shape)
     
     
-    def SOCx_full(self,x):
+    def SOCx_roi(self,x):
         if xp.backend == 'torch':
             xa = x.reshape((-1,) + self.shape).type(self.dtype)
             kwargs = {}
@@ -641,7 +639,7 @@ class Hamiltonian:
         out /= 2
         return self.soc_const*out.reshape(x.shape)
     
-    def SOCx_full_BO(self,x, iR=None):
+    def SOCx_roi_BO(self,x, iR=None):
         if xp.backend == 'torch':
             xa = x.reshape((-1,)+self.shape[1:]).type(self.dtype)
             kwargs = {}
@@ -743,6 +741,11 @@ class Hamiltonian:
                                 scoef = xp.sqrt((kappaj+0.5)**2-Oo**2)/(xp.abs(2*kappaj+1))
                                 Sz[j,s,k,t,o] = -2*scoef
                                 Lz[j,s,k,t,o] = scoef
+        # with xp.printoptions(precision=3, linewidth=xp.inf, suppress=True):
+        #     print(Lz[:,:,:,:,0].reshape((Nj*Nsg,Nj*Nsg)))
+        #     print()
+        #     print(Lz[:,:,:,:,1].reshape((Nj*Nsg,Nj*Nsg)))
+        #     exit()
         return Sz, Lz
     
     def apply_Sz(self,x):
@@ -785,9 +788,6 @@ class Hamiltonian:
         # Vdiag = xp.einsum('Rrg,Ojjg->RrjO', self.Vint, self.Pjk)
         Vdiag = xp.einsum('Rrg, Ojjssag, jjssOa-> RrjsO', self.Vint, self.Pjkst, self.Cspin, **kwargs) 
 
-        #Vdiag1 = xp.einsum('RrjjO-> RrjO', self.Vsph)
-        #assert xp.allclose(Vdiag, Vdiag1)
-
         # Potential terms
         diag = Vdiag + ke
 
@@ -795,7 +795,7 @@ class Hamiltonian:
             diag += 0.5*self.soc_const* (self.rinv3) * (self.j[:,None]*(self.j[:,None]+1) 
                                     - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
                                     - 0.75)[None,None,:,:,None]
-        if self.args.soc=='full':
+        if self.args.soc=='roi':
             term_ls = xp.einsum('js, Rrg, Ojjssag, jjssOa -> RrjsO', 
                               self.ls, self.E1 + self.E2, self.Pjkst, self.Cspin, **kwargs) 
             
@@ -1007,7 +1007,7 @@ class Hamiltonian:
                              self.ls, self.r**-3, xp.ones(NR)[Ridx], xp.eye(Nr),
                                xp.eye(Nj), xp.eye(Nsg), xp.eye(NOm)).reshape(Nr,Nelec,Nelec)
             
-        elif self.args.soc=='full':
+        elif self.args.soc=='roi':
             kappa = self.sg[None,:]*(2*self.j[:,None]+1)
 
             ls_mat = xp.einsum('js,R, rp, jk, st, OP -> RrjsOpktP', self.ls, xp.ones(NR)[Ridx], xp.eye(Nr), xp.eye(Nj),
@@ -1300,7 +1300,7 @@ def parse_args():
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
-    parser.add_argument('--soc', metavar="SOC type:None/lazy/full", choices=[None,'lazy','full'], type=str, default=None)
+    parser.add_argument('--soc', metavar="SOC type:None/lazy/roi/full", choices=[None,'lazy','full', 'roi'], type=str, default=None)
     parser.add_argument('--alpha', metavar="SOC enhancement", type=float, default=1.)
     parser.add_argument('--save', metavar="filename")
     parser.add_argument('--davBOspec', action='store_true')
@@ -1416,4 +1416,4 @@ if __name__ == '__main__':
         print("WARNING: Not all eigenvalues converged")
         exit(1)
     else:
-       
+        print("All eigenvalues converged")
