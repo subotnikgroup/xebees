@@ -47,7 +47,7 @@ class Hamiltonian:
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2',
         'E1', 'E2', 'C_scnab', 'ddr1',
-        's_z', 'l_z'
+        's_z', 'l_z', 'Csflip', 'Pjk_flip','dPjk_flip', 'soc_extras'
     )
 
     def __init__(self, args):
@@ -160,8 +160,13 @@ class Hamiltonian:
 
         with timer_ctx("Build Vsph from Vgrid"):
             # self.Vsph, self.Vint, self.Pjk  = self.buildVsph()
-            self.Vint, self.Pjkst  = self.buildVsph()
-            self.Cspin = self.buildVspincoef()
+            if args.soc=='full':
+                self.Vint, self.Pjkst, self.Pjk_flip, self.dPjk_flip = self.buildVsph()
+                self.Cspin, self.Csflip = self.buildVspincoef()
+                self.soc_extras = self.buildSOCextras()
+            else: 
+                self.Vint, self.Pjkst  = self.buildVsph()
+                self.Cspin = self.buildVspincoef()
 
 
 
@@ -305,6 +310,12 @@ class Hamiltonian:
         # print(xp.assoc_legendre_p_all(
         #         Nj, int(self.J+0.5),
         #         xp.cos(self.g), norm=False).shape)
+        dg = self.g[1] - self.g[0]
+        Vint = dg * self.Vgrid * xp.sin(self.g)[None,None,:]
+        
+        kwargs = dict(optimize=True)
+        if xp.backend == 'torch':
+            kwargs = {}
         
         Pja = xp.assoc_legendre_p_all(
                 Nj, int(self.J+0.5),
@@ -322,7 +333,7 @@ class Hamiltonian:
                     )
 
         Pjkst = xp.zeros((len(self.Om), Nj,Nj,2,2,2, self.args.Nint))
-                        # Ω,j, j', sg, sg', a/b, gamma 
+                        # Ω,j, j', sg, sg', a/b, ɣ
 
         for n, sn in enumerate(self.sg):
             for m, sm in enumerate(self.sg):
@@ -359,15 +370,27 @@ class Hamiltonian:
                 Pjkst[:,:,:,n,m,0,:] = Pl1a[:, :, None, :] * Pl2a[:, None, :, :]
                 Pjkst[:,:,:,n,m,1,:] = Pl1b[:, :, None, :] * Pl2b[:, None, :, :]
 
+                if self.args.soc == "full":
+                    ddg1 = KE(self.g.size, dg, bare=True, order=1, cyclic=False)
+                    dPl2a = xp.einsum('gh, Ojh -> Ojg', ddg1, Pl2a, **kwargs)
+                    dPl2b = xp.einsum('gh, Ojh -> Ojg', ddg1, Pl2b)
 
-        print("shape check Pjkst,", Pjkst.shape, xp.any(xp.isnan(Pjkst)))
+                    Pjk_flip = xp.zeros(Pjkst.shape)
+                    dPjk_flip = xp.zeros(Pjkst.shape)
+                    #includes a spin flip (S+ or S-)
+                    Pjk_flip[:,:,:,n,m,0,:] = Pl1b[:, :, None, :] * Pl2a[:, None, :, :]
+                    Pjk_flip[:,:,:,n,m,1,:] = Pl1a[:, :, None, :] * Pl2b[:, None, :, :]
+                    #includes a spin flip and a ∂ɣ
+                    dPjk_flip[:,:,:,n,m,0,:] = Pl1b[:, :, None, :] * dPl2a[:, None, :, :]
+                    dPjk_flip[:,:,:,n,m,1,:] = Pl1a[:, :, None, :] * dPl2b[:, None, :, :]
 
-        dg = self.g[1] - self.g[0]
-        Vint = dg * self.Vgrid * xp.sin(self.g)[None,None,:]
+                    return Vint, Pjkst, Pjk_flip, dPjk_flip
+                    
 
-        kwargs = dict(optimize=True)
-        if xp.backend == 'torch':
-            kwargs = {}
+
+        # print("shape check Pjkst,", Pjkst.shape, xp.any(xp.isnan(Pjkst)))
+
+       
 
         #Vsph = xp.einsum('Rrg,Ojkg->RrjkO', Vint, Pjk, **kwargs)
 
@@ -409,6 +432,7 @@ class Hamiltonian:
 
         Ca = xp.zeros((Nj,Nj,Nsg,Nsg,NOm))
         Cb = xp.zeros((Nj,Nj,Nsg,Nsg,NOm))
+        Cf = xp.zeros((Nj,Nj,Nsg,Nsg,NOm))
         for i,ji in enumerate(self.j):
             for k, jk in enumerate(self.j):
                 for n, sn in enumerate(self.sg):
@@ -430,10 +454,54 @@ class Hamiltonian:
                             if ji+0.5+sn+2*sn*Oo < 0 or jk+0.5+sm+2*sm*Oo < 0: continue # check for Cb
                             termB = (ji+0.5+sn+2*sn*Oo)*(jk+0.5+sm+2*sm*Oo)/(ji+0.5+sn)/(jk+0.5+sm)
                             Cb[i,k,n,m,o] = 0.5*xp.sqrt(termB)
-
         assert (not xp.any(xp.isnan(Ca))), "C_alpha has nan!!"
         assert (not xp.any(xp.isnan(Cb))), "C_beta  has nan!!"
+
+        if self.args.soc == 'full':
+            # build spin flip coef, return stacked (+-, -+)
+            for i,ji in enumerate(self.j):
+                for k, jk in enumerate(self.j):
+                    for n, sn in enumerate(self.sg):
+                        for m, sm in enumerate(self.sg):
+                            for o, Oo in enumerate(self.Om):
+                                if ji+0.5+sn < 0: continue
+                                if jk+0.5+sm < 0: continue
+                                if ji+0.5+sn+2*sn*Oo < 0 or jk+0.5+sm-2*sm*Oo < 0: continue # check for Cb
+                                termf = (ji+0.5+sn+2*sn*Oo)*(jk+0.5+sm-2*sm*Oo)/(ji+0.5+sn)/(jk+0.5+sm)
+                                Cf[i,k,n,m,o] = 0.5*xp.sqrt(termf)
+            return xp.stack((Ca,Cb), axis=5), xp.stack((Cf, xp.einsum('iknmo -> kimno',Cf)), axis=5)
+        
         return xp.stack((Ca,Cb), axis=5)
+
+    def buildSOCextras(self):
+        soc_extras = {}
+        NR, Nr, Nj, Nsg, NOm = self.shape
+        dr = self.mu_12/self.M_1*self.R[:,None]*xp.sin(self.g[None,:])**2
+        soc_extras['dr'] = xp.stack((dr,-dr), axis=0) # shape ARg
+
+        dg1 = (xp.sin(self.g[None,None,:]) + self.mu_12/self.M_1*self.R[:,None,None]
+               *xp.sin(self.g[None,None:])*xp.cos(self.g[None,None:])/ self.r[None,:,None])
+        dg1 = (xp.sin(self.g[None,None,:]) - self.mu_12/self.M_1*self.R[:,None,None]
+               *xp.sin(self.g[None,None:])*xp.cos(self.g[None,None:])/ self.r[None,:,None])
+        soc_extras['dg'] = xp.stack((dg1,dg2), axis=0) # shape ARrg
+
+        p1 = (-1*(self.Om[None,None,None,:] + 0.5)*(xp.cos(self.g[None,None,:,None])) 
+               + self.mu_12/self.M_1*self.R[:,None,None,None]/self.r[None,:,None,None])
+        m1 = (   (self.Om[None,None,None,:] - 0.5)*(xp.cos(self.g[None,None,:,None])) 
+               + self.mu_12/self.M_1*self.R[:,None,None,None]/self.r[None,:,None,None])
+        p2 = (-1*(self.Om[None,None,None,:] + 0.5)*(xp.cos(self.g[None,None,:,None])) 
+               - self.mu_12/self.M_1*self.R[:,None,None,None]/self.r[None,:,None,None])
+        m2 = (   (self.Om[None,None,None,:] - 0.5)*(xp.cos(self.g[None,None,:,None])) 
+               - self.mu_12/self.M_1*self.R[:,None,None,None]/self.r[None,:,None,None])
+        soc_extras['pm'] = xp.stack((xp.stack((p1,p2)),xp.stack((m1,m2)))) # shape aARrgO
+
+        z1 = (self.Om[None,:]-0.5)*xp.sin(self.g[:,None])
+        z2 = (self.Om[None,:]+0.5)*xp.sin(self.g[:,None]) 
+        soc_extras['zz'] = xp.stack((z1,z2)) # shape gO
+
+        return soc_extras
+
+        
 
 
     def buildVOm(self):
