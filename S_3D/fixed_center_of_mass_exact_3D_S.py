@@ -45,9 +45,9 @@ class Hamiltonian:
         'Vgrid', 'Vint', 'Pjkst', 'Cspin', 'VOm', 'ddR2', 'ddr2',
         'Rinv2', 'rinv2','rinv3', 'diag', '_preconditioner_data',
         'shape', 'size',
-        '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2',
-        'E1', 'E2', 'C_scnab', 'ddr1',
-        's_z', 'l_z', 'Csflip', 'Pjk_flip','dPjk_flip', 'soc_extras'
+        '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2', 'ddg1',
+        'E1', 'E2','Efield', 'C_scnab', 'ddr1',
+        's_z', 'l_z', 'soc_extras', 'Pjsa', 'Cjsa', 'cdgPjsa', 'sdgPjsa'
     )
 
     def __init__(self, args):
@@ -139,10 +139,11 @@ class Hamiltonian:
 
         self.j  = xp.arange(0.0,args.Ng, dtype=xp.float64)
         self.j[:] += 0.5
-
         self.Om = xp.arange(-self.J, self.J+1, dtype=xp.float64)
         self.sg = xp.array([-0.5, 0.5])
 
+        kappa = self.sg[None,:]*(2*self.j[:,None]+1)
+        # self.ls = -(kappa+1)/2
         self.ls = (self.j[:,None]*(self.j[:,None]+1) 
                             - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
                             - 0.75)/2
@@ -161,21 +162,30 @@ class Hamiltonian:
         with timer_ctx("Build Vsph from Vgrid"):
             # self.Vsph, self.Vint, self.Pjk  = self.buildVsph()
             if args.soc=='full':
-                self.Vint, self.Pjkst, self.Pjk_flip, self.dPjk_flip = self.buildVsph()
-                self.Cspin, self.Csflip = self.buildVspincoef()
+                # self.Vint, self.Pjkst, self.Pjk_flip, self.dPjk_flip = self.buildVsph()
+                # print("new shapes", self.Vint.shape, self.Pjkst.shape, self.Pjk_flip.shape, self.dPjk_flip.shape)
+                # self.Cspin, self.Csflip = self.buildVspincoef()
                 self.soc_extras = self.buildSOCextras()
-            else: 
-                self.Vint, self.Pjkst  = self.buildVsph()
-                self.Cspin = self.buildVspincoef()
-
+            self.Vint, self.Pjkst, self.Pjsa, self.sdgPjsa, self.cdgPjsa  = self.buildVsph()
+            self.Cspin, self.Cjsa = self.buildVspincoef()
+        
+        dg = self.g[1]-self.g[0]
+        
+        # with xp.printoptions(precision=2, suppress=True):
+        #     print("Norm coef:\n", (xp.einsum('jkstOa-> Ojskt', self.Cspin))[1].reshape(len(self.j)*2, len(self.j)*2))
+        #     print("Norm Poly")
+        #     print(((xp.einsum('Ojkstag, g -> Oajskt', self.Pjkst, dg*xp.sin(self.g))[1]).reshape(2,len(self.j)*2, len(self.j)*2)))
+        #     print(self.j[1],self.sg, (xp.einsum('Ojkstag, g -> Oajskt', self.Pjkst, dg*xp.sin(self.g))[1,:,1,:,1,:]))
+        #     print((self.j[:,None]+self.sg[None,:]).reshape(self.j.size*2))
+        # exit()
 
 
         # Clebsch-Gordon Coefficients between adjacent Ω
         self.VOm = self.buildVOm()
         # coef for ROI soc, build later
-        if args.soc=='roi':
-            self.C_scnab = self.buildC_scnab()
-        else: self.C_scnab = None
+        # if args.soc=='roi':
+        self.C_scnab = self.buildC_scnab()
+        # else: self.C_scnab = None
         self.s_z, self.l_z = self.build_sz_lz()
 
         self.size = int(xp.prod(xp.asarray(self.shape)))
@@ -184,10 +194,8 @@ class Hamiltonian:
         dr = self.r[1] - self.r[0]
         dg = self.g[1] - self.g[0]
 
-        self.E1, self.E2 = self.Efield(R_rgrid,r_rgrid, g_rgrid)
-        self.E1 *= dg
-        self.E2 *= dg
-
+        self.E1, self.E2 = self.E_field(R_rgrid,r_rgrid, g_rgrid)
+        self.Efield = xp.stack((self.E1,self.E2))
         # FIXME: the representations of the operators we build are
         # 'dumb' in the sense that they do not know how to apply
         # themselves to vectors in our |Rrɣ> space. Rather, that logic
@@ -212,10 +220,13 @@ class Hamiltonian:
         self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R)
         # self.ddr2, _ = KE_Borisov_3D(self.r, bare=True)
         self.ddr2 = KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False)
-        self.ddr1 = KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False, order=1)
-
+        self.ddr1 = (KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False, order=1)
+                        )#-xp.diag(1/self.r)) # dr - 1/r due to wfc rescaling
+        
         self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
         self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
+        self.ddg1 = KE(self.g.size, dg, bare=True, order=1, cyclic=False)
+                            
 
         # since we need these in Hx
         R_grid, r_grid, _ , _ , _ = xp.meshgrid(self.R, self.r, self.j, self.sg, self.Om, indexing='ij')
@@ -275,7 +286,7 @@ class Hamiltonian:
 
         return self._Vfunc(R/aa, r1e, r2e, (self.g_1, self.g_2))
     
-    def Efield(self, R, r, gamma):
+    def E_field(self, R, r, gamma):
         mu12 = self.mu12
         aa = self.aa
         M_1 = self.M_1
@@ -289,7 +300,8 @@ class Hamiltonian:
         r1e = xp.sqrt(xp.where(r1e2 < 0, 0, r1e2))
         r2e = xp.sqrt(xp.where(r2e2 < 0, 0, r2e2))
 
-        return (self._Efunc(r1e,self.g_1)*xp.sin(gamma), self._Efunc(r2e,self.g_2)*xp.sin(gamma))
+        return (self._Efunc(r1e,self.g_1), self._Efunc(r2e,self.g_2))
+        # return (self._Efunc(r1e,self.g_1) *xp.sin(gamma), self._Efunc(r2e,self.g_2)*xp.sin(gamma))
 
 
     def buildVsph(self):
@@ -334,6 +346,7 @@ class Hamiltonian:
 
         Pjkst = xp.zeros((len(self.Om), Nj,Nj,2,2,2, self.args.Nint))
                         # Ω,j, j', sg, sg', a/b, ɣ
+        Pjsa = xp.zeros((2,len(self.Om),Nj,2,self.args.Nint))
 
         for n, sn in enumerate(self.sg):
             for m, sm in enumerate(self.sg):
@@ -343,8 +356,10 @@ class Hamiltonian:
                 phasesa = phase(l1, (self.Om-0.5)[:, None]) * signsa[:, None]
                 phasesb = phase(l1, (self.Om+0.5)[:, None]) * signsb[:, None]
                 # mask to remove j < |Ω|
-                maska = self.j[None, :] >= ma[:, None]
-                maskb = self.j[None, :] >= mb[:, None]
+                maska = l1[None, :] >= ma[:, None]
+                maskb = l1[None, :] >= mb[:, None]
+                # maska = self.j[None, :] >= ma[:, None]
+                # maskb = self.j[None, :] >= mb[:, None]
                 # Apply mask and signed phases
                 if sn==-0.5:
                     Pl1a = Pja[:,:Nj,:] * (maska * phasesa)[...,None]
@@ -357,8 +372,10 @@ class Hamiltonian:
                 phasesa = phase(l2, (self.Om-0.5)[:, None]) * signsa[:, None]
                 phasesb = phase(l2, (self.Om+0.5)[:, None]) * signsb[:, None]
                 # mask to remove j < |Ω|
-                maska = self.j[None, :] >= ma[:, None]
-                maskb = self.j[None, :] >= mb[:, None]
+                maska = l2[None, :] >= ma[:, None]
+                maskb = l2[None, :] >= mb[:, None]
+                # maska = self.j[None, :] >= ma[:, None]
+                # maskb = self.j[None, :] >= mb[:, None]
                 # Apply mask and signed phases
                 if sm==-0.5:
                     Pl2a = Pja[:,:Nj,:] * (maska * phasesa)[...,None]
@@ -369,28 +386,23 @@ class Hamiltonian:
 
                 Pjkst[:,:,:,n,m,0,:] = Pl1a[:, :, None, :] * Pl2a[:, None, :, :]
                 Pjkst[:,:,:,n,m,1,:] = Pl1b[:, :, None, :] * Pl2b[:, None, :, :]
+                Pjsa[0,:,:,n,:] = Pl1a[:,:,:]
+                Pjsa[1,:,:,n,:] = Pl1b[:,:,:]
 
-                if self.args.soc == "full":
-                    ddg1 = KE(self.g.size, dg, bare=True, order=1, cyclic=False)
-                    dPl2a = xp.einsum('gh, Ojh -> Ojg', ddg1, Pl2a, **kwargs)
-                    dPl2b = xp.einsum('gh, Ojh -> Ojg', ddg1, Pl2b)
-
-                    Pjk_flip = xp.zeros(Pjkst.shape)
-                    dPjk_flip = xp.zeros(Pjkst.shape)
-                    #includes a spin flip (S+ or S-)
-                    Pjk_flip[:,:,:,n,m,0,:] = Pl1b[:, :, None, :] * Pl2a[:, None, :, :]
-                    Pjk_flip[:,:,:,n,m,1,:] = Pl1a[:, :, None, :] * Pl2b[:, None, :, :]
-                    #includes a spin flip and a ∂ɣ
-                    dPjk_flip[:,:,:,n,m,0,:] = Pl1b[:, :, None, :] * dPl2a[:, None, :, :]
-                    dPjk_flip[:,:,:,n,m,1,:] = Pl1a[:, :, None, :] * dPl2b[:, None, :, :]
-
-                    return Vint, Pjkst, Pjk_flip, dPjk_flip
+                # if self.args.soc == "full":
                     
+                #     dPl2a = xp.einsum('gh, Ojh -> Ojg', ddg1, Pl2a, **kwargs)
+                #     dPl2b = xp.einsum('gh, Ojh -> Ojg', ddg1, Pl2b)
 
+                #     Pjk_flip = xp.zeros(Pjkst.shape)
+                #     dPjk_flip = xp.zeros(Pjkst.shape)
+                #     #includes a spin flip (S+ or S-)
+                #     Pjk_flip[:,:,:,n,m,0,:] = Pl1b[:, :, None, :] * Pl2a[:, None, :, :]
+                #     Pjk_flip[:,:,:,n,m,1,:] = Pl1a[:, :, None, :] * Pl2b[:, None, :, :]
+                #     #includes a spin flip and a ∂ɣ
+                #     dPjk_flip[:,:,:,n,m,0,:] = Pl1b[:, :, None, :] * dPl2a[:, None, :, :]
+                #     dPjk_flip[:,:,:,n,m,1,:] = Pl1a[:, :, None, :] * dPl2b[:, None, :, :]
 
-        # print("shape check Pjkst,", Pjkst.shape, xp.any(xp.isnan(Pjkst)))
-
-       
 
         #Vsph = xp.einsum('Rrg,Ojkg->RrjkO', Vint, Pjk, **kwargs)
 
@@ -423,7 +435,16 @@ class Hamiltonian:
 
         #assert not xp.any(xp.isnan(Vsph))
         #return Vsph, Vint, Pjk
-        return Vint, Pjkst
+        print('Pjsa!',Pjsa.shape)
+        Pjsa = xp.einsum('aOjsg -> ajsOg', Pjsa)
+        print('Pjsa2!',Pjsa.shape)
+        ddg1 = KE(self.g.size, dg, bare=True, order=1, cyclic=False)
+        sdgPjsa =  xp.einsum('g, gh, ajsOh -> ajsOg', xp.sin(self.g)/2, ddg1, Pjsa)
+        sdgPjsa += xp.einsum('h, gh, ajsOh -> ajsOg', xp.sin(self.g)/2, ddg1, Pjsa)
+        cdgPjsa =  xp.einsum('g, gh, ajsOh -> ajsOg', xp.cos(self.g)/2, ddg1, Pjsa)
+        cdgPjsa += xp.einsum('h, gh, ajsOh -> ajsOg', xp.cos(self.g)/2, ddg1, Pjsa)
+
+        return Vint, Pjkst, Pjsa, sdgPjsa, cdgPjsa
     
     def buildVspincoef(self):
         ''' Build the spinor coefficients for the potential in spherical harmonic coordinates. 
@@ -432,12 +453,21 @@ class Hamiltonian:
 
         Ca = xp.zeros((Nj,Nj,Nsg,Nsg,NOm))
         Cb = xp.zeros((Nj,Nj,Nsg,Nsg,NOm))
-        Cf = xp.zeros((Nj,Nj,Nsg,Nsg,NOm))
+        # Cf = xp.zeros((Nj,Nj,Nsg,Nsg,NOm))
+        Cjsa = xp.zeros((2,Nj,Nsg,NOm)) # ajsO
+
         for i,ji in enumerate(self.j):
             for k, jk in enumerate(self.j):
                 for n, sn in enumerate(self.sg):
                     for m, sm in enumerate(self.sg):
                         for o, Oo in enumerate(self.Om):
+                            kappi = sn*(2*ji+1)
+                            up = (kappi+0.5-Oo)/(2*kappi+1)
+                            if up > 0:
+                                Cjsa[0,i,n,o] = 2*sn*xp.sqrt(up) 
+                            down = (kappi+0.5+Oo)/(2*kappi+1)
+                            if down>0:
+                                Cjsa[1,i,n,o] = xp.sqrt(down)
                             if ji+0.5+sn < 0: continue
                             if jk+0.5+sm < 0: continue
                             if ji+0.5+sn-2*sn*Oo < 0 or jk+0.5+sm-2*sm*Oo < 0: continue # check for Ca
@@ -449,6 +479,7 @@ class Hamiltonian:
                 for n, sn in enumerate(self.sg):
                     for m, sm in enumerate(self.sg):
                         for o, Oo in enumerate(self.Om):
+
                             if ji+0.5+sn < 0: continue
                             if jk+0.5+sm < 0: continue
                             if ji+0.5+sn+2*sn*Oo < 0 or jk+0.5+sm+2*sm*Oo < 0: continue # check for Cb
@@ -457,52 +488,74 @@ class Hamiltonian:
         assert (not xp.any(xp.isnan(Ca))), "C_alpha has nan!!"
         assert (not xp.any(xp.isnan(Cb))), "C_beta  has nan!!"
 
-        if self.args.soc == 'full':
-            # build spin flip coef, return stacked (+-, -+)
-            for i,ji in enumerate(self.j):
-                for k, jk in enumerate(self.j):
-                    for n, sn in enumerate(self.sg):
-                        for m, sm in enumerate(self.sg):
-                            for o, Oo in enumerate(self.Om):
-                                if ji+0.5+sn < 0: continue
-                                if jk+0.5+sm < 0: continue
-                                if ji+0.5+sn+2*sn*Oo < 0 or jk+0.5+sm-2*sm*Oo < 0: continue # check for Cb
-                                termf = (ji+0.5+sn+2*sn*Oo)*(jk+0.5+sm-2*sm*Oo)/(ji+0.5+sn)/(jk+0.5+sm)
-                                Cf[i,k,n,m,o] = 0.5*xp.sqrt(termf)
-            return xp.stack((Ca,Cb), axis=5), xp.stack((Cf, xp.einsum('iknmo -> kimno',Cf)), axis=5)
-        
-        return xp.stack((Ca,Cb), axis=5)
+        # if self.args.soc == 'full':
+        #     # build spin flip coef, return stacked (+-, -+)
+        #     for i,ji in enumerate(self.j):
+        #         for k, jk in enumerate(self.j):
+        #             for n, sn in enumerate(self.sg):
+        #                 for m, sm in enumerate(self.sg):
+        #                     for o, Oo in enumerate(self.Om):
+        #                         # kappi = sn*(2*ji+1)
+        #                         # kappj = sm*(2*jk+1)
+        #                         # termf = (kappi+0.5-Oo)*(kappj+0.5+Oo)/(2*kappi+1)/(2*kappj+1)
+        #                         # if termf < 0: continue
+        #                         # Cf[i,k,n,m,o] = 2*sn*xp.sqrt(termf)
+                                
+        #                         if ji+0.5+sn < 0: continue
+        #                         if jk+0.5+sm < 0: continue
+        #                         if ji+0.5+sn+2*sn*Oo < 0 or jk+0.5+sm-2*sm*Oo < 0: continue # check for Cb
+        #                         termf = (ji+0.5+sn+2*sn*Oo)*(jk+0.5+sm-2*sm*Oo)/(ji+0.5+sn)/(jk+0.5+sm)
+        #                         Cf[i,k,n,m,o] = sm*xp.sqrt(termf)
+            # with xp.printoptions(precision=3, linewidth=xp.inf):
+            #     print("Cf check jk space")
+            #     NR, Nr, Nj, Nsg, NOm = self.shape
+            #     Nsph = Nj*Nsg*NOm
+            #     # print(xp.einsum('iknmo, op-> inokmp', Cf, xp.eye(self.Om.size)).reshape((Nsph,Nsph))[:8,:8])
+            #     print(xp.einsum('iknmo->oinkm', Cf[:,:,:,:,:]).reshape((NOm,Nj*Nsg,Nj*Nsg)))
+
+            # retsurn xp.stack((Ca,Cb), axis=5), xp.stack((Cf, xp.einsum('iknmo -> kimno',Cf)), axis=5)
+        Cspin = xp.stack((Ca,Cb), axis=5)
+        return Cspin, Cjsa
 
     def buildSOCextras(self):
         soc_extras = {}
         NR, Nr, Nj, Nsg, NOm = self.shape
-        dr = self.mu_12/self.M_1*self.R[:,None]*xp.sin(self.g[None,:])**2
-        soc_extras['dr'] = xp.stack((dr,-dr), axis=0) # shape ARg
 
-        dg1 = (xp.sin(self.g[None,None,:]) + self.mu_12/self.M_1*self.R[:,None,None]
-               *xp.sin(self.g[None,None:])*xp.cos(self.g[None,None:])/ self.r[None,:,None])
-        dg1 = (xp.sin(self.g[None,None,:]) - self.mu_12/self.M_1*self.R[:,None,None]
-               *xp.sin(self.g[None,None:])*xp.cos(self.g[None,None:])/ self.r[None,:,None])
-        soc_extras['dg'] = xp.stack((dg1,dg2), axis=0) # shape ARrg
+        psi1 = xp.cos(self.g[None,None,:]) - self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]
+        psi2 = xp.cos(self.g[None,None,:]) + self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]
+        gam = xp.sin(self.g[None,None,:])-self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]*xp.cos(self.g[None,None,:])
+        gam_nog = -self.mu12/self.M_1*self.R[:,None]/self.r[None,:]
+        soc_extras['psi'] = xp.stack((psi1,psi2))
+        soc_extras['gam'] = xp.stack((gam, -gam))
+        soc_extras['gam_nog'] = xp.stack((gam_nog, -gam_nog))
+        dr = -self.mu12/self.M_1*self.R[:,None]*xp.sin(self.g[None,:])**2
+        soc_extras['dr']  = xp.stack((dr,-dr))
 
-        p1 = (-1*(self.Om[None,None,None,:] + 0.5)*(xp.cos(self.g[None,None,:,None])) 
-               + self.mu_12/self.M_1*self.R[:,None,None,None]/self.r[None,:,None,None])
-        m1 = (   (self.Om[None,None,None,:] - 0.5)*(xp.cos(self.g[None,None,:,None])) 
-               + self.mu_12/self.M_1*self.R[:,None,None,None]/self.r[None,:,None,None])
-        p2 = (-1*(self.Om[None,None,None,:] + 0.5)*(xp.cos(self.g[None,None,:,None])) 
-               - self.mu_12/self.M_1*self.R[:,None,None,None]/self.r[None,:,None,None])
-        m2 = (   (self.Om[None,None,None,:] - 0.5)*(xp.cos(self.g[None,None,:,None])) 
-               - self.mu_12/self.M_1*self.R[:,None,None,None]/self.r[None,:,None,None])
-        soc_extras['pm'] = xp.stack((xp.stack((p1,p2)),xp.stack((m1,m2)))) # shape aARrgO
-
-        z1 = (self.Om[None,:]-0.5)*xp.sin(self.g[:,None])
-        z2 = (self.Om[None,:]+0.5)*xp.sin(self.g[:,None]) 
-        soc_extras['zz'] = xp.stack((z1,z2)) # shape gO
-
+        Sxcospdp = xp.zeros((2,2,NOm,NOm))
+        Sxsinp   = xp.zeros((2,2,NOm,NOm))
+        Sysinpdp = xp.zeros((2,2,NOm,NOm))
+        Sycosp   = xp.zeros((2,2,NOm,NOm))
+        Szdp     = xp.zeros((2,2,NOm,NOm))
+        for i1,n1 in enumerate(self.Om):
+            for i2,n2 in enumerate(self.Om):
+                    if n2 == n1:
+                        Sxcospdp[0,1,i1,i2] = -2*(n1+n2)/16
+                        Sxsinp[0,1,i1,i2] = -1/4
+                        Sysinpdp[0,1,i1,i2] = -2*(n1+n2)/16
+                        Sycosp[0,1,i1,i2] = -1/4
+                        Szdp[0,0,i2,i2] =  (n1+n2-1)/4
+                        Szdp[1,1,i2,i2] = -(n1+n2+1)/4
+                        ## Not going to bother with the Om±2 terms since SOC is diagonal overall
+        Sxcospdp[1,0] = Sxcospdp[0,1]
+        Sxsinp[1,0]   = -1*Sxsinp[0,1]
+        Sysinpdp[1,0] = Sysinpdp[0,1]
+        Sycosp[1,0]   = -1*Sycosp[0,1]
+        soc_extras['Sxcospdp'] = Sxcospdp
+        soc_extras['Sxsinp']   = Sxsinp
+        soc_extras['Sysinpdp'] = Sysinpdp
+        soc_extras['Sycosp']   = Sycosp
+        soc_extras['Szdp']     = Szdp
         return soc_extras
-
-        
-
 
     def buildVOm(self):
         ''' Clebsch-Gordon Coefficients between adjacent Ω
@@ -546,6 +599,9 @@ class Hamiltonian:
             out += self.SOCx_lazy(x)
         elif self.args.soc == 'roi':
             out += self.SOCx_roi(x)
+        elif self.args.soc == 'full':
+            out += self.SOCx_full(x)
+        
         return out
     
     def Hx_BO(self,x, iR=None):
@@ -669,6 +725,31 @@ class Hamiltonian:
         out = self.soc_const* xp.einsum('BrjsO, js, r-> BrjsO', xa, self.ls, self.r**(-3), **kwargs) 
         return out.reshape(x.shape)
     
+    def apply_ls(self,x):
+        ''' Applies the 'vector' part of the SOC Efield: l.s '''
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        return xp.einsum('BRrjsO, js -> BRrjsO', xa, self.ls, **kwargs).reshape(x.shape)
+    
+    def apply_scnab(self, x):
+        ''' Applies the 'vector' part of the SOC Efield: R(s.c x ∇) '''
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        
+        kappa = self.sg[None,:]*(2*self.j[:,None]+1)
+        td = xp.einsum('BRrjsO, R, CjsktO,    rp -> BRpktO', xa, self.R, self.C_scnab, self.ddr1, **kwargs)           # R*C*ddr1
+        t0 = xp.einsum('BRrjsO, R,  jsktO, js, r -> BRrktO', xa, self.R, self.C_scnab[0],  kappa, 1/self.r, **kwargs) # R*C0@(kappa/r)
+        t1 = xp.einsum('BRrjsO, R,  jsktO, kt, r -> BRrktO', xa, self.R, self.C_scnab[1], -kappa, 1/self.r, **kwargs) # R*(-kappa)@C1/r
+        t2 = xp.einsum('BRrjsO, R,  jsktO, js, r -> BRrktO', xa, self.R, self.C_scnab[2],  kappa, 1/self.r, **kwargs) # R*C2@(kappa/r)
+        return  (td+t0+t1+t2).reshape(x.shape)
     
     def SOCx_roi(self,x):
         if xp.backend == 'torch':
@@ -743,6 +824,75 @@ class Hamiltonian:
         out /= 2
         return self.soc_const*out.reshape(x.shape)
     
+    def SOCx_full(self, x):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        dg = self.g[1]-self.g[0]
+        
+        ## l.s with integration
+        # SxLx = (xp.einsum('g, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
+        #                  xp.cos(self.g), self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxcospdp'], xa, **kwargs)
+        #        + xp.einsum('ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+        #                      self.Cjsa, self.Pjsa, self.Cjsa, self.sdgPjsa, self.soc_extras['Sxsinp'], xa, **kwargs))
+        # SyLy = (xp.einsum('g, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
+        #                  xp.cos(self.g), self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sysinpdp'], xa, **kwargs)
+        #         + xp.einsum('ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+        #                      self.Cjsa, self.Pjsa, self.Cjsa, self.sdgPjsa, self.soc_extras['Sycosp'], xa, **kwargs))
+        # SzLz = xp.einsum('ajsO, ajsOg, abOP, bktP, bktPg, g, BRrjsO -> BRrktP',
+        #          self.Cjsa, self.Pjsa, self.soc_extras['Szdp'], self.Cjsa, self.Pjsa, xp.sin(self.g), xa, **kwargs)
+        
+        ## (r-R)xp.S by integration
+        # SxLx = (xp.einsum('Rrg, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
+        #                  self.soc_extras['psi'][0], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxcospdp'], xa, **kwargs)
+        #        + xp.einsum('ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+        #                      self.Cjsa, self.Pjsa, self.Cjsa, self.sdgPjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
+        #        + xp.einsum('Rr, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+        #                      self.soc_extras['gam_nog'][0], self.Cjsa, self.Pjsa, self.Cjsa, self.cdgPjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
+        #        + xp.einsum('Rg, rv, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
+        #                      self.soc_extras['dr'][0],self.ddr1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs))
+        # SyLy = (xp.einsum('Rrg, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
+        #                  self.soc_extras['psi'][0], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sysinpdp'], xa, **kwargs)
+        #        + xp.einsum('ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+        #                      self.Cjsa, self.Pjsa, self.Cjsa, self.sdgPjsa, self.soc_extras['Sycosp'], xa, **kwargs)
+        #        + xp.einsum('Rr, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+        #                      self.soc_extras['gam_nog'][0], self.Cjsa, self.Pjsa, self.Cjsa, self.cdgPjsa, self.soc_extras['Sycosp'], xa, **kwargs)
+        #        + xp.einsum('Rg, rv, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
+        #                      self.soc_extras['dr'][0],self.ddr1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs))
+        # SzLz = xp.einsum('ajsO, ajsOg, abOP, bktP, bktPg, g, BRrjsO -> BRrktP',
+        #          self.Cjsa, self.Pjsa, self.soc_extras['Szdp'], self.Cjsa, self.Pjsa, xp.sin(self.g), xa, **kwargs)
+
+        ### full-soc with Efield
+        SxLx = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
+                        self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxcospdp'], xa, **kwargs)
+                + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+                             self.Efield, self.soc_extras['gam'], self.ddg1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
+                + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+                             self.Efield, self.soc_extras['gam'], self.ddg1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
+                +  xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
+                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
+                + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
+                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs))
+                # + xp.einsum('ARrg, ARg, r, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+                #              self.Efield, self.soc_extras['dr'],-1/self.r, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs))
+        SyLy = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
+                         self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sysinpdp'], xa, **kwargs)
+                + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+                             self.Efield, self.soc_extras['gam'], self.ddg1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
+                + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
+                             self.Efield, self.soc_extras['gam'], self.ddg1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
+                + xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
+                             self.Efield, self.soc_extras['dr'],self.ddr1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
+                + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
+                             self.Efield, self.soc_extras['dr'],self.ddr1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs))
+        SzLz = xp.einsum('ARrg, ajsO, ajsOg, abOP, bktP, bktPg, g, BRrjsO -> BRrktP',
+                 self.Efield, self.Cjsa, self.Pjsa, self.soc_extras['Szdp'], self.Cjsa, self.Pjsa, xp.sin(self.g), xa, **kwargs)
+
+        return (SxLx+SyLy+SzLz).reshape(x.shape)*dg #+SyLy+SzLz).reshape(x.shape)*dg
+
 
     def buildC_scnab(self):
         '''builds array with coefs out the front of s.c nab terms'''
@@ -1119,13 +1269,13 @@ class Hamiltonian:
             print("try commutator 2:", self.R_lab[Ridx], xp.mean(xp.abs(zsxp@E1mat_z - E1mat_z@zsxp)))
             ####
 
-            #### old commutator tests
-            # r1els = ls_mat + self.mu12/self.M_1*scnab_mat/2
-            # E1E2 = E1mat@E2mat-E2mat@E1mat
-            # E1rls = E1mat@r1els-r1els@E1mat 
+            ### old commutator tests
+            r1els = ls_mat + self.mu12/self.M_1*scnab_mat/2
+            E1E2 = E1mat@E2mat-E2mat@E1mat
+            E1rls = E1mat@r1els-r1els@E1mat 
 
-            # print("E1E2 commutator", self.R_lab[Ridx], xp.mean(xp.abs(E1E2)))
-            # print("r1elsE1 commutator", self.R_lab[Ridx], xp.mean(xp.abs(E1rls)))
+            print("E1E2 commutator", self.R_lab[Ridx], xp.mean(xp.abs(E1E2)))
+            print("r1elsE1 commutator", self.R_lab[Ridx], xp.mean(xp.abs(E1rls)))
             # print("double E1 with E1rls", xp.mean(xp.abs(E1mat@E1rls - E1rls@E1mat)))
             # print("double, E2 with E1rls", xp.mean(xp.abs(E2mat@E1rls - E1rls@E2mat)))
             # exit()
