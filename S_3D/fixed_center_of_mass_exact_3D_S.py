@@ -153,7 +153,8 @@ class Hamiltonian:
 
         R_rgrid, r_rgrid, g_rgrid = xp.meshgrid(self.R, self.r, self.g, indexing='ij')
         self.Vgrid = self.V(R_rgrid, r_rgrid, g_rgrid)
-
+        Vmin = xp.unravel_index(xp.argmin(self.Vgrid), self.Vgrid.shape)
+        print("min of Vgrid R", self.Vgrid[Vmin], Vmin)
 
         assert not xp.any(self.Vgrid)==xp.nan
 
@@ -869,9 +870,9 @@ class Hamiltonian:
         SxLx = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
                         self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxcospdp'], xa, **kwargs)
                 + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
-                             self.Efield, self.soc_extras['gam'], self.ddg1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
                 + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
-                             self.Efield, self.soc_extras['gam'], self.ddg1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
                 +  xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
                              self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
                 + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
@@ -881,17 +882,20 @@ class Hamiltonian:
         SyLy = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
                          self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sysinpdp'], xa, **kwargs)
                 + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
-                             self.Efield, self.soc_extras['gam'], self.ddg1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
                 + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
-                             self.Efield, self.soc_extras['gam'], self.ddg1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
                 + xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
-                             self.Efield, self.soc_extras['dr'],self.ddr1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
+                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
                 + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
-                             self.Efield, self.soc_extras['dr'],self.ddr1, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs))
+                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs))
         SzLz = xp.einsum('ARrg, ajsO, ajsOg, abOP, bktP, bktPg, g, BRrjsO -> BRrktP',
                  self.Efield, self.Cjsa, self.Pjsa, self.soc_extras['Szdp'], self.Cjsa, self.Pjsa, xp.sin(self.g), xa, **kwargs)
 
-        return (SxLx+SyLy+SzLz).reshape(x.shape)*dg #+SyLy+SzLz).reshape(x.shape)*dg
+        # ortho = xp.einsum('ajsO, ajsOg, bktP, bktPg, g, r, abOP, BRrjsO -> BRrktO',
+        #                   self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa,xp.sin(self.g), -1/self.r, self.soc_extras['Sycosp']-self.soc_extras['Sxsinp'], xa, **kwargs)
+        # return ortho.reshape(x.shape)*dg
+        return self.soc_const*(SxLx+SyLy+SzLz).reshape(x.shape)*dg 
 
 
     def buildC_scnab(self):
@@ -1009,7 +1013,7 @@ class Hamiltonian:
         # Potential terms
         diag = Vdiag + ke
 
-        if self.args.soc=='lazy':
+        if self.args.soc=='lazy' or self.args.soc=='full':
             diag += 0.5*self.soc_const* (self.rinv3) * (self.j[:,None]*(self.j[:,None]+1) 
                                     - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
                                     - 0.75)[None,None,:,:,None]
