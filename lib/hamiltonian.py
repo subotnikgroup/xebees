@@ -371,7 +371,7 @@ def Gamma_etf_erf_old(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
     return gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y, gammaerf1y, gammaerf2y
 
 #@nvtx.annotate("inverse_weyl_transform", color="pink")
-def inverse_weyl_transform(E, NR, R, P):
+def inverse_weyl_transform_old(E, NR, R, P):
     """
     Perform the inverse Weyl transform
     """
@@ -406,35 +406,30 @@ def inverse_weyl_transform(E, NR, R, P):
                                     * EPS_half[idx, j] / NR)
     return HPS
 
-def inverse_weyl_transform_vec(E, NR, R, P):
+
+def inverse_weyl_transform(E, NR, R, P):
     """
-    Perform the inverse Weyl transform
+    Perform the inverse Weyl transform 
     """
     HPS = xp.zeros((NR, NR), dtype=complex)
+    HPS_j = xp.zeros((NR, NR, NR), dtype=complex)
     EPP = xp.zeros((NR, NR), dtype=complex)
     EPS_half = xp.zeros((NR + 1, NR), dtype=complex)
     dR = R[1] - R[0]
     R_half = xp.linspace(R[0] - dR/2, R[-1] + dR/2, NR + 1)
 
-    q1_idx, q2_idx = xp.meshgrid(xp.arange(NR), xp.arange(NR), indexing='ij')
-    mid_idx = (q1_idx + q2_idx) // 2
-    mask = ((q1_idx - q2_idx) % 2 == 0)
+    EPP= xp.matmul(xp.exp(-1j * xp.outer(P,R)), E)/xp.sqrt(NR)
+    EPS_half = xp.matmul(xp.exp(1j * xp.outer(R_half, P)),EPP)/ xp.sqrt(NR)
+    RRgrid = xp.meshgrid(R,R, indexing='ij')
+    RRindxgrid = xp.meshgrid(xp.arange(NR),xp.arange(NR), indexing='ij')
+    sumindx = RRindxgrid[0]+RRindxgrid[1]
 
-    mask2 = ((q1_idx - q2_idx) % 2 == 1)
-    mid_idx2 = (q1_idx + q2_idx + 1) // 2
+    mask = (RRindxgrid[0]-RRindxgrid[1])%2 ==0
+    coeff = xp.exp(-1j*(RRgrid[0]-RRgrid[1])[:,:,None]*P[None,None,:])
 
-    R_diff = R[q1_idx][:, :, None] - R[q2_idx][:, :, None]   # (NR, NR, 1) - (NR, NR, 1) * P[j] → broadcast over j
-    phase = xp.exp(-1j * R_diff * P[None, None, :])          # shape (NR, NR, NR)
+    HPS_j[mask,:] = E[sumindx[mask]//2,:]
+    HPS_j[~mask,:] = EPS_half[(sumindx[~mask]+1)//2,:]
 
-    # E[mid_idx, j] → shape (NR, NR, NR)
-    E_mid = E[mid_idx, :]  # shape (NR, NR, NR)
-    E_mid2 = EPS_half[mid_idx2, :]
-
-    # Einsum contraction over j
-    HPS_part1 = xp.einsum('qpj,qpj->qp', phase, E_mid) / NR
-    HPS_part2 = xp.einsum('qpj,qpj->qp', phase, E_mid2) / NR
-
-    # Apply parity mask
-    HPS = mask*HPS_part1+mask2*HPS_part2
+    HPS = xp.sum(HPS_j*coeff / NR,axis=2)
 
     return HPS
