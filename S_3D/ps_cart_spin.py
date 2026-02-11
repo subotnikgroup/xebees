@@ -556,6 +556,7 @@ if __name__ == '__main__':
     #print("evecs",evecs_bo.shape)
 
     iR = int(NR/2)
+    #iR = 5
     print("iR",iR)
     
     sequence = chain(
