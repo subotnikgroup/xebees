@@ -115,6 +115,7 @@ class Hamiltonian:
         dy = self.y[1] - self.y[0]
         dz = self.z[1] - self.z[0]
         
+        # P_R grid goes -(n-1)*2pi/dR ...0 ... +(n-1)*2pi/dR
         self.P_R  = xp.fft.fftshift(xp.fft.fftfreq(args.NR, dR)) * 2 * xp.pi
         self.RP_grid = xp.meshgrid(self.R, self.P_R, indexing='ij')
         # N.B.: These all lack the factor of -1/(2 * mu)
@@ -555,10 +556,10 @@ if __name__ == '__main__':
     #evecs_bo = xp.zeros([NR,Nelec],dtype=complex)
     #print("evecs",evecs_bo.shape)
 
-    iR = int(NR/2)
-    #iR = 5
+    ## Start the loops from the middle of the bond, for optimal guesses
+    # iR = int(NR/2)
+    iR = NR//2
     print("iR",iR)
-    
     sequence = chain(
         [iR],
         range(iR - 1, -1, -1),
@@ -680,15 +681,17 @@ if __name__ == '__main__':
             
             
             with timer_ctx(f"P for loop"):
-                for j in range(NR):
+                Pseq = [NR//2 -i-1 for i in range(NR//2)] + [NR//2+i for i in range(NR//2)]
+                print("Pseq", Pseq)
+                for j in Pseq:
                 
-                    print("Atom Ri",i,"Atom Rj",j,flush=True)
+                    print("Atom Ri",i,"Atom Pj",j,flush=True)
 
                     term1 = (
                         gammacoeff_R[i,j] * gammaetfx +
                         gammacoeff_phi[i] * gammaerfya
                     )
-                    if i==iR and j==0:
+                    if i==iR and j==NR//2-1:
                         guess_ps = evecs
                     else:
                         guess_ps = evecs_save
