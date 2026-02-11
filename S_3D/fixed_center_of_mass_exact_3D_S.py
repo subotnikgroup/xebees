@@ -83,7 +83,7 @@ class Hamiltonian:
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.aa   = numpy.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
 
-        self.soc_const =  args.alpha/137**2/self.m_e**2/self.aa**3/2 # alpha* g_e/c²me²/aa^3/4, where aa accounts for the rescaling in r
+        self.soc_const =  args.alpha/137**2/self.m_e**2/2 # alpha* g_e/c²me²/4
         print("soc const, alpha, aa", self.soc_const, args.alpha, self.aa)
 
         self._Vfunc, extent_func, self._Efunc = {
@@ -436,9 +436,7 @@ class Hamiltonian:
 
         #assert not xp.any(xp.isnan(Vsph))
         #return Vsph, Vint, Pjk
-        print('Pjsa!',Pjsa.shape)
         Pjsa = xp.einsum('aOjsg -> ajsOg', Pjsa)
-        print('Pjsa2!',Pjsa.shape)
         ddg1 = KE(self.g.size, dg, bare=True, order=1, cyclic=False)
         sdgPjsa =  xp.einsum('g, gh, ajsOh -> ajsOg', xp.sin(self.g)/2, ddg1, Pjsa)
         sdgPjsa += xp.einsum('h, gh, ajsOh -> ajsOg', xp.sin(self.g)/2, ddg1, Pjsa)
@@ -1047,7 +1045,7 @@ class Hamiltonian:
                                  self.R, self.C_scnab[2],  kappa, 1/self.r, self.E2, self.Pjkst, self.Cspin, **kwargs) # Pjk@R*C2@(kappa/r)
 
             diag += self.soc_const*(term_ls + self.mu12/self.M_1*(E1t0+E1t1+E1t2) - self.mu12/self.M_2*(E2t0+E2t1+E2t2))
-
+        
         assert not xp.any(xp.isnan(diag))
         return diag.ravel()
 
@@ -1227,7 +1225,7 @@ class Hamiltonian:
         if self.args.soc=='lazy':
             Hel += self.soc_const*xp.einsum('js,r,R,rp,jk,st,OP -> RrjsOpktP', 
                              self.ls, self.r**-3, xp.ones(NR)[Ridx], xp.eye(Nr),
-                               xp.eye(Nj), xp.eye(Nsg), xp.eye(NOm)).reshape(Nr,Nelec,Nelec)
+                               xp.eye(Nj), xp.eye(Nsg), xp.eye(NOm)).reshape(NR,Nelec,Nelec)
             
         elif self.args.soc=='roi':
             kappa = self.sg[None,:]*(2*self.j[:,None]+1)
@@ -1289,6 +1287,34 @@ class Hamiltonian:
 
             Hsoc = E12ls + E12scnab
             Hel += self.soc_const*0.5*(Hsoc + Hsoc.transpose((0,2,1))) # symmetrize with batch matrix transpose
+        elif self.args.soc=='full':
+            SxLx = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktP, bktPg, abOP, rv -> RrjsOvktP', 
+                        self.Efield[:,Ridx], self.soc_extras['psi'][:,Ridx], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxcospdp'], xp.eye(self.r.size), **kwargs)
+                + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abOP, rv -> RrjsOvktP',
+                             self.Efield[:,Ridx], self.soc_extras['gam'][:,Ridx], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xp.eye(self.r.size), **kwargs)
+                + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, rv -> RrjsOvktP',
+                             self.Efield[:,Ridx], self.soc_extras['gam'][:,Ridx], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xp.eye(self.r.size), **kwargs)
+                +  xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abOP -> RrjsOvktP',
+                             self.Efield[:,Ridx], self.soc_extras['dr'][:,Ridx],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], **kwargs)
+                + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abOP -> RrjsOvktP',
+                             self.Efield[:,Ridx], self.soc_extras['dr'][:,Ridx],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], **kwargs)).reshape(NR, Nelec,Nelec)
+
+            SyLy = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktP, bktPg, abOP, rv -> RrjsOvktP',
+                            self.Efield[:,Ridx], self.soc_extras['psi'][:,Ridx], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sysinpdp'], xp.eye(self.r.size), **kwargs)
+                    + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abOP, rv -> RrjsOvktP',
+                                self.Efield[:,Ridx], self.soc_extras['gam'][:,Ridx], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xp.eye(self.r.size), **kwargs)
+                    + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, rv -> RrjsOvktP',
+                                self.Efield[:,Ridx], self.soc_extras['gam'][:,Ridx], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xp.eye(self.r.size), **kwargs)
+                    + xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abOP -> RrjsOvktP',
+                                self.Efield[:,Ridx], self.soc_extras['dr'][:,Ridx],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], **kwargs)
+                    + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abOP -> RrjsOvktP',
+                                self.Efield[:,Ridx], self.soc_extras['dr'][:,Ridx],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], **kwargs)).reshape(NR, Nelec,Nelec)
+            
+            SzLz = xp.einsum('ARrg, ajsO, ajsOg, abOP, bktP, bktPg, g, rv -> RrjsOvktP',
+                    self.Efield[:,Ridx], self.Cjsa, self.Pjsa, self.soc_extras['Szdp'], self.Cjsa, self.Pjsa, xp.sin(self.g), xp.eye(self.r.size), **kwargs).reshape(NR, Nelec,Nelec)
+            dg = self.g[1]-self.g[0]
+            Hel += self.soc_const*(SxLx+SyLy+SzLz)*dg
+
 
         return xp.squeeze(Hel)
 
