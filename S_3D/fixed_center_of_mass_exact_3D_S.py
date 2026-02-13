@@ -226,6 +226,7 @@ class Hamiltonian:
         
         self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
         self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
+        # self.ddr1_lab = (KE(args.Nr, self.r_lab[1]-self.r_lab[0], bare=True, cyclic=False, order=1))
         self.ddg1 = KE(self.g.size, dg, bare=True, order=1, cyclic=False)
                             
 
@@ -520,15 +521,37 @@ class Hamiltonian:
         soc_extras = {}
         NR, Nr, Nj, Nsg, NOm = self.shape
 
-        psi1 = xp.cos(self.g[None,None,:]) - self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]
-        psi2 = xp.cos(self.g[None,None,:]) + self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]
-        gam = xp.sin(self.g[None,None,:])-self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]*xp.cos(self.g[None,None,:])
-        gam_nog = -self.mu12/self.M_1*self.R[:,None]/self.r[None,:]
+        # psi1 = xp.cos(self.g[None,None,:]) - self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]
+        # psi2 = xp.cos(self.g[None,None,:]) + self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]
+        # gam = xp.sin(self.g[None,None,:])-self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]*xp.cos(self.g[None,None,:])
+        # gam_nog = -self.mu12/self.M_1*self.R[:,None]/self.r[None,:]
+        # soc_extras['psi'] = xp.stack((psi1,psi2))
+        # soc_extras['gam'] = xp.stack((gam, -gam))
+        # soc_extras['gam_nog'] = xp.stack((gam_nog, -gam_nog))
+        # dr = -self.mu12/self.M_1*self.R[:,None]*xp.sin(self.g[None,:])**2
+        # soc_extras['dr']  = xp.stack((dr,-dr))
+
+        psi1 = xp.cos(self.g[None,None,:]) - self.mu/self.M_1*self.R[:,None,None]/self.r[None,:,None]
+        psi2 = xp.cos(self.g[None,None,:]) + self.mu/self.M_1*self.R[:,None,None]/self.r[None,:,None]
+        gam = xp.sin(self.g[None,None,:])-self.mu/self.M_1*self.R[:,None,None]/self.r[None,:,None]*xp.cos(self.g[None,None,:])
+        gam_nog = -self.mu/self.M_1*self.R[:,None]/self.r[None,:]
         soc_extras['psi'] = xp.stack((psi1,psi2))
         soc_extras['gam'] = xp.stack((gam, -gam))
         soc_extras['gam_nog'] = xp.stack((gam_nog, -gam_nog))
-        dr = -self.mu12/self.M_1*self.R[:,None]*xp.sin(self.g[None,:])**2
+        dr = -self.mu/self.M_1*self.R[:,None]*xp.sin(self.g[None,:])**2
         soc_extras['dr']  = xp.stack((dr,-dr))
+
+        # psi1 = xp.cos(self.g[None,None,:]) - self.mu12/self.M_1*self.R_lab[:,None,None]/self.r_lab[None,:,None]
+        # psi2 = xp.cos(self.g[None,None,:]) + self.mu12/self.M_1*self.R_lab[:,None,None]/self.r_lab[None,:,None]
+        # gam = xp.sin(self.g[None,None,:])-self.mu12/self.M_1*self.R_lab[:,None,None]/self.r_lab[None,:,None]*xp.cos(self.g[None,None,:])
+        # gam_nog = -self.mu12/self.M_1*self.R_lab[:,None]/self.r_lab[None,:]
+        # soc_extras['psi'] = xp.stack((psi1,psi2))
+        # soc_extras['gam'] = xp.stack((gam, -gam))
+        # soc_extras['gam_nog'] = xp.stack((gam_nog, -gam_nog))
+        # dr = -self.mu12/self.M_1*self.R_lab[:,None]*xp.sin(self.g[None,:])**2
+        # soc_extras['dr']  = xp.stack((dr,-dr))
+
+        
 
         Sxcospdp = xp.zeros((2,2,NOm,NOm))
         Sxsinp   = xp.zeros((2,2,NOm,NOm))
@@ -600,7 +623,6 @@ class Hamiltonian:
             out += self.SOCx_roi(x)
         elif self.args.soc == 'full':
             out += self.SOCx_full(x)
-        
         return out
     
     def Hx_BO(self,x, iR=None):
@@ -1011,11 +1033,11 @@ class Hamiltonian:
         # Potential terms
         diag = Vdiag + ke
 
-        if self.args.soc=='lazy' or self.args.soc=='full':
+        if self.args.soc=='lazy':
             diag += 0.5*self.soc_const* (self.rinv3) * (self.j[:,None]*(self.j[:,None]+1) 
                                     - (self.j[:,None] + self.sg[None,:])*(self.j[:,None]+self.sg[None,:]+1) 
                                     - 0.75)[None,None,:,:,None]
-        if self.args.soc=='roi':
+        elif self.args.soc=='roi':
             term_ls = xp.einsum('js, Rrg, Ojjssag, jjssOa -> RrjsO', 
                               self.ls, self.E1 + self.E2, self.Pjkst, self.Cspin, **kwargs) 
             
@@ -1045,6 +1067,23 @@ class Hamiltonian:
                                  self.R, self.C_scnab[2],  kappa, 1/self.r, self.E2, self.Pjkst, self.Cspin, **kwargs) # Pjk@R*C2@(kappa/r)
 
             diag += self.soc_const*(term_ls + self.mu12/self.M_1*(E1t0+E1t1+E1t2) - self.mu12/self.M_2*(E2t0+E2t1+E2t2))
+        elif self.args.soc=='full':
+            SxLx = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bjsO, bjsOg, abOO-> RrjsO',
+                        self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxcospdp'], **kwargs)
+                + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bjsO, bjsOg, abOO -> RrjsO',
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], **kwargs)
+                + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bjsO, bjsOg, abOO -> RrjsO',
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], **kwargs))
+            SyLy = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bjsO, bjsOg, abOO -> RrjsO',
+                         self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sysinpdp'], **kwargs)
+                + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bjsO, bjsOg, abOO -> RrjsO',
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], **kwargs)
+                + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bjsO, bjsOg, abOO -> RrjsO',
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], **kwargs))
+            SzLz = xp.einsum('ARrg, ajsO, ajsOg, abOO, bjsO, bjsOg, g -> RrjsO',
+                 self.Efield, self.Cjsa, self.Pjsa, self.soc_extras['Szdp'], self.Cjsa, self.Pjsa, xp.sin(self.g), **kwargs)
+            dg = self.g[1] - self.g[0]
+            diag += self.soc_const*(SxLx+SyLy+SzLz)*dg
         
         assert not xp.any(xp.isnan(diag))
         return diag.ravel()
@@ -1618,7 +1657,7 @@ if __name__ == '__main__':
 
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
         for e, M, prj, in zip(e_approx, char, proj):
-            print(f"{e:9e}", M, prj)
+            print(f"{e:12e}", M, prj)
 
 
     if args.evecs:
