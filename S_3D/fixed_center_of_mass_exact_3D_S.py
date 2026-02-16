@@ -82,9 +82,10 @@ class Hamiltonian:
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.aa   = numpy.sqrt(self.mu12/self.mu) # factor of 'a' for lab and scaled coordinates
+        print("mass rescaling: mu, aa", self.mu, self.aa)
 
         self.soc_const =  args.alpha/137**2/self.m_e**2/2 # alpha* g_e/c²me²/4
-        print("soc const, alpha, aa", self.soc_const, args.alpha, self.aa)
+        print("soc const, alpha", self.soc_const, args.alpha)
 
         self._Vfunc, extent_func, self._Efunc = {
             'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb, None),
@@ -226,7 +227,6 @@ class Hamiltonian:
         
         self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
         self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
-        # self.ddr1_lab = (KE(args.Nr, self.r_lab[1]-self.r_lab[0], bare=True, cyclic=False, order=1))
         self.ddg1 = KE(self.g.size, dg, bare=True, order=1, cyclic=False)
                             
 
@@ -521,37 +521,22 @@ class Hamiltonian:
         soc_extras = {}
         NR, Nr, Nj, Nsg, NOm = self.shape
 
-        # psi1 = xp.cos(self.g[None,None,:]) - self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]
-        # psi2 = xp.cos(self.g[None,None,:]) + self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]
-        # gam = xp.sin(self.g[None,None,:])-self.mu12/self.M_1*self.R[:,None,None]/self.r[None,:,None]*xp.cos(self.g[None,None,:])
-        # gam_nog = -self.mu12/self.M_1*self.R[:,None]/self.r[None,:]
-        # soc_extras['psi'] = xp.stack((psi1,psi2))
-        # soc_extras['gam'] = xp.stack((gam, -gam))
-        # soc_extras['gam_nog'] = xp.stack((gam_nog, -gam_nog))
-        # dr = -self.mu12/self.M_1*self.R[:,None]*xp.sin(self.g[None,:])**2
-        # soc_extras['dr']  = xp.stack((dr,-dr))
-
         psi1 = xp.cos(self.g[None,None,:]) - self.mu/self.M_1*self.R[:,None,None]/self.r[None,:,None]
-        psi2 = xp.cos(self.g[None,None,:]) + self.mu/self.M_1*self.R[:,None,None]/self.r[None,:,None]
-        gam = xp.sin(self.g[None,None,:])-self.mu/self.M_1*self.R[:,None,None]/self.r[None,:,None]*xp.cos(self.g[None,None,:])
-        gam_nog = -self.mu/self.M_1*self.R[:,None]/self.r[None,:]
+        psi2 = xp.cos(self.g[None,None,:]) + self.mu/self.M_2*self.R[:,None,None]/self.r[None,:,None]
+
+        gam1 = xp.sin(self.g[None,None,:])-self.mu/self.M_1*self.R[:,None,None]/self.r[None,:,None]*xp.cos(self.g[None,None,:])
+        gam2 = xp.sin(self.g[None,None,:])+self.mu/self.M_2*self.R[:,None,None]/self.r[None,:,None]*xp.cos(self.g[None,None,:])
+        gam_nog1 = -self.mu/self.M_1*self.R[:,None]/self.r[None,:]
+        gam_nog2 = -self.mu/self.M_2*self.R[:,None]/self.r[None,:]
+
+        dr1 = -self.mu/self.M_1*self.R[:,None]*xp.sin(self.g[None,:])**2
+        dr2 = +self.mu/self.M_2*self.R[:,None]*xp.sin(self.g[None,:])**2
+
         soc_extras['psi'] = xp.stack((psi1,psi2))
-        soc_extras['gam'] = xp.stack((gam, -gam))
-        soc_extras['gam_nog'] = xp.stack((gam_nog, -gam_nog))
-        dr = -self.mu/self.M_1*self.R[:,None]*xp.sin(self.g[None,:])**2
-        soc_extras['dr']  = xp.stack((dr,-dr))
-
-        # psi1 = xp.cos(self.g[None,None,:]) - self.mu12/self.M_1*self.R_lab[:,None,None]/self.r_lab[None,:,None]
-        # psi2 = xp.cos(self.g[None,None,:]) + self.mu12/self.M_1*self.R_lab[:,None,None]/self.r_lab[None,:,None]
-        # gam = xp.sin(self.g[None,None,:])-self.mu12/self.M_1*self.R_lab[:,None,None]/self.r_lab[None,:,None]*xp.cos(self.g[None,None,:])
-        # gam_nog = -self.mu12/self.M_1*self.R_lab[:,None]/self.r_lab[None,:]
-        # soc_extras['psi'] = xp.stack((psi1,psi2))
-        # soc_extras['gam'] = xp.stack((gam, -gam))
-        # soc_extras['gam_nog'] = xp.stack((gam_nog, -gam_nog))
-        # dr = -self.mu12/self.M_1*self.R_lab[:,None]*xp.sin(self.g[None,:])**2
-        # soc_extras['dr']  = xp.stack((dr,-dr))
-
-        
+        soc_extras['gam'] = xp.stack((gam1, gam2))
+        soc_extras['gam_nog'] = xp.stack((gam_nog1, gam_nog2)) # for when we precompute the ddg1 terms
+        soc_extras['dr']  = xp.stack((dr1,dr2))
+      
 
         Sxcospdp = xp.zeros((2,2,NOm,NOm))
         Sxsinp   = xp.zeros((2,2,NOm,NOm))
@@ -802,10 +787,10 @@ class Hamiltonian:
             return vout
  
         ### must be symmetrized due to finite basis size
-        out = apply_dipole(apply_ls(xa) + self.mu12/self.M_1*apply_scnab(xa), self.E1)
-        out += apply_dipole(apply_ls(xa) - self.mu12/self.M_2*apply_scnab(xa), self.E2)
-        out += apply_ls(apply_dipole(xa,self.E1)) + self.mu12/self.M_1*apply_scnab(apply_dipole(xa, self.E1))
-        out += apply_ls(apply_dipole(xa,self.E2)) - self.mu12/self.M_2*apply_scnab(apply_dipole(xa, self.E2))
+        out = apply_dipole(apply_ls(xa) - self.mu/self.M_1*apply_scnab(xa), self.E1)
+        out += apply_dipole(apply_ls(xa) + self.mu/self.M_2*apply_scnab(xa), self.E2)
+        out += apply_ls(apply_dipole(xa,self.E1)) - self.mu/self.M_1*apply_scnab(apply_dipole(xa, self.E1))
+        out += apply_ls(apply_dipole(xa,self.E2)) + self.mu/self.M_2*apply_scnab(apply_dipole(xa, self.E2))
         out /= 2
         return self.soc_const*out.reshape(x.shape)
     
@@ -838,10 +823,10 @@ class Hamiltonian:
             return vout
  
         ### must be symmetrized due to finite basis size
-        out = apply_dipole_BO(apply_ls_BO(xa) + self.mu12/self.M_1*apply_scnab_BO(xa), self.E1)
-        out += apply_dipole_BO(apply_ls_BO(xa) - self.mu12/self.M_2*apply_scnab_BO(xa), self.E2)
-        out += apply_ls_BO(apply_dipole_BO(xa,self.E1)) + self.mu12/self.M_1*apply_scnab_BO(apply_dipole_BO(xa, self.E1))
-        out += apply_ls_BO(apply_dipole_BO(xa,self.E2)) - self.mu12/self.M_2*apply_scnab_BO(apply_dipole_BO(xa, self.E2))
+        out = apply_dipole_BO(apply_ls_BO(xa) - self.mu/self.M_1*apply_scnab_BO(xa), self.E1)
+        out += apply_dipole_BO(apply_ls_BO(xa) + self.mu/self.M_2*apply_scnab_BO(xa), self.E2)
+        out += apply_ls_BO(apply_dipole_BO(xa,self.E1)) - self.mu/self.M_1*apply_scnab_BO(apply_dipole_BO(xa, self.E1))
+        out += apply_ls_BO(apply_dipole_BO(xa,self.E2)) + self.mu/self.M_2*apply_scnab_BO(apply_dipole_BO(xa, self.E2))
         out /= 2
         return self.soc_const*out.reshape(x.shape)
     
@@ -893,10 +878,10 @@ class Hamiltonian:
                              self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
                 + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
                              self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
-                +  xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
-                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
-                + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
-                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs))
+                +  xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRvktO',
+                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'][:,:,:,0], xa, **kwargs)
+                + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRvktO',
+                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'][:,:,:,0], xa, **kwargs))
                 # + xp.einsum('ARrg, ARg, r, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
                 #              self.Efield, self.soc_extras['dr'],-1/self.r, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs))
         SyLy = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
@@ -905,12 +890,12 @@ class Hamiltonian:
                              self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
                 + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
                              self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
-                + xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
-                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
-                + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRvktP',
-                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs))
-        SzLz = xp.einsum('ARrg, ajsO, ajsOg, abOP, bktP, bktPg, g, BRrjsO -> BRrktP',
-                 self.Efield, self.Cjsa, self.Pjsa, self.soc_extras['Szdp'], self.Cjsa, self.Pjsa, xp.sin(self.g), xa, **kwargs)
+                + xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRvktO',
+                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'][:,:,:,0], xa, **kwargs)
+                + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRvktO',
+                             self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'][:,:,:,0], xa, **kwargs))
+        SzLz = xp.einsum('ARrg, ajsO, ajsOg, abO, bktO, bktOg, g, BRrjsO -> BRrktO',
+                 self.Efield, self.Cjsa, self.Pjsa, self.soc_extras['Szdp'][:,:,:,0], self.Cjsa, self.Pjsa, xp.sin(self.g), xa, **kwargs)
 
         # ortho = xp.einsum('ajsO, ajsOg, bktP, bktPg, g, r, abOP, BRrjsO -> BRrktO',
         #                   self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa,xp.sin(self.g), -1/self.r, self.soc_extras['Sycosp']-self.soc_extras['Sxsinp'], xa, **kwargs)
