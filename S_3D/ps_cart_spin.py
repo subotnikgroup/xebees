@@ -635,10 +635,13 @@ if __name__ == '__main__':
                 max_space=args.subspace,
                 max_memory=get_davidson_mem(0.75),
                 #tol=1e-12, #FIXME:DEBUG
-                tol=1e-10,
+                tol=1e-8,
             )
             print("Davidson:", e_approx)
             print(conv)
+            #if any(conv == 'False'):
+            #    print("Davidson failed for atom Ri",i,flush=True)
+            #    exit()
             Ad_nsg[i] = e_approx[0]
             Ad_nse[i] = e_approx[1]
             ivalg[i,0] = e_approx[0]
@@ -679,9 +682,8 @@ if __name__ == '__main__':
             coeffgammaerfy = gammacoeff_phi[i]*gammaerfsy
             coeffgammaerfz = gammacoeff_theta[i]*gammaerfsz
             
-            
             with timer_ctx(f"P for loop"):
-                Pseq = [NR//2 -i-1 for i in range(NR//2)] + [NR//2+i for i in range(NR//2)]
+                Pseq = [NR//2 -i for i in range(NR//2+1)] + [NR//2+i+1 for i in range(NR//2)]
                 print("Pseq", Pseq)
                 for j in Pseq:
                 
@@ -691,7 +693,7 @@ if __name__ == '__main__':
                         gammacoeff_R[i,j] * gammaetfx +
                         gammacoeff_phi[i] * gammaerfya
                     )
-                    if i==iR and j==NR//2-1:
+                    if i==iR and j==NR//2:
                         guess_ps = evecs
                     else:
                         guess_ps = evecs_save
@@ -714,7 +716,7 @@ if __name__ == '__main__':
                     print(conv)
                     EPSg[i, j] = e_ps_approx[0]
                     EPSe[i, j] = e_ps_approx[1]
-            #        #exit()
+                    exit()
                     
     #EPS = xp.loadtxt("rij_matrix.txt")
     #ivalload = xp.loadtxt("ri_values.txt")
