@@ -58,6 +58,7 @@ class Hamiltonian:
         self.Pphi = args.Pphi
         self.Ptheta = args.Ptheta
         self.alpha = args.alpha
+        print("alpha=",self.alpha,"  soc_const=",1/2*(1/137)**2*self.alpha)
         self.soc = args.soc
 
         if not hasattr(args, "potential"):
@@ -74,7 +75,7 @@ class Hamiltonian:
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self._Vfunc, extent_func, self._Efunc = {
             'erf_coulomb':(potentials.erf_coulomb, potentials.extents_erf_coulomb, potentials.Efield_coulomb),
-            'borgis': (potentials.borgis, potentials.extents_borgis, potentials.Efield_borgis)
+            'borgis': (partial(potentials.borgis, asymmetry_param=1), potentials.extents_borgis, potentials.Efield_borgis)
             }[args.potential]
 
         extent = extent_func(self.mu12)
@@ -120,8 +121,9 @@ class Hamiltonian:
         self.RP_grid = xp.meshgrid(self.R, self.P_R, indexing='ij')
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
-        #self.ddR2, _ = KE_Borisov(self.R, bare=True)
+        #self.ddR2, _ = KE_Borisov_3D(self.R, bare=True)
         self.ddR2  = KE(args.NR, dR, bare=True, cyclic=False)
+        #self.ddR2  = KE_FFT(args.NR, P, R)
     
         self.ddx2 = KE(args.Nx, dx, bare=True, cyclic=False)
         self.ddx1 = KE(args.Nx, dx, bare=True, cyclic=False, order=1) 
@@ -192,7 +194,7 @@ class Hamiltonian:
         else:
             return self._Vfunc(R, r1e, r2e, (self.g_1, self.g_2))
 
-    def BO_energies(self,args,iR,sequence,gammacoeff):
+    def BO_energies(self,args,iR,sequence):
         
         NR,Nx,Ny,Nz = self.shape
     
@@ -200,10 +202,9 @@ class Hamiltonian:
         Ad_nse = xp.zeros(NR)
         ivalg = xp.zeros([NR,1])
         ivale = xp.zeros([NR,1])
-        gammacoeff_R, gammacoeff_phi, gammacoeff_theta = gammacoeff
 
         for i in sequence:
-            print("Atom Ri idx",i, "Atom Ri",H.R[i],flush=True)
+            print("Atom Ri idx",i, "Atom Ri",self.R[i],flush=True)
             diag = self.buildDiag(i)   
 
             guess_ns = xp.exp(-(self.Vgrid[i] - xp.min(self.Vgrid[i]))**2/27.211**2).ravel()
@@ -213,6 +214,7 @@ class Hamiltonian:
                 guess_bo = guess_spin
             else:
                 guess_bo = evecs
+            #guess_bo = guess_spin
 
             #guess_spin = xp.append(guess_ns, guess_ns)
             conv, e_approx, evecs = lib.davidson1(
@@ -233,6 +235,9 @@ class Hamiltonian:
             Ad_nse[i] = e_approx[1]
             ivalg[i,0] = e_approx[0]
             ivale[i,0] = e_approx[1]
+            #exit()
+        #print("Ad_nsg",Ad_nsg)
+        #exit()
 
         return Ad_nsg, Ad_nse, ivalg, ivale        
                 
@@ -258,7 +263,7 @@ class Hamiltonian:
         sx,sy,sz = self.sx, self.sy, self.sz
         mu12,M1,M2 = self.mu12,self.M_1,self.M_2
 
-        Hsocdav = 0.5*( 
+        Hsocdav = 0.5j*( 
             -xp.einsum('sS,y,zc,Bsxyz,xyz->Bsxyc', sx, yi, self.ddz1,x,coef12,optimize=True) 
             +xp.einsum('sS,z,yb,Bsxyz,xyz->Bsxbz', sx, zi, self.ddy1,x,coef12,optimize=True) 
             -xp.einsum('sS,z,xa,Bsxyz,xyz->Bsayz', sy, zi, self.ddx1,x,coef12,optimize=True) 
@@ -559,6 +564,7 @@ if __name__ == '__main__':
     ## Start the loops from the middle of the bond, for optimal guesses
     # iR = int(NR/2)
     iR = NR//2
+    #iR = 0
     print("iR",iR)
     sequence = chain(
         [iR],
@@ -568,7 +574,7 @@ if __name__ == '__main__':
     gammacoeff = (gammacoeff_R, gammacoeff_phi, gammacoeff_theta)
 
     if (args.bo_spectrum==True):
-        Ad_nsg, Ad_nse, ivalg, ivale = H.BO_energies(args,iR,sequence,gammacoeff)
+        Ad_nsg, Ad_nse, ivalg, ivale = H.BO_energies(args,iR,sequence)
 
         Hbo_g = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_nsg)
         Ad_vn_g = batch_eigvalsh(Hbo_g)
@@ -639,8 +645,8 @@ if __name__ == '__main__':
             )
             print("Davidson:", e_approx)
             print(conv)
-            #if any(conv == 'False'):
-            #    print("Davidson failed for atom Ri",i,flush=True)
+            #if not xp.all(conv):
+            #    print("Davidson failed for atom Ri",i)
             #    exit()
             Ad_nsg[i] = e_approx[0]
             Ad_nse[i] = e_approx[1]
@@ -683,7 +689,7 @@ if __name__ == '__main__':
             coeffgammaerfz = gammacoeff_theta[i]*gammaerfsz
             
             with timer_ctx(f"P for loop"):
-                Pseq = [NR//2 -i for i in range(NR//2+1)] + [NR//2+i+1 for i in range(NR//2)]
+                Pseq = [NR//2 -i for i in range(NR//2+1)] + [NR//2+i+1 for i in range(NR//2-1)]
                 print("Pseq", Pseq)
                 for j in Pseq:
                 
@@ -716,7 +722,7 @@ if __name__ == '__main__':
                     print(conv)
                     EPSg[i, j] = e_ps_approx[0]
                     EPSe[i, j] = e_ps_approx[1]
-                    exit()
+                    
                     
     #EPS = xp.loadtxt("rij_matrix.txt")
     #ivalload = xp.loadtxt("ri_values.txt")
