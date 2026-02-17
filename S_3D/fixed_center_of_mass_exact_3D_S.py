@@ -21,7 +21,7 @@ import potentials
 from constants import *
 from hamiltonian import  KE, KE_Borisov_3D
 from davidson import phase_match, get_davidson_guess_3D, get_davidson_mem, solve_exact_gen
-from analysis import get_wfc_Om_proj_wS
+from analysis import get_wfc_Om_proj_wS, get_jls_expectations
 
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
@@ -439,10 +439,10 @@ class Hamiltonian:
         #return Vsph, Vint, Pjk
         Pjsa = xp.einsum('aOjsg -> ajsOg', Pjsa)
         ddg1 = KE(self.g.size, dg, bare=True, order=1, cyclic=False)
-        sdgPjsa =  xp.einsum('g, gh, ajsOh -> ajsOg', xp.sin(self.g)/2, ddg1, Pjsa)
-        sdgPjsa += xp.einsum('h, gh, ajsOh -> ajsOg', xp.sin(self.g)/2, ddg1, Pjsa)
-        cdgPjsa =  xp.einsum('g, gh, ajsOh -> ajsOg', xp.cos(self.g)/2, ddg1, Pjsa)
-        cdgPjsa += xp.einsum('h, gh, ajsOh -> ajsOg', xp.cos(self.g)/2, ddg1, Pjsa)
+        sdgPjsa =  xp.einsum('g, gh, ajsOh -> ajsOg', xp.sin(self.g)/2, ddg1, Pjsa, optimize=True)
+        sdgPjsa += xp.einsum('h, gh, ajsOh -> ajsOg', xp.sin(self.g)/2, ddg1, Pjsa, optimize=True)
+        cdgPjsa =  xp.einsum('g, gh, ajsOh -> ajsOg', xp.cos(self.g)/2, ddg1, Pjsa, optimize=True)
+        cdgPjsa += xp.einsum('h, gh, ajsOh -> ajsOg', xp.cos(self.g)/2, ddg1, Pjsa, optimize=True)
 
         return Vint, Pjkst, Pjsa, sdgPjsa, cdgPjsa
     
@@ -872,24 +872,22 @@ class Hamiltonian:
         #          self.Cjsa, self.Pjsa, self.soc_extras['Szdp'], self.Cjsa, self.Pjsa, xp.sin(self.g), xa, **kwargs)
 
         ### full-soc with Efield
-        SxLx = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
-                        self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxcospdp'], xa, **kwargs)
-                + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
-                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
-                + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
-                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs)
+        SxLx = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRrktO',
+                        self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxcospdp'][:,:,:,0], xa, **kwargs)
+                + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRrktO',
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'][:,:,:,0], xa, **kwargs)
+                + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRrktO',
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'][:,:,:,0], xa, **kwargs)
                 +  xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRvktO',
                              self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'][:,:,:,0], xa, **kwargs)
                 + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRvktO',
                              self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'][:,:,:,0], xa, **kwargs))
-                # + xp.einsum('ARrg, ARg, r, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
-                #              self.Efield, self.soc_extras['dr'],-1/self.r, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sxsinp'], xa, **kwargs))
-        SyLy = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktP, bktPg, abOP, BRrjsO -> BRrktP',
-                         self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sysinpdp'], xa, **kwargs)
-                + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
-                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
-                + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abOP, BRrjsO -> BRrktP',
-                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'], xa, **kwargs)
+        SyLy = (xp.einsum('ARrg, ARrg, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRrktO',
+                         self.Efield, self.soc_extras['psi'], self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sysinpdp'][:,:,:,0], xa, **kwargs)
+                + xp.einsum('ARrg, ARrg, gh, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRrktO',
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'][:,:,:,0], xa, **kwargs)
+                + xp.einsum('ARrg, ARrg, hg, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRrktO',
+                             self.Efield, self.soc_extras['gam'], self.ddg1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'][:,:,:,0], xa, **kwargs)
                 + xp.einsum('ARrg, ARg, rv, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRvktO',
                              self.Efield, self.soc_extras['dr'],self.ddr1/2, self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa, self.soc_extras['Sycosp'][:,:,:,0], xa, **kwargs)
                 + xp.einsum('ARrg, ARg, vr, ajsO, ajsOg, bktO, bktOg, abO, BRrjsO -> BRvktO',
@@ -897,9 +895,6 @@ class Hamiltonian:
         SzLz = xp.einsum('ARrg, ajsO, ajsOg, abO, bktO, bktOg, g, BRrjsO -> BRrktO',
                  self.Efield, self.Cjsa, self.Pjsa, self.soc_extras['Szdp'][:,:,:,0], self.Cjsa, self.Pjsa, xp.sin(self.g), xa, **kwargs)
 
-        # ortho = xp.einsum('ajsO, ajsOg, bktP, bktPg, g, r, abOP, BRrjsO -> BRrktO',
-        #                   self.Cjsa, self.Pjsa, self.Cjsa, self.Pjsa,xp.sin(self.g), -1/self.r, self.soc_extras['Sycosp']-self.soc_extras['Sxsinp'], xa, **kwargs)
-        # return ortho.reshape(x.shape)*dg
         return self.soc_const*(SxLx+SyLy+SzLz).reshape(x.shape)*dg 
 
 
@@ -1638,11 +1633,19 @@ if __name__ == '__main__':
     print("Davidson:", e_approx)
     print(conv)
     char,proj = get_wfc_Om_proj_wS(evecs,H)
+    el2, ej2, elz, ejz, esz = get_jls_expectations(evecs, H)
+
     print("e_approx, char, proj:")
 
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
         for e, M, prj, in zip(e_approx, char, proj):
             print(f"{e:12e}", M, prj)
+    print()
+    print("Now reprinting with <l^2>, <j^2>, <lz>, <jz>, <sz>:")
+    with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
+        for e, l,j,lz,jz,sz in zip(e_approx, el2, ej2, elz, ejz, esz):
+            print(f"{e:12e}", f"{l:.2f}", f"{j:.2f}", f"{lz:.2f}", f"{jz:.2f}", f"{sz:.2f}")
+    
 
 
     if args.evecs:
