@@ -41,7 +41,7 @@ class Hamiltonian:
         'ddR2', 'ddx2','ddx1','ddy2','ddy1','ddz2','ddz1',
         'axes','Vgrid', '_preconditioner_data','Pg','Pphi','Ptheta',
         'shape','boshape','bospinshape','size','guess','k','mu12','_Vfunc',
-        '_locked','max_threads','alpha','soc','sx','sy','sz','E1','E2'
+        '_locked','max_threads','alpha','soc','sx','sy','sz','E1','E2','si'
     )
 
     def __init__(self, args):
