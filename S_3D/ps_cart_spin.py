@@ -51,14 +51,12 @@ class Hamiltonian:
         self.m_e = 1
         self.M_1 = args.M_1
         self.M_2 = args.M_2
-        self.mu  = xp.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
-        self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.g_1 = args.g_1
         self.g_2 = args.g_2
         self.Pphi = args.Pphi
         self.Ptheta = args.Ptheta
         self.alpha = args.alpha
-        print("alpha=",self.alpha,"  soc_const=",1/2*(1/137)**2*self.alpha)
+        
         self.soc = args.soc
 
         if not hasattr(args, "potential"):
@@ -74,11 +72,13 @@ class Hamiltonian:
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self._Vfunc, extent_func, self._Efunc = {
-            'erf_coulomb':(potentials.erf_coulomb, potentials.extents_erf_coulomb, potentials.Efield_coulomb),
-            'borgis': (partial(potentials.borgis, asymmetry_param=1), potentials.extents_borgis, potentials.Efield_borgis)
+            'soft_coulomb': (potentials.soft_coulomb, potentials.extents_soft_coulomb, None),
+            'borgis': (partial(potentials.borgis, asymmetry_param=1), potentials.extents_borgis, potentials.Efield_borgis),
+            'erf_coulomb':(potentials.erf_coulomb, potentials.extents_erf_coulomb, potentials.Efield_coulomb)
             }[args.potential]
 
         extent = extent_func(self.mu12)
+        print("alpha=",self.alpha,"  soc_const=",1/2*(1/137)**2*self.alpha)
 
         print(f"Potential: {args.potential}")
 
@@ -121,8 +121,8 @@ class Hamiltonian:
         self.RP_grid = xp.meshgrid(self.R, self.P_R, indexing='ij')
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
-        #self.ddR2, _ = KE_Borisov_3D(self.R, bare=True)
-        self.ddR2  = KE(args.NR, dR, bare=True, cyclic=False)
+        self.ddR2, _ = KE_Borisov_3D(self.R, bare=True)
+        #self.ddR2  = KE(args.NR, dR, bare=True, cyclic=False)
         #self.ddR2  = KE_FFT(args.NR, P, R)
     
         self.ddx2 = KE(args.Nx, dx, bare=True, cyclic=False)
@@ -142,6 +142,7 @@ class Hamiltonian:
         self.sx = xp.array([[0,1],[1,0]])
         self.sy = xp.array([[0,-1j],[1j,0]])
         self.sz = xp.array([[1,0],[0,-1]])
+        self.si = xp.eye(2)
 
         self.E1, self.E2 = self.Efield(self.R_grid, self.xb_grid, self.yb_grid, self.zb_grid)
         
@@ -208,15 +209,13 @@ class Hamiltonian:
             diag = self.buildDiag(i)   
 
             guess_ns = xp.exp(-(self.Vgrid[i] - xp.min(self.Vgrid[i]))**2/27.211**2).ravel()
-            guess_spin = xp.repeat(guess_ns, 2)
-            #guess_spin = xp.append(guess_ns, guess_ns)
+            guess_zeros = xp.zeros(len(guess_ns))
+            guess_spin = xp.array([xp.append(guess_ns, guess_zeros),xp.append(guess_zeros, guess_ns)])
             if i==iR:
                 guess_bo = guess_spin
             else:
                 guess_bo = evecs
-            #guess_bo = guess_spin
 
-            #guess_spin = xp.append(guess_ns, guess_ns)
             conv, e_approx, evecs = lib.davidson1(
                 self.Hbo_dav(i),
                 guess_bo,
@@ -242,11 +241,10 @@ class Hamiltonian:
         return Ad_nsg, Ad_nse, ivalg, ivale        
                 
     def Tx(self,xdav):
-
         Hel_dav = -1/(2*self.mur)*(
-            xp.einsum('ij,Bsjkl->Bsikl',self.ddx2,xdav,optimize=True)
-            +xp.einsum('ij,Bskjl->Bskil',self.ddy2,xdav,optimize=True)
-            +xp.einsum('ij,Bsklj->Bskli',self.ddz2,xdav,optimize=True)
+            xp.einsum('sS,ij,Bsjkl->BSikl',self.si,self.ddx2,xdav,optimize=True)
+            +xp.einsum('sS,ij,Bskjl->BSkil',self.si,self.ddy2,xdav,optimize=True)
+            +xp.einsum('sS,ij,Bsklj->BSkli',self.si,self.ddz2,xdav,optimize=True)
             )
         return Hel_dav.reshape(xdav.shape)
 
@@ -254,8 +252,8 @@ class Hamiltonian:
 
         x = xdav.reshape((-1,) + H.bospinshape)    
         E1, E2 = self.Efield(R, self.x_grid, self.y_grid, self.z_grid)
-        c1 = 1/2*(1/137)**2*E1*self.alpha
-        c2 = 1/2*(1/137)**2*E2*self.alpha
+        c1 = 1/2*(1/137)**2*E1*self.alpha*(1/self.m_e**2)
+        c2 = 1/2*(1/137)**2*E2*self.alpha*(1/self.m_e**2)
         coef12 = (c1 + c2)        
         coef1  = c1
         coef2  = c2
@@ -264,16 +262,27 @@ class Hamiltonian:
         mu12,M1,M2 = self.mu12,self.M_1,self.M_2
 
         Hsocdav = 0.5j*( 
-            -xp.einsum('sS,y,zc,Bsxyz,xyz->Bsxyc', sx, yi, self.ddz1,x,coef12,optimize=True) 
-            +xp.einsum('sS,z,yb,Bsxyz,xyz->Bsxbz', sx, zi, self.ddy1,x,coef12,optimize=True) 
-            -xp.einsum('sS,z,xa,Bsxyz,xyz->Bsayz', sy, zi, self.ddx1,x,coef12,optimize=True) 
-            +xp.einsum('sS,x,zc,Bsxyz,xyz->Bsxyc', sy, xi-(R*mu12/M1), self.ddz1,x,coef1,optimize=True) 
-            +xp.einsum('sS,x,zc,Bsxyz,xyz->Bsxyc', sy, xi+(R*mu12/M2), self.ddz1,x,coef2,optimize=True) 
-            -xp.einsum('sS,x,yb,Bsxyz,xyz->Bsxbz', sz, xi-(R*mu12/M1), self.ddy1,x,coef1,optimize=True) 
-            -xp.einsum('sS,x,yb,Bsxyz,xyz->Bsxbz', sz, xi+(R*mu12/M2), self.ddy1,x,coef2,optimize=True) 
-            +xp.einsum('sS,y,xa,Bsxyz,xyz->Bsayz', sz, yi, self.ddx1,x,coef12,optimize=True) 
+            -xp.einsum('sS,y,zc,Bsxyz,xyz->BSxyc', sx, yi, self.ddz1,x,coef12,optimize=True) 
+            +xp.einsum('sS,z,yb,Bsxyz,xyz->BSxbz', sx, zi, self.ddy1,x,coef12,optimize=True) 
+            -xp.einsum('sS,z,xa,Bsxyz,xyz->BSayz', sy, zi, self.ddx1,x,coef12,optimize=True) 
+            +xp.einsum('sS,x,zc,Bsxyz,xyz->BSxyc', sy, xi-(R*mu12/M1), self.ddz1,x,coef1,optimize=True) 
+            +xp.einsum('sS,x,zc,Bsxyz,xyz->BSxyc', sy, xi+(R*mu12/M2), self.ddz1,x,coef2,optimize=True) 
+            -xp.einsum('sS,x,yb,Bsxyz,xyz->BSxbz', sz, xi-(R*mu12/M1), self.ddy1,x,coef1,optimize=True) 
+            -xp.einsum('sS,x,yb,Bsxyz,xyz->BSxbz', sz, xi+(R*mu12/M2), self.ddy1,x,coef2,optimize=True) 
+            +xp.einsum('sS,y,xa,Bsxyz,xyz->BSayz', sz, yi, self.ddx1,x,coef12,optimize=True) 
             )
-    
+        #Hsocdav_check = 0.5j*( 
+        #    -xp.einsum('sS,y,zc,xyz->sSxyc', sx, yi, self.ddz1,coef12,optimize=True) 
+        #    +xp.einsum('sS,z,yb,xyz->sSxbz', sx, zi, self.ddy1,coef12,optimize=True) 
+        #    #-xp.einsum('sS,z,xa,xyz->sSayz', sy, zi, self.ddx1,coef12,optimize=True) 
+        #    #+xp.einsum('sS,x,zc,xyz->sSxyc', sy, xi-(R*mu12/M1), self.ddz1,coef1,optimize=True) 
+        #    #+xp.einsum('sS,x,zc,xyz->sSxyc', sy, xi+(R*mu12/M2), self.ddz1,coef2,optimize=True) 
+        #    -xp.einsum('sS,x,yb,xyz->sSxbz', sz, xi-(R*mu12/M1), self.ddy1,coef1,optimize=True) 
+        #    -xp.einsum('sS,x,yb,xyz->sSxbz', sz, xi+(R*mu12/M2), self.ddy1,coef2,optimize=True) 
+        #    +xp.einsum('sS,y,xa,xyz->sSayz', sz, yi, self.ddx1,coef12,optimize=True) 
+        #    )
+        #print("Hsocdav_check",xp.transpose(xp.conj(Hsocdav_check[0,1,:,:,:])))
+        #print("Hsocdav_checkdown",(Hsocdav_check[1,0,:,:,:]))
 
         return Hsocdav.reshape(xdav.shape)
 
@@ -292,14 +301,14 @@ class Hamiltonian:
         mu12,M1,M2 = self.mu12,self.M_1,self.M_2
 
         Hsocdav = 0.5*( 
-            -xp.einsum('sS,y,zc,Bsxyz,xyz->Bsxyc', sx, yi, self.ddz1,x,coef12,optimize=True) 
-            +xp.einsum('sS,z,yb,Bsxyz,xyz->Bsxbz', sx, zi, self.ddy1,x,coef12,optimize=True) 
-            -xp.einsum('sS,z,xa,Bsxyz,xyz->Bsayz', sy, zi, self.ddx1,x,coef12,optimize=True) 
-            +xp.einsum('sS,x,zc,Bsxyz,xyz->Bsxyc', sy, xi-(R*mu12/M1), self.ddz1,x,coef1,optimize=True) 
-            +xp.einsum('sS,x,zc,Bsxyz,xyz->Bsxyc', sy, xi+(R*mu12/M2), self.ddz1,x,coef2,optimize=True) 
-            -xp.einsum('sS,x,yb,Bsxyz,xyz->Bsxbz', sz, xi-(R*mu12/M1), self.ddy1,x,coef1,optimize=True) 
-            -xp.einsum('sS,x,yb,Bsxyz,xyz->Bsxbz', sz, xi+(R*mu12/M2), self.ddy1,x,coef2,optimize=True) 
-            +xp.einsum('sS,y,xa,Bsxyz,xyz->Bsayz', sz, yi, self.ddx1,x,coef12,optimize=True) )
+            -xp.einsum('sS,y,zc,Bsxyz,xyz->BSxyc', sx, yi, self.ddz1,x,coef12,optimize=True) 
+            +xp.einsum('sS,z,yb,Bsxyz,xyz->BSxbz', sx, zi, self.ddy1,x,coef12,optimize=True) 
+            -xp.einsum('sS,z,xa,Bsxyz,xyz->BSayz', sy, zi, self.ddx1,x,coef12,optimize=True) 
+            +xp.einsum('sS,x,zc,Bsxyz,xyz->BSxyc', sy, xi-(R*mu12/M1), self.ddz1,x,coef1,optimize=True) 
+            +xp.einsum('sS,x,zc,Bsxyz,xyz->BSxyc', sy, xi+(R*mu12/M2), self.ddz1,x,coef2,optimize=True) 
+            -xp.einsum('sS,x,yb,Bsxyz,xyz->BSxbz', sz, xi-(R*mu12/M1), self.ddy1,x,coef1,optimize=True) 
+            -xp.einsum('sS,x,yb,Bsxyz,xyz->BSxbz', sz, xi+(R*mu12/M2), self.ddy1,x,coef2,optimize=True) 
+            +xp.einsum('sS,y,xa,Bsxyz,xyz->BSayz', sz, yi, self.ddx1,x,coef12,optimize=True) )
     
         return Hsocdav.reshape(xdav.shape)
 
@@ -317,36 +326,40 @@ class Hamiltonian:
             x = xdav.reshape((-1,)+self.bospinshape).astype(complex) 
             #print("x shape:", x.shape)
             if H.soc =='lazy':
+                Vx = xp.einsum('sS,xyz,Bsxyz->BSxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hpsdav = (
-                    self.Vgrid[Ri]*x + self.Tx(x) + self.soc_naive(x,Ri)
-                    +xp.einsum('xayz,Bsxyz->Bsayz', term1, x, optimize=True) 
-                    +xp.einsum('xybz,Bsxyz->Bsxbz', term2, x, optimize=True) 
-                    +xp.einsum('xyzc,Bsxyz->Bsxyc', term3, x, optimize=True)
+                    Vx + self.Tx(x) + self.soc_naive(x,Ri)
+                    +xp.einsum('sS,xayz,Bsxyz->BSayz', self.si, term1, x, optimize=True) 
+                    +xp.einsum('sS,xybz,Bsxyz->BSxbz', self.si, term2, x, optimize=True) 
+                    +xp.einsum('sS,xyzc,Bsxyz->BSxyc', self.si, term3, x, optimize=True)
                     +xp.einsum('sS,xyz,Bsxyz->BSxyz',self.sy,coeffgammaerfy,x,optimize=True)
                     +xp.einsum('sS,xyz,Bsxyz->BSxyz',self.sx,coeffgammaerfz,x,optimize=True)
                 )
             elif H.soc =='full':
+                Vx = xp.einsum('sS,xyz,Bsxyz->BSxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hpsdav = (
-                    self.Vgrid[Ri]*x + self.Tx(x) + self.soc_full(x,Ri)
-                    +xp.einsum('xayz,Bsxyz->Bsayz', term1, x, optimize=True) 
-                    +xp.einsum('xybz,Bsxyz->Bsxbz', term2, x, optimize=True) 
-                    +xp.einsum('xyzc,Bsxyz->Bsxyc', term3, x, optimize=True)
+                    Vx + self.Tx(x) + self.soc_full(x,Ri)
+                    +xp.einsum('sS,xayz,Bsxyz->BSayz', self.si, term1, x, optimize=True) 
+                    +xp.einsum('sS,xybz,Bsxyz->BSxbz', self.si, term2, x, optimize=True) 
+                    +xp.einsum('sS,xyzc,Bsxyz->BSxyc', self.si, term3, x, optimize=True)
                     +xp.einsum('sS,xyz,Bsxyz->BSxyz',self.sy,coeffgammaerfy,x,optimize=True)
                     +xp.einsum('sS,xyz,Bsxyz->BSxyz',self.sx,coeffgammaerfz,x,optimize=True)
                 )
             elif H.soc =='no_spin_erf':
+                Vx = xp.einsum('sS,xyz,Bsxyz->BSxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hpsdav = (
-                    self.Vgrid[Ri]*x + self.Tx(x) + self.soc_full(x,Ri)
-                    +xp.einsum('xayz,Bsxyz->Bsayz', term1, x, optimize=True) 
-                    +xp.einsum('xybz,Bsxyz->Bsxbz', term2, x, optimize=True) 
-                    +xp.einsum('xyzc,Bsxyz->Bsxyc', term3, x, optimize=True)
+                    Vx + self.Tx(x) + self.soc_full(x,Ri)
+                    +xp.einsum('sS,xayz,Bsxyz->BSayz', self.si, term1, x, optimize=True) 
+                    +xp.einsum('sS,xybz,Bsxyz->BSxbz', self.si, term2, x, optimize=True) 
+                    +xp.einsum('sS,xyzc,Bsxyz->BSxyc', self.si, term3, x, optimize=True)
                 )
             elif H.soc =='no_soc':
+                Vx = xp.einsum('sS,xyz,Bsxyz->BSxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hpsdav = (
-                    self.Vgrid[Ri]*x + self.Tx(x)
-                    +xp.einsum('xayz,Bsxyz->Bsayz', term1, x, optimize=True) 
-                    +xp.einsum('xybz,Bsxyz->Bsxbz', term2, x, optimize=True) 
-                    +xp.einsum('xyzc,Bsxyz->Bsxyc', term3, x, optimize=True)
+                    Vx + self.Tx(x)
+                    +xp.einsum('sS,xayz,Bsxyz->BSayz', self.si, term1, x, optimize=True) 
+                    +xp.einsum('sS,xybz,Bsxyz->BSxbz', self.si, term2, x, optimize=True) 
+                    +xp.einsum('sS,xyzc,Bsxyz->BSxyc', self.si, term3, x, optimize=True)
                     +xp.einsum('sS,xyz,Bsxyz->BSxyz',self.sy,coeffgammaerfy,x,optimize=True)
                     +xp.einsum('sS,xyz,Bsxyz->BSxyz',self.sx,coeffgammaerfz,x,optimize=True)
                 )
@@ -357,16 +370,20 @@ class Hamiltonian:
     def Hbo_dav(self,Ri):
 
         def Hxbo(xdav):
+            #print("xdav shape:", xdav.shape)
             x = xdav.reshape((-1,)+self.bospinshape)
             if self.soc =='lazy':
                 Hbodav = (
                     self.Vgrid[Ri]*x + self.Tx(x) + self.soc_naive(x,Ri)
                 )                
             elif self.soc =='full':
+                
+                Vx = xp.einsum('sS,xyz,Bsxyz->BSxyz',self.si,self.Vgrid[Ri],x,optimize=True)                
                 Hbodav = (
-                    self.Vgrid[Ri]*x + self.Tx(x) + self.soc_full(x,Ri)
+                    Vx + self.Tx(x) + self.soc_full(x,Ri)
                 )               
             elif self.soc == 'no_soc':
+                Vx = xp.einsum('sS,xyz,Bsxyz->BSxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hbodav = (
                     self.Vgrid[Ri]*x + self.Tx(x)
                 ) 
@@ -623,8 +640,10 @@ if __name__ == '__main__':
             diag = H.buildDiag(i)   
 
             guess_ns = xp.exp(-(H.Vgrid[i] - xp.min(H.Vgrid[i]))**2/27.211**2).ravel()
-            guess_spin = xp.repeat(guess_ns, 2)
+            guess_zeros = xp.zeros(len(guess_ns))
+            #guess_spin = xp.repeat(guess_ns, 2)
             #guess_spin = xp.append(guess_ns, guess_ns)
+            guess_spin = xp.array([xp.append(guess_ns, guess_zeros),xp.append(guess_zeros, guess_ns)])
             if i==iR:
                 guess_bo = guess_spin
             else:
@@ -692,7 +711,7 @@ if __name__ == '__main__':
                 Pseq = [NR//2 -i for i in range(NR//2+1)] + [NR//2+i+1 for i in range(NR//2-1)]
                 print("Pseq", Pseq)
                 for j in Pseq:
-                
+                    #j=0
                     print("Atom Ri",i,"Atom Pj",j,flush=True)
 
                     term1 = (
@@ -703,7 +722,7 @@ if __name__ == '__main__':
                         guess_ps = evecs
                     else:
                         guess_ps = evecs_save
-
+                    #guess_ps = evecs
                     with timer_ctx(f"Davidson of size {H.size}"):
                         conv, e_ps_approx, evecs_save = lib.davidson1(
                             H.ps_ham(term1,term2,term3,coeffgammaerfy,coeffgammaerfz,i),
