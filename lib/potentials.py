@@ -75,7 +75,7 @@ def erf_coulomb(R, r1e, r2e, charges, rcut=0.5):
 
 extents_erf_coulomb = _extents_log_factory(
     [2e0, 2e1, 2e2,  2e3,  2e4],
-    [0.1, 0.2, 0.3, 0.45, 0.45],
+    [ 1.0, 1.1, 1.2, 1.2, 1.3], # [0.1, 0.2, 0.3, 0.45, 0.45],
     [20,  12,    8,    5,    4],
     [20,  16,   14,   12,   12]
 )

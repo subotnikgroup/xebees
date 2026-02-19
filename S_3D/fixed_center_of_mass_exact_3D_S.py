@@ -1440,7 +1440,7 @@ class Hamiltonian:
 
                 if not all(conv):
                     raise Warning("All roots not converged")
-                print(Ad_n[i])
+                print(H.R_lab[i], Ad_n[i])
                 U_n[i] = guess.T
 
         phase_match(U_n)
