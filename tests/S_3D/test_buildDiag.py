@@ -15,13 +15,13 @@ def test_buildDaig():
 
     base_params = {
         'g_1': 1.0, 'g_2': 1.0,
-        'M_1': 100, 'M_2': 100,
+        'M_1': 2000, 'M_2': 2000,
         'NR': 3, 'Nr': 3, 'Ng': 4, 'Nint':100,
-        'J': 0.5, 'potential': 'borgis',
+        'J': 0.5, 'potential': 'erf_coulomb',
         'preconditioner': 'naive',
         'verbosity': 0,
         'max_threads': 1,
-        'soc': 'full', 'alpha':1e5
+        'soc': 'roi', 'alpha':1e4
     }
     args = Namespace(**base_params)
     H = fcm3d.Hamiltonian(args)
@@ -43,6 +43,7 @@ def test_buildDaig():
     print(test_diag)
     print("diag diff:")
     print(test_diag-H_diag)
+
     # assert not xp.any(xp.imag(H_diag)) > 1e-12
     # assert not xp.sum(xp.imag(test_diag)) > 1e-8 
     test_diag = test_diag.real
@@ -51,9 +52,10 @@ def test_buildDaig():
     print("MAX non-hermitian-ness:", xp.max(xp.abs(H_test - xp.conj(H_test.T))))
     print("MAX non-hermitian-ness:", xp.max(xp.abs(H_test.imag - xp.conj(H_test.T).imag)))
     print(xp.sum(xp.abs(xp.imag(H_test))))
-    # assert not xp.any(xp.abs(H_test - xp.conj(H_test.T))) > 1e-6
+    # assert xp.max(xp.abs(H_test - H_test.T)) < 1e-8
+    print("Diag deviation:", xp.mean(xp.abs(test_diag-H_diag)))
+    # assert xp.mean(xp.abs(H_diag - test_diag)) < 1e-12
     
-    # assert xp.sum(xp.abs(H_diag - test_diag)) < 1e-10
 if __name__ == "__main__":
     # Allow running the test directly
     pytest.main([__file__, "-v", "-s"])

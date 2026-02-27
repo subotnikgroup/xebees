@@ -19,7 +19,7 @@ import numpy  # only use this for reading and writing objects
 import linalg_helper as lib
 import potentials
 from constants import *
-from hamiltonian import  KE, KE_Borisov_3D
+from hamiltonian import  KE, KE_FFT, KE_ColbertMiller_zero_inf
 from davidson import phase_match, get_davidson_guess_3D, get_davidson_mem, solve_exact_gen
 from analysis import get_wfc_proj
 
@@ -171,11 +171,15 @@ class Hamiltonian:
         if stencil_g%2==0: stencil_g -= 1
 
         self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R)
-        # self.ddr2, _ = KE_Borisov_3D(self.r, bare=True)
-        self.ddr2 = KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False)
+        PR = xp.fft.fftfreq(self.R.size, dR)*2*xp.pi
+        # self.ddR2 = KE_FFT(self.R.size, PR, self.R)
+        
+        # DVR for r really matters for Coulomb potentials!!
+        # self.ddr2 = KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False)
+        self.ddr2 = KE_ColbertMiller_zero_inf(args.Nr, dr, mass=None, bare=True)
 
-        self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
-        self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
+        self.ddr_lab2 = KE_ColbertMiller_zero_inf(args.Nr, self.r_lab[1]-self.r_lab[0], mass=None, bare=True)
+        self.ddR_lab2 = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
 
         # since we need these in Hx
         R_grid, r_grid, _ , _ = xp.meshgrid(self.R, self.r, self.j, self.Om, indexing='ij')

@@ -45,8 +45,9 @@ def KE(N, dx, mass=None, stencil_size=11, order=2, cyclic=False, bare=False):
 def KE_FFT(N, P, R):
     Tp = xp.diag(-P**2)
     exp_RP = xp.exp(1j * xp.outer(P, R))
-
-    return (exp_RP.T.conj() @ Tp @ exp_RP) / N
+    KE = ((exp_RP.T.conj() @ Tp @ exp_RP) / N)
+    print("KE_FFT: throwing out imag from KE_FFT", xp.sum(xp.abs(KE.imag)))
+    return KE.real
 
 def gamma_grad(N, P, R):
     Tp = xp.diag(-1j*P)
@@ -172,8 +173,8 @@ def KE_Borisov_3D(x, tol=1e-6, mass=None, bare=False, order=2):
 
 
 def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False):
+    # DVR 2 in Appendix A of Colbert and Miller, JCP (1992).
     T = xp.zeros((N, N))
-
     # since we do not include the 0 point i->i+1; i+j-> i+j+2
     for i in range(N):
         for j in range(N):
@@ -189,9 +190,26 @@ def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False):
 
     return T / dx**2
 
-def KE_ColbertMiller_ab(N, dx, mass=None, bare=False):
+def KE_ColbertMiller_inf_inf(N, dx, mass=None, bare=False):
+    # DVR 1 in Appendix A of Colbert and Miller, JCP (1992).
     T = xp.zeros((N, N))
+    for i in range(N):
+        for j in range(N):
+            if i == j:
+                T[i,i] = xp.pi**2/3 
+            else:
+                T[i,j] = (-1)**(i-j) * (2/(i-j)**2)
 
+    if bare:
+        T *= -1
+    else:
+        T *= 1 / (2 * mass)
+
+    return T / dx**2
+
+def KE_ColbertMiller_ab(N, dx, mass=None, bare=False):
+    # DVR 0 in Appendix A of Colbert and Miller, JCP (1992).
+    T = xp.zeros((N, N))
     # since we do not include the 0 point i->i+1; i+j-> i+j+2
     for i in range(N):
         for j in range(N):
