@@ -512,7 +512,7 @@ def parse_args():
     parser.add_argument('-x', dest="Nx", metavar="Nx", default=250, type=int)
     parser.add_argument('-y', dest="Ny", metavar="Ny", default=250, type=int)
     parser.add_argument('-z', dest="Nz", metavar="Nz", default=250, type=int)
-    parser.add_argument('--bo_spectrum', metavar='bo_spectrum', default=False, type=bool)
+    parser.add_argument('--bo_spectrum', metavar='bo_spectrum True or spec.npz', type=Path, default=None)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
@@ -587,7 +587,6 @@ if __name__ == '__main__':
     #print("evecs",evecs_bo.shape)
 
     ## Start the loops from the middle of the bond, for optimal guesses
-    # iR = int(NR/2)
     iR = NR//2
     sequence = list(chain(
         [iR],
@@ -601,7 +600,9 @@ if __name__ == '__main__':
             range(jR - 1, -1, -1),
             range(jR + 1, NR)))
     gammacoeff = (gammacoeff_R, gammacoeff_phi, gammacoeff_theta)
-    if (args.bo_spectrum==True):
+
+    ### BO loop: does BO only and exits
+    if (args.bo_spectrum):
         Ad_nsg, Ad_nse, ivalg, ivale = H.BO_energies(iR,sequence)
 
         Hbo_g = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_nsg)
@@ -634,17 +635,25 @@ if __name__ == '__main__':
         EPSv_boe = batch_eigvalsh(HPS_boe)
         print("EPSv_bo e.s.",EPSv_boe[0:10])
 
+        if (args.bo_spectrum != "True"): # i.e. not str("True") but instead it's a path to a save file
+            surfaces = xp.stack((Ad_nsg,Ad_nse))
+            spectrum = xp.stack((e_bo_g, e_bo_e, EPSv_bog,EPSv_boe))
+            if hasattr(Ad_nsg, ('get')):
+                    surfaces = xp.stack((Ad_nsg,Ad_nse)).get()
+                    bo_spectrum = xp.stack((e_bo_g, e_bo_e, EPSv_bog,EPSv_boe)).get()
+            numpy.savez_compressed(args.bo_spectrum, bo_spectrum=spectrum, bo_surfaces=surfaces, args=vars(args))
+
         if args.evecs:
             Hbo_g = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_nsg)
             Ad_vn_g, evecsvib_g = xp.linalg.eigh(Hbo_g)
 
-            numpy.savez_compressed(args.evecs, evecs_bo_g=evecsvib_g, e_bo_g=Ad_nsg, Rval=H.R)
+            numpy.savez_compressed(args.evecs, evecs_bo_g=evecsvib_g, e_bo_g=Ad_nsg, Rval=H.R, args=vars(args))
             #numpy.savez_compressed(args.evecs, guess=evecsvib_g, e_approx=Ad_vn_g, Rval=H.R)
             print("Wrote eigenvectors to", args.evecs)
 
         exit()
 
-    
+    ### PS loop, makes E(R,P)    
     with timer_ctx(f"R for loop"):
         for i in sequence:
             print("Atom Ri idx",i, "Atom Ri",H.R[i],flush=True)
@@ -773,6 +782,7 @@ if __name__ == '__main__':
     #print("EPSg",EPSg)
     #print("Ad_nsg",Ad_nsg)
 
+    ### Vibrational energies for PS using BO and Weyl
 
     Hbo_g = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_nsg)
     Ad_vn_g = batch_eigvalsh(Hbo_g)
