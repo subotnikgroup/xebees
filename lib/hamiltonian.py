@@ -47,6 +47,13 @@ def KE_FFT(N, P, R):
     exp_RP = xp.exp(1j * xp.outer(P, R))
     KE = ((exp_RP.T.conj() @ Tp @ exp_RP) / N)
     print("KE_FFT: throwing out imag from KE_FFT", xp.sum(xp.abs(KE.imag)))
+    return KE
+
+def KE_FFT_R(N, P, R):
+    Tp = xp.diag(-P**2)
+    exp_RP = xp.exp(1j * xp.outer(P, R))
+    KE = ((exp_RP.T.conj() @ Tp @ exp_RP) / N)
+    print("KE_FFT: throwing out imag from KE_FFT", xp.sum(xp.abs(KE.imag)))
     return KE.real
 
 def gamma_grad(N, P, R):
@@ -172,23 +179,27 @@ def KE_Borisov_3D(x, tol=1e-6, mass=None, bare=False, order=2):
     return L, J
 
 
-def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False):
+def KE_ColbertMiller_zero_inf(N, dx, mass=None, bare=False, order=2):
     # DVR 2 in Appendix A of Colbert and Miller, JCP (1992).
     T = xp.zeros((N, N))
     # since we do not include the 0 point i->i+1; i+j-> i+j+2
+
     for i in range(N):
         for j in range(N):
-            if i == j:
-                T[i,i] = xp.pi**2/3 - 1/2/(i+1)**2
-            else:
-                T[i,j] = (-1)**(i-j) * (2/(i-j)**2 - 2/(i+j+2)**2)
+            if order==2:
+                if i == j:
+                    T[i,i] = -1*(xp.pi**2/3 - 1/2/(i+1)**2)/ dx**2
+                else:
+                    T[i,j] = -1*((-1)**(i-j) * (2/(i-j)**2 - 2/(i+j+2)**2))/ dx**2
+            elif order==1:
+                if i!=j:
+                    T[i,j] = (-1)**(i-j+1)/dx*((i-j)**(-1))
 
-    if bare:
-        T *= -1
-    else:
+    if order==1 and bare==False: print("Warning, dividing first derivative by 2*mass")
+    if not bare:
         T *= 1 / (2 * mass)
 
-    return T / dx**2
+    return T 
 
 def KE_ColbertMiller_inf_inf(N, dx, mass=None, bare=False):
     # DVR 1 in Appendix A of Colbert and Miller, JCP (1992).

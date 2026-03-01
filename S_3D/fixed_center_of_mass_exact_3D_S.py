@@ -21,7 +21,7 @@ import potentials
 from constants import *
 from hamiltonian import  KE, KE_Borisov_3D
 from davidson import phase_match, get_davidson_guess_3D, get_davidson_mem, solve_exact_gen
-from analysis import get_wfc_Om_proj_wS, get_jls_expectations
+from analysis import get_wfc_Om_proj_wS, get_jls_expectations, get_p01_radial
 
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
@@ -1634,7 +1634,8 @@ if __name__ == '__main__':
     print(conv)
     char,proj = get_wfc_Om_proj_wS(evecs,H)
     el2, ej2, elz, ejz, esz = get_jls_expectations(evecs, H)
-
+    p01 = get_p01_radial(evecs,H)
+    print("P01, radial momentum between state 0 and 1:", p01)
     print("e_approx, char, proj:")
 
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):

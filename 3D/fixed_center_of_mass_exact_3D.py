@@ -19,9 +19,9 @@ import numpy  # only use this for reading and writing objects
 import linalg_helper as lib
 import potentials
 from constants import *
-from hamiltonian import  KE, KE_FFT, KE_ColbertMiller_zero_inf
+from hamiltonian import  KE, KE_FFT_R, KE_ColbertMiller_zero_inf
 from davidson import phase_match, get_davidson_guess_3D, get_davidson_mem, solve_exact_gen
-from analysis import get_wfc_proj
+from analysis import get_wfc_proj, get_p01_radial
 
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
@@ -170,9 +170,9 @@ class Hamiltonian:
         stencil_g = min(11,args.Ng)
         if stencil_g%2==0: stencil_g -= 1
 
-        self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R)
+        # self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R)
         PR = xp.fft.fftfreq(self.R.size, dR)*2*xp.pi
-        # self.ddR2 = KE_FFT(self.R.size, PR, self.R)
+        self.ddR2 = KE_FFT_R(self.R.size, PR, self.R)
         
         # DVR for r really matters for Coulomb potentials!!
         # self.ddr2 = KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False)
@@ -864,8 +864,11 @@ if __name__ == '__main__':
     print("Davidson:", e_approx)
     print(conv)
     char,proj = get_wfc_proj(evecs,H)
-    print("e_approx, char, proj:")
 
+    p01 = get_p01_radial(evecs,H)
+    print("P01, radial momentum between state 0 and 1:", p01)
+    
+    print("e_approx, char, proj:")
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
         for e, M, prj, in zip(e_approx, char, proj):
             print(f"{e:9e}", M, prj)
