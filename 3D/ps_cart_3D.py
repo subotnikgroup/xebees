@@ -6,6 +6,7 @@ from scipy.interpolate import RegularGridInterpolator
 from sys import stderr
 import argparse as ap
 from pathlib import Path
+from itertools import product, chain
 
 import concurrent.futures as cf
 from itertools import product
@@ -328,7 +329,9 @@ def parse_args():
     parser.add_argument('--extent', metavar="X", action=NumpyArrayAction,
                         nargs=3, help="Rmin Rmax rmax, in Bohr "
                         "(typically set automatically)")
-    parser.add_argument('--backend', default='numpy')
+    parser.add_argument('--backend', default='cupy')
+    parser.add_argument('-splits', default=0, type=int)
+    parser.add_argument('-split_idx', default=1, type=int)
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -399,16 +402,16 @@ if __name__ == '__main__':
             [jR],
             range(jR - 1, -1, -1),
             range(jR + 1, NR)))
-
+    evecs_prev = True
 
     with timer_ctx(f"R for loop"):
-        for i in range(NR):
+        for i in sequence:
             print("Atom Ri",i,flush=True)
             diag = buildDiag(H,i)       
 
             guess = xp.exp(-(H.Vgrid[i] - xp.min(H.Vgrid[i]))**2/27.211**2).ravel()
             if evecs_prev == True:
-                guess_bo = guess_spin
+                guess_bo = guess
             else:
                 guess_bo = evecs
             conv, e_approx, evecs = lib.davidson1(
@@ -457,7 +460,7 @@ if __name__ == '__main__':
                 )
             
             with timer_ctx(f"P for loop"):
-                for j in range(NR):
+                for j in ps_sequence:
                 
                     print("Atom Ri",i,"Atom Rj",j,flush=True)
                     gammacoeff = (gammacoeff_R[i,j], gammacoeff_phi[i], gammacoeff_theta[i])
