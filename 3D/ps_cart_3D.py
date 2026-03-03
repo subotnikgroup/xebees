@@ -223,6 +223,15 @@ def Gamma_erf(R,rx,ry,rz,M1,M2,mu12,gammaetf):
     return Gammaerfya, Gammaerfyb, gammaerf1yc, Gammaerfza, Gammaerfzb
 
 
+def Tx(xdav):
+    xdav = xdav.reshape((-1,) + H.boshape)
+    Hel_dav = -1/(2*H.mur)*(
+        xp.einsum('ij,Bjkl->Bikl',H.ddx2,xdav,optimize=True)
+        +xp.einsum('ij,Bkjl->Bkil',H.ddy2,xdav,optimize=True)
+        +xp.einsum('ij,Bklj->Bkli',H.ddz2,xdav,optimize=True)
+        )
+    return Hel_dav.reshape(xdav.shape)
+
 def ps_ham(H,term1,term2,term3):
 
     #gammaetfx, gammaetfy, gammaetfz, gammaerfya, gammaerfyb, gammaerfyc, gammaerfza, gammaerfzb = Gammatot
@@ -270,15 +279,6 @@ def ps_ham(H,term1,term2,term3):
 
     return Hx_ps
 
-def Tx(xdav):
-    xdav = xdav.reshape((-1,) + H.boshape)
-    Hel_dav = -1/(2*H.mur)*(
-        xp.einsum('ij,Bjkl->Bikl',H.ddx2,xdav,optimize=True)
-        +xp.einsum('ij,Bkjl->Bkil',H.ddy2,xdav,optimize=True)
-        +xp.einsum('ij,Bklj->Bkli',H.ddz2,xdav,optimize=True)
-        )
-    return Hel_dav.reshape(xdav.shape)
-
 def Hbo_dav(H,i):
     def Hxbo(xdav):
         x = xdav.reshape((-1,)+H.boshape)        
@@ -294,36 +294,6 @@ def buildDiag(H,Ri):
     ke *= -1 / (2*H.mur)
     diag = H.Vgrid[Ri] + ke #XXXXXFix Vgrid
     return diag.ravel()
-
-def compute_EPS(inputs):
-
-    (H,i,j,gammaetfx, gammaerfya, gammacoeff_R, gammacoeff_phi,term2,term3) = inputs
-    
-    print("Atom Ri",i,"Atom Rj",j,flush=True)
-
-    term1 = (
-        gammacoeff_R * gammaetfx +
-        gammacoeff_phi * gammaerfya
-    )
-            
-    with timer_ctx(f"Davidson of size {H.size}"):
-        conv, e_ps_approx, evecs = lib.davidson1(
-            ps_ham(H,term1,term2,term3),
-            guess,
-            lambda dx, e, x0: dx/(diag-e+1e-5),
-            nroots=args.k,
-            max_cycle=args.iterations,
-            verbose=args.verbosity,
-            max_space=args.subspace,
-            max_memory=get_davidson_mem(0.75),
-            #tol=1e-12, #FIXME:DEBUG
-            tol=1e-10,
-        )
-
-    print("Davidson:", e_ps_approx)
-    print(conv)#
-
-    return i,j,e_ps_approx[0]
 
 
 def parse_args():
@@ -412,14 +382,35 @@ if __name__ == '__main__':
     gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
     gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
     gammacoeff_theta = +1j*(H.Ptheta/H.R-1/H.R)/H.mu12
+    if args.splits > 0:
+        sequence = generalized_sequence(NR, args.splits, args.split_idx)
+        print("sequence",sequence)
+        iR = sequence[0]
+        print("iR",iR)
+    else:
+        iR = NR//2
+        sequence = list(chain(
+            [iR],
+            range(iR - 1, -1, -1),
+            range(iR + 1, NR)))
 
-   
+    jR = NR//2
+    ps_sequence = list( chain(
+            [jR],
+            range(jR - 1, -1, -1),
+            range(jR + 1, NR)))
+
+
     with timer_ctx(f"R for loop"):
         for i in range(NR):
             print("Atom Ri",i,flush=True)
             diag = buildDiag(H,i)       
 
             guess = xp.exp(-(H.Vgrid[i] - xp.min(H.Vgrid[i]))**2/27.211**2).ravel()
+            if evecs_prev == True:
+                guess_bo = guess_spin
+            else:
+                guess_bo = evecs
             conv, e_approx, evecs = lib.davidson1(
                 Hbo_dav(H,i),
                 guess,
@@ -432,8 +423,6 @@ if __name__ == '__main__':
                 #tol=1e-12, #FIXME:DEBUG
                 tol=1e-10,
             )
-
-            
             print("Davidson:", e_approx)
             print(conv)
             Ad_n[i] = e_approx[0]
@@ -466,22 +455,41 @@ if __name__ == '__main__':
                     gammacoeff_phi[i] * (gammaerfyb + gammaerfyc) +
                     gammacoeff_theta[i] * (gammaetfz + gammaerfza)
                 )
-
-            inputs = [(H,i,j,gammaetfx, gammaerfya, gammacoeff_R[i,j], gammacoeff_phi[i],term2,term3) for j in range(NR)]
-
-            threadctl = ThreadpoolController()
-            h_workers = min(args.t, H.shape[0])
-            blasthreads = max(args.t//h_workers, 1)
-
-            with cf.ThreadPoolExecutor(max_workers=h_workers) as ex, threadctl.limit(limits=blasthreads):
-                results = list(tqdm(
-                    ex.map(compute_EPS, inputs),
-                    total=H.shape[0], desc="Building EPS"))
             
-            for i,j,val in results:
-                EPS[i, j] = val
-                             
+            with timer_ctx(f"P for loop"):
+                for j in range(NR):
+                
+                    print("Atom Ri",i,"Atom Rj",j,flush=True)
+                    gammacoeff = (gammacoeff_R[i,j], gammacoeff_phi[i], gammacoeff_theta[i])
 
+                    term1 = (
+                        gammacoeff_R[i,j] * gammaetfx +
+                        gammacoeff_phi[i] * gammaerfya
+                    )
+                    if evecs_prev == True and j==NR//2:
+                        guess_ps = evecs
+                        evecs_prev = False
+                    else:
+                        guess_ps = evecs_save
+
+                    with timer_ctx(f"Davidson of size {H.size}"):
+                        conv, e_ps_approx, evecs_save = lib.davidson1(
+                            ps_ham(H,term1,term2,term3),
+                            guess_ps,
+                            lambda dx, e, x0: dx/(diag-e+1e-5),
+                            nroots=args.k,
+                            max_cycle=args.iterations,
+                            verbose=args.verbosity,
+                            max_space=args.subspace,
+                            max_memory=get_davidson_mem(0.75),
+                            #tol=1e-12, #FIXME:DEBUG
+                            tol=1e-10,
+                        )
+    
+                    print("Davidson:", e_ps_approx)
+                    print(conv)#
+                    EPS[i, j] = e_ps_approx[0]
+                    
     #EPS = xp.loadtxt("rij_matrix.txt")
     #ivalload = xp.loadtxt("ri_values.txt")
     #ival = ivalload.reshape([NR,1])
@@ -491,6 +499,7 @@ if __name__ == '__main__':
     Ad_vn_new = batch_eigvalsh(Hbo_new)
     e_bo_new = xp.sort(Ad_vn_new.flatten())
     bo_new = e_bo_new[1] - e_bo_new[0]
+    print("e_bo_new",e_bo_new[0:10])
     print("BO new vib gap",bo_new,flush=True)
 
     EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
@@ -499,10 +508,12 @@ if __name__ == '__main__':
     EPS_bo += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
     HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P_R)
     EPSv_bo = batch_eigvalsh(HPS_bo)
+    print("e_bo_new Weyl",EPSv_bo[0:10])
     print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
 
     EPS += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
     HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P_R)
     EPSv = batch_eigvalsh(HPS)
+    print("e_bo_new Weyl",EPSv[0:10])
     print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
 
