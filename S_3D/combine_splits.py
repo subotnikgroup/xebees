@@ -72,15 +72,17 @@ def main():
     prefix = file_prefix(args)
     NR = args.NR
 
-    names = ['Ad_nsg', 'Ad_nse', 'ivalg', 'ivale', 'EPSg', 'EPSe']
+    names = ['Ad_nsg', 'Ad_nse', 'EPSg', 'EPSe', 'exp_RxGamma_y_gs', 'exp_RxGamma_y_es', 'exp_RxGamma_z_gs', 'exp_RxGamma_z_es']
     print('Loading split files from', folder, '...')
     data = load_splits(folder, prefix, args.splits, names)
     Ad_nsg = xp.asarray(data['Ad_nsg'])
     Ad_nse = xp.asarray(data['Ad_nse'])
-    ivalg = xp.asarray(data['ivalg'])
-    ivale = xp.asarray(data['ivale'])
     EPSg = xp.asarray(data['EPSg'])
     EPSe = xp.asarray(data['EPSe'])
+    exp_RxGamma_y_gs = xp.asarray(data['exp_RxGamma_y_gs'])
+    exp_RxGamma_y_es = xp.asarray(data['exp_RxGamma_y_es'])
+    exp_RxGamma_z_gs = xp.asarray(data['exp_RxGamma_z_gs'])
+    exp_RxGamma_z_es = xp.asarray(data['exp_RxGamma_z_es'])
     print("EPSg",EPSg)
     print("Ad_nsg",Ad_nsg)
 
@@ -124,9 +126,7 @@ def main():
     e_bo_g = xp.sort(Ad_vn_g.flatten())
     e_bo_e = xp.sort(Ad_vn_e.flatten())
     print('e_bo_new g.s.', e_bo_g[:10], flush=True)
-    print('BO new vib gap g.s.', e_bo_g[1] - e_bo_g[0], flush=True)
     print('e_bo_new e.s.', e_bo_e[:10], flush=True)
-    print('BO new vib gap e.s.', e_bo_e[1] - e_bo_e[0], flush=True)
 
     # #region agent log
     try:
@@ -142,35 +142,19 @@ def main():
 
     HPSg = inverse_weyl_transform(EPSg, NR, R, P_R)
     HPSe = inverse_weyl_transform(EPSe, NR, R, P_R)
-    EPSvg = xp.linalg.eigvalsh(HPSg)
-    EPSve = xp.linalg.eigvalsh(HPSe)
+    EPSvg, evecs_vg = xp.linalg.eigh(HPSg)
+    EPSve, evecs_ve = xp.linalg.eigh(HPSe)
     print('EPSv g.s.', xp.sort(EPSvg.flatten())[:10])
-    epsvg = xp.sort(EPSvg.flatten())
-    print('PS vib gap g.s.', epsvg[1] - epsvg[0])
     print('EPSv e.s.', xp.sort(EPSve.flatten())[:10])
-    epsve = xp.sort(EPSve.flatten())
-    print('PS vib gap e.s.', epsve[1] - epsve[0])
 
-    # BO-level Weyl (ivalg / ivale)
-    EPS_bog = xp.repeat(ivalg, NR, axis=1)
-    EPS_bog += 1/(2*mu12) * (Pval**2 + Pphi**2/Rval**2 + Ptheta**2/Rval**2 + 1/(2*Rval)**2)
-    EPS_boe = xp.repeat(ivale, NR, axis=1)
-    EPS_boe += 1/(2*mu12) * (Pval**2 + Pphi**2/Rval**2 + Ptheta**2/Rval**2 + 1/(2*Rval)**2)
-    HPS_bog = inverse_weyl_transform(EPS_bog, NR, R, P_R)
-    HPS_boe = inverse_weyl_transform(EPS_boe, NR, R, P_R)
-    EPSv_bog = xp.linalg.eigvalsh(HPS_bog)
-    EPSv_boe = xp.linalg.eigvalsh(HPS_boe)
-    print('EPSv_bo g.s.', xp.sort(EPSv_bog.flatten())[:10])
-    print('EPSv_bo e.s.', xp.sort(EPSv_boe.flatten())[:10])
-
-    # Optional: save combined arrays
-    out_folder = folder
-    np.save(os.path.join(out_folder, f'{prefix}Ad_nsg_combined.npy'), Ad_nsg)
-    np.save(os.path.join(out_folder, f'{prefix}Ad_nse_combined.npy'), Ad_nse)
-    np.save(os.path.join(out_folder, f'{prefix}EPSg_combined.npy'), EPSg)
-    np.save(os.path.join(out_folder, f'{prefix}EPSe_combined.npy'), EPSe)
-    print('Saved combined arrays to', out_folder)
-
+    RxGamma_y_gs = np.conj(evecs_vg).T @ (exp_RxGamma_y_gs @ evecs_vg)
+    RxGamma_y_es = np.conj(evecs_ve).T @ (exp_RxGamma_y_es @ evecs_ve)
+    RxGamma_z_gs = np.conj(evecs_vg).T @ (exp_RxGamma_z_gs @ evecs_vg)
+    RxGamma_z_es = np.conj(evecs_ve).T @ (exp_RxGamma_z_es @ evecs_ve)
+    print("RxGamma_y_gs",RxGamma_y_gs)
+    print("RxGamma_y_es",RxGamma_y_es)
+    print("RxGamma_z_gs",RxGamma_z_gs)
+    print("RxGamma_z_es",RxGamma_z_es)
 
 if __name__ == '__main__':
     args = parse_args()
