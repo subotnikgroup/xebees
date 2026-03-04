@@ -515,12 +515,16 @@ if __name__ == '__main__':
                         )
     
                     print("Davidson:", e_ps_approx)
-                    pe_r = xp.sum(evecs[0].conj()*apply_pr(H,evecs[0])) # < 0 | p_e | 0 > for PS
+                    dx = H.x[1]-H.x[0]
+                    dy = H.y[1]-H.x[0]
+                    dz = H.z[1]-H.z[0]
+                    dV = dx*dy*dz
+                    pe_r = xp.sum(evecs[0].conj()*apply_pr(H,evecs[0]))*dV # < 0 | p_e | 0 > for PS
                     v0 = evecs[0].reshape(H.boshape)
                     v1 = evecs[1].reshape(H.boshape)
-                    pe_x = xp.einsum('xyz, xa, ayz ->', v0.conj(), (0-1j)*H.ddx1, v1)
-                    pe_y = xp.einsum('xyz, yb, xbz ->', v0.conj(), (0-1j)*H.ddy1, v1)
-                    pe_z = xp.einsum('xyz, zc, xyc ->', v0.conj(), (0-1j)*H.ddz1, v1)
+                    pe_x = xp.einsum('xyz, xa, ayz ->', v0.conj(), (0-1j)*H.ddx1, v1)*dV
+                    pe_y = xp.einsum('xyz, yb, ayz ->', v0.conj(), (0-1j)*H.ddy1, v1)*dV
+                    pe_z = xp.einsum('xyz, zc, xyc ->', v0.conj(), (0-1j)*H.ddz1, v1)*dV
                     print("<pe> on g.s.", pe_x, pe_y, pe_z, pe_r)
                     print(conv)#
                     EPS[i, j] = e_ps_approx[0]
