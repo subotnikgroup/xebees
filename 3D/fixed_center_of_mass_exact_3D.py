@@ -865,8 +865,8 @@ if __name__ == '__main__':
     print(conv)
     char,proj = get_wfc_proj(evecs,H)
 
-    p01 = get_p01_radial(evecs,H)
-    print("P01, radial momentum between state 0 and 1:", p01)
+    p01_x, p01_r = get_p01_radial(evecs,H)
+    print("P01, radial momentum between state 0 and 1:", p01_x, p01_r)
     
     print("e_approx, char, proj:")
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):

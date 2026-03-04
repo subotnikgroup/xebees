@@ -64,12 +64,20 @@ def get_p01_radial(evecs,H):
     wfc2 = evecs[2].reshape(H.shape)
 
     if len(H.shape)==3: #identify a 2D wfc 
-        p01 = xp.einsum('Rrg, rv, Rvg -> ', xp.conj(wfc0), ddr1-xp.diag(2/H.r), wfc1)*dR*dr
+        dg = H.g[1]-H.g[0]
+        p01_r = xp.einsum('Rrg, rv, Rvg -> ', xp.conj(wfc0), ddr1-xp.diag(2/H.r), wfc1)*dR*dr
+        p01_z = xp.einsum('Rrg, rv,g, Rvg -> ', xp.conj(wfc0), ddr1-xp.diag(2/H.r), xp.cos(H.g), wfc1)*dR*dr*dg
+
     elif len(H.shape)==4: #identify a 3D wfc without spin
-        p01 = xp.einsum('RrjO, rv, RvjO ->', wfc0, ddr1- xp.diag(1/H.r), wfc1)*dR*dr
+        dg =  H.g[1]-H.g[0]
+        p01_r = xp.einsum('RrjO, rv, RvjO ->', wfc0, ddr1- xp.diag(1/H.r), wfc1)*dR*dr
+        p01_z = xp.einsum('RrjO, g, Ojkg, rv, RvkO->', 
+                          wfc0, xp.sin(H.g)*xp.cos(H.g), H.Pjk, ddr1-xp.diag(1/H.r), wfc1, optimize=True)*dR*dr*dg
+        
     elif len(H.shape)==5: #identify a 3D wfc with spin
         # note the 2nd excited state is the first vibration we want to check against
-        p01 = xp.einsum('RrjsO, rv, RvjsO ->', wfc0, ddr1-xp.diag(1/H.r), wfc2)*dR*dr
+        p01_r = xp.einsum('RrjsO, rv, RvjsO ->', wfc0, ddr1-xp.diag(1/H.r), wfc2)*dR*dr
+        p01_z = 0 ### not implemented yet
 
-    return p01
+    return p01_z, p01_r
 

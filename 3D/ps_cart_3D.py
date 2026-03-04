@@ -42,10 +42,10 @@ class Hamiltonian:
         'm_e', 'M_1', 'M_2', 'mu', 'g_1', 'g_2', 'J','mur',
         'R', 'P_R', 'R_grid', 'RP_grid',
         'x', 'y', 'z','x_grid','y_grid','z_grid', 'xb_grid','yb_grid','zb_grid',
-        'ddR2', 'ddx2','ddx1','ddy2','ddy1','ddz2','ddz1',
+        'ddR2', 'ddx2','ddx1','ddy2','ddy1','ddz2','ddz1', 'ddr1'
         'axes','Vgrid', '_preconditioner_data','Pg','Pphi','Ptheta',
         'shape', 'boshape','size','guess','k','mu12','_Vfunc',
-        '_locked','max_threads'
+        '_locked','max_threads', 'axes'
     )
 
     def __init__(self, args):
@@ -129,6 +129,7 @@ class Hamiltonian:
 
         self.ddz2 = KE(args.Nz, dz, bare=True, cyclic=False)
         self.ddz1 = KE(args.Nz, dz, bare=True, cyclic=False, order=1)
+
     
         self.R_grid, self.xb_grid, self.yb_grid, self.zb_grid = xp.meshgrid(self.R, self.x, self.y, self.z, indexing='ij')
         self.x_grid, self.y_grid, self.z_grid,  = xp.meshgrid(self.x, self.y, self.z, indexing='ij')
@@ -280,6 +281,28 @@ def ps_ham(H,term1,term2,term3):
 
     return Hx_ps
 
+def apply_pr(H, xdav):
+    x = xdav.reshape((-1,)+H.boshape).astype(complex) 
+    ### ddr1 = dx/dr ddx1 + dy/dr ddy1 + dz/dr ddz1 
+    ### dx/dr = sin(gamma)cos(psi)
+    ### cos(gamma) = z / r --> sin(gamma) = (x^2+y^2)^(0.5)/r
+    ### cos(psi) = x/ (x^2+y^2)^(0.5) --> sin(psi) = y / (x^2+y^2)^(0.5)
+
+    r = xp.sqrt(
+            H.x[:,None,None]**2 + H.y[None,:,None]**2 + H.z[None,None,:]**2) #shape xyz
+    
+    dxdr = H.x[:,None,None]/r ## sin(gamma)cos(psi)
+    dydr = H.y[None,:,None]/r ## sin(gamma)sin(psi)
+    dzdr = H.z[None,None,:]/r ## cos(gamma)
+    ### Symmetrized product
+    ddr1 = (0-1j)*0.5*(xp.einsum('xyz, xa, Bxyz -> Bayz ', dxdr , H.ddx1, x, optimize=True)
+                    + xp.einsum('xyz, ax, Bxyz -> Bayz', -dxdr, H.ddx1, x, optimize=True)
+                    + xp.einsum('xyz, yb, Bxyz -> Bxbz', dydr, H.ddy1, x, optimize=True)
+                    + xp.einsum('xyz, by, Bxyz -> Bxbz', -dydr, H.ddy1, x, optimize=True)
+                    + xp.einsum('xyz, zc, Bxyz -> Bxyc', dzdr, H.ddz1, x, optimize=True)
+                    + xp.einsum('xyz, cz, Bxyz -> Bxyc', -dzdr, H.ddz1, x, optimize=True))
+    return ddr1.reshape(xdav.shape)
+
 def Hbo_dav(H,i):
     def Hxbo(xdav):
         x = xdav.reshape((-1,)+H.boshape)        
@@ -382,6 +405,8 @@ if __name__ == '__main__':
     Rval, Pval = H.RP_grid
 
     EPS = xp.zeros((H.shape[0], H.shape[0]))
+    pPS = xp.zeros((4, H.shape[0], H.shape[0]), dtype=xp.complex128) # <pe>(R,P)
+
     gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
     gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
     gammacoeff_theta = +1j*(H.Ptheta/H.R-1/H.R)/H.mu12
@@ -490,8 +515,18 @@ if __name__ == '__main__':
                         )
     
                     print("Davidson:", e_ps_approx)
+                    pe_r = xp.sum(evecs[0].conj()*apply_pr(H,evecs[0])) # < 0 | p_e | 0 > for PS
+                    v0 = evecs[0].reshape(H.boshape)
+                    v1 = evecs[1].reshape(H.boshape)
+                    pe_x = xp.einsum('xyz, xa, ayz ->', v0.conj(), (0-1j)*H.ddx1, v1)
+                    pe_y = xp.einsum('xyz, yb, xbz ->', v0.conj(), (0-1j)*H.ddy1, v1)
+                    pe_z = xp.einsum('xyz, zc, xyc ->', v0.conj(), (0-1j)*H.ddz1, v1)
+                    print("<pe> on g.s.", pe_x, pe_y, pe_z, pe_r)
                     print(conv)#
                     EPS[i, j] = e_ps_approx[0]
+                    pPS[:,i,j] = xp.asarray([pe_x,pe_y,pe_z,pe_r])
+                    
+
                     
     #EPS = xp.loadtxt("rij_matrix.txt")
     #ivalload = xp.loadtxt("ri_values.txt")
@@ -517,6 +552,17 @@ if __name__ == '__main__':
     EPS += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
     HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P_R)
     EPSv = batch_eigvalsh(HPS)
+    EPSv, UPSv = xp.linalg.eigh(HPS)
     print("e_bo_new Weyl",EPSv[0:10])
     print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
+
+    Hpe_x = inverse_weyl_transform(pPS[0], H.shape[0], H.R, H.P_R)
+    Hpe_y = inverse_weyl_transform(pPS[1], H.shape[0], H.R, H.P_R)
+    Hpe_z = inverse_weyl_transform(pPS[2], H.shape[0], H.R, H.P_R)
+    Hpe_r = inverse_weyl_transform(pPS[3], H.shape[0], H.R, H.P_R)
+    pe_chix = xp.sum(UPSv[:,1].conj()*Hpe_x@UPSv[:,0]).real 
+    pe_chiy = xp.sum(UPSv[:,1].conj()*Hpe_y@UPSv[:,0]).real
+    pe_chiz = xp.sum(UPSv[:,1].conj()*Hpe_z@UPSv[:,0]).real
+    pe_chir = xp.sum(UPSv[:,1].conj()*Hpe_r@UPSv[:,0]).real
+    print("<chi_1|pe| chi0>:", pe_chix, pe_chiy, pe_chiz, pe_chir)
 
