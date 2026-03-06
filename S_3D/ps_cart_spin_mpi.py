@@ -205,9 +205,9 @@ class Hamiltonian:
                 
     def Tx(self,xdav):
         Hel_dav = -1/(2*self.mur)*(
-            xp.einsum('sS,ij,BSjkl->Bsikl',self.si,self.ddx2,xdav,optimize=True)
-            +xp.einsum('sS,ij,BSkjl->Bskil',self.si,self.ddy2,xdav,optimize=True)
-            +xp.einsum('sS,ij,BSklj->Bskli',self.si,self.ddz2,xdav,optimize=True)
+            xp.einsum('ij,BSjkl->BSikl',self.ddx2,xdav,optimize=True)
+            +xp.einsum('ij,BSkjl->BSkil',self.ddy2,xdav,optimize=True)
+            +xp.einsum('ij,BSklj->BSkli',self.ddz2,xdav,optimize=True)
             )
         return Hel_dav.reshape(xdav.shape)
 
@@ -236,31 +236,28 @@ class Hamiltonian:
             x = xdav.reshape((-1,)+self.bospinshape).astype(complex) 
             #print("x shape:", x.shape)
             if self.soc =='full':
-                Vx = xp.einsum('sS,xyz,Bsxyz->BSxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hpsdav = (
-                    Vx + self.Tx(x) + self.soc_full(x, soc_data_i)
-                    +xp.einsum('sS,xayz,BSxyz->Bsayz', self.si, term1, x, optimize=True) 
-                    +xp.einsum('sS,xybz,BSxyz->Bsxbz', self.si, term2, x, optimize=True) 
-                    +xp.einsum('sS,xyzc,BSxyz->Bsxyc', self.si, term3, x, optimize=True)
+                    self.Vgrid[Ri]*x + self.Tx(x) + self.soc_full(x, soc_data_i)
+                    +xp.einsum('xayz,BSxyz->BSayz', term1, x, optimize=True) 
+                    +xp.einsum('xybz,BSxyz->BSxbz', term2, x, optimize=True) 
+                    +xp.einsum('xyzc,BSxyz->BSxyc', term3, x, optimize=True)
                     +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sy,coeffgammaerfy,x,optimize=True)
                     +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sx,coeffgammaerfz,x,optimize=True)
                 )
                 
             elif self.soc =='no_spin_erf':
-                Vx = xp.einsum('sS,xyz,BSxyz->Bsxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hpsdav = (
-                    Vx + self.Tx(x) + self.soc_full(x, soc_data_i)
-                    +xp.einsum('sS,xayz,BSxyz->Bsayz', self.si, term1, x, optimize=True) 
-                    +xp.einsum('sS,xybz,BSxyz->Bsxbz', self.si, term2, x, optimize=True) 
-                    +xp.einsum('sS,xyzc,BSxyz->Bsxyc', self.si, term3, x, optimize=True)
+                    self.Vgrid[Ri]*x + self.Tx(x) + self.soc_full(x, soc_data_i)
+                    +xp.einsum('xayz,BSxyz->BSayz', term1, x, optimize=True) 
+                    +xp.einsum('xybz,BSxyz->BSxbz', term2, x, optimize=True) 
+                    +xp.einsum('xyzc,BSxyz->BSxyc', term3, x, optimize=True)
                 )
             elif self.soc =='no_soc':
-                Vx = xp.einsum('sS,xyz,BSxyz->Bsxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hpsdav = (
-                    Vx + self.Tx(x)
-                    +xp.einsum('sS,xayz,BSxyz->Bsayz', self.si, term1, x, optimize=True) 
-                    +xp.einsum('sS,xybz,BSxyz->Bsxbz', self.si, term2, x, optimize=True) 
-                    +xp.einsum('sS,xyzc,BSxyz->Bsxyc', self.si, term3, x, optimize=True)
+                    self.Vgrid[Ri]*x + self.Tx(x)
+                    +xp.einsum('xayz,BSxyz->BSayz', term1, x, optimize=True) 
+                    +xp.einsum('xybz,BSxyz->BSxbz', term2, x, optimize=True) 
+                    +xp.einsum('xyzc,BSxyz->BSxyc', term3, x, optimize=True)
                     +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sy,coeffgammaerfy,x,optimize=True)
                     +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sx,coeffgammaerfz,x,optimize=True)
                 )
@@ -275,20 +272,17 @@ class Hamiltonian:
             x = xdav.reshape((-1,)+self.bospinshape)               
             if self.soc =='full':  
                 #print("Ri",Ri)              
-                Vx = xp.einsum('sS,xyz,BSxyz->Bsxyz',self.si,self.Vgrid[Ri],x,optimize=True)                
                 Hbodav = (
-                    Vx + self.Tx(x) + self.soc_full(x, soc_data_i)
+                    self.Vgrid[Ri]*x + self.Tx(x) + self.soc_full(x, soc_data_i)
                 )               
             elif self.soc == 'no_soc':
                 #print("Ri",i)
-                Vx = xp.einsum('sS,xyz,BSxyz->Bsxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hbodav = (
-                    Vx + self.Tx(x)
+                    self.Vgrid[Ri]*x + self.Tx(x)
                 ) 
             elif self.soc =='no_spin_erf':
-                Vx = xp.einsum('sS,xyz,BSxyz->Bsxyz',self.si,self.Vgrid[Ri],x,optimize=True)
                 Hbodav = (
-                    Vx + self.Tx(x) + self.soc_full(x, soc_data_i)
+                    self.Vgrid[Ri]*x + self.Tx(x) + self.soc_full(x, soc_data_i)
                 ) 
 
             return Hbodav.reshape(xdav.shape)
@@ -358,7 +352,6 @@ class Hamiltonian:
             Ad_nse[i] = e_approx[1]
             ivalg[i,0] = e_approx[0]
             ivale[i,0] = e_approx[1]
-            exit()
 
         return Ad_nsg, Ad_nse, ivalg, ivale  
   
@@ -392,16 +385,19 @@ def Gamma_erf_spin(R, M1, M2, t1, t2):
 
 def Gamma_erf_orb(R, rx, ry, rz, M1, M2, mu12, gammaetf, t1, t2):
     (gammaetf1x, gammaetf1y, gammaetf1z, gammaetf2x, gammaetf2y, gammaetf2z) = gammaetf
-    J1xa = ry[None,:,None,None]*gammaetf1z
+
+    J1xa = ry[None,:,None,None]*gammaetf1z   
     J1xb = -(rz[None,None,None,:]*gammaetf1y)
     J1ya = (rz[None,None,None,:]*gammaetf1x)
     J1yb = -(rx[:,None,None,None]*gammaetf1z)
     J1yc = +(R*mu12/M1)*gammaetf1z
+    
     J2xa = (ry[None,:,None,None]*gammaetf2z)
     J2xb = -(rz[None,None,None,:]*gammaetf2y)
     J2ya = (rz[None,None,None,:]*gammaetf2x)
     J2yb = -(rx[:,None,None,None]*gammaetf2z)
     J2yc = +(R*mu12/M2)*gammaetf2z
+
     gammaerf1ya = -1/R*(-J1ya-J2ya)
     gammaerf1yb = -1/R*(-J1yb-J2yb)
     gammaerf1yc = -1/R*(-J1yc-J2yc)
@@ -428,7 +424,7 @@ def R_Gamma_exp(R,evecs,gammavals,si,sy,sx):
     evecs_es = evecs_save[1,:].reshape(2, Nx, Ny, Nz)
     evecs_conj_es = xp.conj(evecs_es)
 
-    gammaerfybc = gammaerfyb + gammaerfyc
+    gammaerfybc = gammaerfyb + gammaerfyc 
     Gamma_y_gs_etf = xp.einsum('sxyz,sS,xybz,Sxbz->', evecs_conj_gs, si, gammaetfy, evecs_gs, optimize=True) 
     Gamma_y_gs_erf_a = xp.einsum('sxyz,sS,xayz,Sayz->', evecs_conj_gs, si, gammaerfya, evecs_gs, optimize=True)
     Gamma_y_gs_erf_bc = xp.einsum('sxyz,sS,xyzc,Sxyc->', evecs_conj_gs,si, gammaerfybc, evecs_gs, optimize=True)
@@ -441,26 +437,45 @@ def R_Gamma_exp(R,evecs,gammavals,si,sy,sx):
 
     Gamma_z_gs_etf = xp.einsum('sxyz,sS,xyzc,Sxyc->', evecs_conj_gs, si, gammaetfz, evecs_gs, optimize=True) 
     Gamma_z_gs_erf_a = xp.einsum('sxyz,sS,xyzc,Sayc->', evecs_conj_gs, si, gammaerfza, evecs_gs, optimize=True)
-    Gamma_z_gs_erf_b = xp.einsum('sxyz,sS,xybz,Sxbc->', evecs_conj_gs,si, gammaerfzb, evecs_gs, optimize=True)
+    Gamma_z_gs_erf_b = xp.einsum('sxyz,sS,xybz,Sxbz->', evecs_conj_gs,si, gammaerfzb, evecs_gs, optimize=True)
     Gamma_z_gs_erf_s = xp.einsum('sxyz,sS,xyz,Sxyz->', evecs_conj_gs,sx, gammaerfsz, evecs_gs, optimize=True) 
 
     Gamma_z_es_etf = xp.einsum('sxyz,sS,xyzc,Sxyc->', evecs_conj_es, si, gammaetfz, evecs_es, optimize=True) 
     Gamma_z_es_erf_a = xp.einsum('sxyz,sS,xyzc,Sayc->', evecs_conj_es, si, gammaerfza, evecs_es, optimize=True)
-    Gamma_z_es_erf_b = xp.einsum('sxyz,sS,xybz,Sxbc->', evecs_conj_es,si, gammaerfzb, evecs_es, optimize=True)
+    Gamma_z_es_erf_b = xp.einsum('sxyz,sS,xybz,Sxbz->', evecs_conj_es,si, gammaerfzb, evecs_es, optimize=True)
     Gamma_z_es_erf_s = xp.einsum('sxyz,sS,xyz,Sxyz->', evecs_conj_es,sx, gammaerfsz, evecs_es, optimize=True) 
 
     Gamma_y_gs = Gamma_y_gs_etf + Gamma_y_gs_erf_a + Gamma_y_gs_erf_bc + Gamma_y_gs_erf_s
     Gamma_y_es = Gamma_y_es_etf + Gamma_y_es_erf_a + Gamma_y_es_erf_bc + Gamma_y_es_erf_s
-    Gamma_z_gs = Gamma_z_gs_etf + Gamma_z_gs_erf_a + Gamma_z_gs_erf_b + Gamma_z_gs_erf_s
-    Gamma_z_es = Gamma_z_es_etf + Gamma_z_es_erf_a + Gamma_z_es_erf_b + Gamma_z_es_erf_s
+    Gamma_z_gs = Gamma_z_gs_etf + Gamma_z_gs_erf_a + Gamma_z_gs_erf_b  + Gamma_z_gs_erf_s
+    Gamma_z_es = Gamma_z_es_etf + Gamma_z_es_erf_a + Gamma_z_es_erf_b  + Gamma_z_es_erf_s
 
-    R_Gamma_y_gs = -R*Gamma_z_gs
-    R_Gamma_y_es = -R*Gamma_z_es
-    R_Gamma_z_gs = R*Gamma_y_gs
-    R_Gamma_z_es = R*Gamma_y_es
+
+    R_Gamma_y_gs = 1j*R*Gamma_z_gs
+    R_Gamma_y_es = 1j*R*Gamma_z_es
+    R_Gamma_z_gs = -1j*R*Gamma_y_gs
+    R_Gamma_z_es = -1j*R*Gamma_y_es
     
 
     return R_Gamma_y_gs, R_Gamma_y_es, R_Gamma_z_gs, R_Gamma_z_es
+
+    def exp_l_s():
+        cosgamma = self.x_grid/xp.sqrt(self.x_grid**2 + self.y_grid**2 + self.z_grid**2)
+        singamma = self.y_grid/xp.sqrt(self.x_grid**2 + self.y_grid**2 + self.z_grid**2)
+
+        evecs_gs = evecs_save[0,:].reshape(2, Nx, Ny, Nz)
+        evecs_conj_gs = xp.conj(evecs_gs)
+        evecs_es = evecs_save[1,:].reshape(2, Nx, Ny, Nz)
+        evecs_conj_es = xp.conj(evecs_es)
+        #lx = 
+        exp_sx_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs,self.sx, evecs_gs, optimize=True)
+        exp_sx_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es,self.sx, evecs_es, optimize=True)
+        exp_sy_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs,self.sy, evecs_gs, optimize=True)
+        exp_sy_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es,self.sy, evecs_es, optimize=True)
+        exp_sz_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs,self.sz, evecs_gs, optimize=True)
+        exp_sz_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es,self.sz, evecs_es, optimize=True)
+
+        return exp_sx_gs, exp_sx_es, exp_sy_gs, exp_sy_es, exp_sz_gs, exp_sz_es
 
 def parse_args():
     parser = ap.ArgumentParser(
@@ -547,6 +562,11 @@ if __name__ == '__main__':
     energy_bo = xp.zeros([NR,args.k])
     EPSg = xp.zeros((NR, NR))
     EPSe = xp.zeros((NR, NR))
+
+
+    #print("HPS",inverse_weyl_transform(xp.ones((NR, NR)),NR,H.R,H.P_R))
+    #exit()
+
     exp_RxGamma_y_gs = xp.zeros((NR, NR),dtype=xp.complex128)
     exp_RxGamma_y_es = xp.zeros((NR, NR),dtype=xp.complex128)
     exp_RxGamma_z_gs = xp.zeros((NR, NR),dtype=xp.complex128)
@@ -556,6 +576,7 @@ if __name__ == '__main__':
     gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
     gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
     gammacoeff_theta = +1j*(H.Ptheta/H.R-1/H.R)/H.mu12
+
 
     def generalized_sequence(NR, num_splits,split_idx):
         nodes = xp.linspace(0, NR, num_splits + 1, dtype=xp.int32).tolist()
@@ -604,6 +625,8 @@ if __name__ == '__main__':
     #print("ps_sequence",list(ps_sequence))
     gammacoeff = (gammacoeff_R, gammacoeff_phi, gammacoeff_theta)
 
+    
+
     evecs_prev = True
     guess_ns = xp.exp(-(H.Vgrid[iR] - xp.min(H.Vgrid[iR]))**2/27.211**2).ravel()
     guess_zeros = xp.zeros(len(guess_ns))
@@ -611,9 +634,36 @@ if __name__ == '__main__':
 
     if (args.bo_spectrum==True):
         Ad_nsg, Ad_nse, ivalg, ivale = H.BO_energies(sequence,guess_spin)
+        Hbo_g = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_nsg)
+        Ad_vn_g = batch_eigvalsh(Hbo_g)
+        e_bo_g = xp.sort(Ad_vn_g.flatten())
+        print("e_bo_new g.s.",e_bo_g[0:10])
+        bo_vib_ggap = e_bo_g[1] - e_bo_g[0]
+        print("BO new vib gap g.s.",bo_vib_ggap,flush=True)
 
-        np.save(os.path.join(folder, f'matrix_{arge.potential}_j_{args.J}_m_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_Ad_nsg_split_{args.split_idx}.npy'), Ad_nsg)
-        np.save(os.path.join(folder, f'matrix_{arge.potential}_j_{args.J}_m_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_Ad_nse_split_{args.split_idx}.npy'), Ad_nse)
+        Hbo_e = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_nse)
+        Ad_vn_e = batch_eigvalsh(Hbo_e)
+        e_bo_e = xp.sort(Ad_vn_e.flatten())
+        print("e_bo_new e.s.",e_bo_e[0:10])
+        bo_vib_egap = e_bo_e[1] - e_bo_e[0]
+        print("BO new vib gap e.s.",bo_vib_egap,flush=True)
+
+        EPS_bog = xp.zeros((H.shape[0], H.shape[0]))
+        Helmatg = xp.repeat(ivalg,H.shape[0],axis=1)
+        EPS_bog += Helmatg   
+        EPS_bog += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
+        HPS_bog = inverse_weyl_transform(EPS_bog, H.shape[0], H.R, H.P_R)
+        EPSv_bog = batch_eigvalsh(HPS_bog)
+        print("EPSv_bo",EPSv_bog[0:10])
+    
+        EPS_boe = xp.zeros((H.shape[0], H.shape[0]))
+        Helmate = xp.repeat(ivale,H.shape[0],axis=1)
+        EPS_boe += Helmate   
+        EPS_boe += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
+        HPS_boe = inverse_weyl_transform(EPS_boe, H.shape[0], H.R, H.P_R)
+        EPSv_boe = batch_eigvalsh(HPS_boe)
+        print("EPSv_bo",EPSv_boe[0:10])
+        
         exit()
 
     
@@ -624,10 +674,8 @@ if __name__ == '__main__':
             diag = H.buildDiag(i)               
             if evecs_prev == True:
                 guess_bo = guess_spin
-                print("I ini idx",i)
             else:
                 guess_bo = evecs
-                print("I idx",i)
             E1, E2 = H.Efield(H.R[i], H.x_grid, H.y_grid, H.z_grid)
             c1 = 0.5 * (1/137)**2 * E1 * H.alpha / (H.m_e**2)
             c2 = 0.5 * (1/137)**2 * E2 * H.alpha / (H.m_e**2)
@@ -694,6 +742,7 @@ if __name__ == '__main__':
             coeffgammaerfy = gammacoeff_phi[i]*gammaerfsy
             coeffgammaerfz = gammacoeff_theta[i]*gammaerfsz
 
+
             with timer_ctx(f"P for loop"):
                 #Pseq = [NR//2 -i for i in range(NR//2+1)] + [NR//2+i+1 for i in range(NR//2-1)]
                 #print("Pseq", Pseq)
@@ -703,10 +752,8 @@ if __name__ == '__main__':
                     if evecs_prev == True and j==NR//2:
                         guess_ps = evecs
                         evecs_prev = False
-                        print("J ini idx",j)
                     else:
                         guess_ps = evecs_save
-                        print("J idx",j)
                     term1 = (
                         gammacoeff_R[i,j] * gammaetfx +
                         gammacoeff_phi[i] * gammaerfya
@@ -730,22 +777,120 @@ if __name__ == '__main__':
                     print(conv)
                     EPSg[i, j] = e_ps_approx[0]
                     EPSe[i, j] = e_ps_approx[1]
-
+                    print("evecs_save",evecs_save[xp.where((xp.abs(xp.imag(evecs_save))>1e-6))])
+                    
                     gammavals = (gammaetfy, gammaerfya, gammaerfyb, gammaerfyc, gammaerfza, gammaerfzb, gammaerfsy, gammaerfsz)
 
-                    R_Gamma_y_gs, R_Gamma_y_es, R_Gamma_z_gs, R_Gamma_z_es = R_Gamma_exp(H.R[i],evecs,gammavals,H.si,H.sy,H.sx)
+                    R_Gamma_y_gs, R_Gamma_y_es, R_Gamma_z_gs, R_Gamma_z_es = R_Gamma_exp(H.R[i],evecs_save,gammavals,H.si,H.sy,H.sx)
                     exp_RxGamma_y_gs[i,j] = R_Gamma_y_gs
                     exp_RxGamma_y_es[i,j] = R_Gamma_y_es
                     exp_RxGamma_z_gs[i,j] = R_Gamma_z_gs
                     exp_RxGamma_z_es[i,j] = R_Gamma_z_es
+                    print("exp_RxGamma_y_gs",exp_RxGamma_y_gs[i,j])
+                    print("exp_RxGamma_y_es",exp_RxGamma_y_es[i,j])
+                    print("exp_RxGamma_z_gs",exp_RxGamma_z_gs[i,j])
+                    print("exp_RxGamma_z_es",exp_RxGamma_z_es[i,j])
 
-                    
-    np.save(os.path.join(folder, f'matrix_{args.potential}_j_{args.J}_m_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_Ad_nsg_split_{args.split_idx}.npy'), Ad_nsg)
-    np.save(os.path.join(folder, f'matrix_{args.potential}_j_{args.J}_m_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_Ad_nse_split_{args.split_idx}.npy'), Ad_nse)
-    np.save(os.path.join(folder, f'matrix_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_EPSg_split_{args.split_idx}.npy'), EPSg)
-    np.save(os.path.join(folder, f'matrix_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_EPSe_split_{args.split_idx}.npy'), EPSe)
-    np.save(os.path.join(folder, f'matrix_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_y_gs_split_{args.split_idx}.npy'), exp_RxGamma_y_gs)
-    np.save(os.path.join(folder, f'matrix_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_y_es_split_{args.split_idx}.npy'), exp_RxGamma_y_es)
-    np.save(os.path.join(folder, f'matrix_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_z_gs_split_{args.split_idx}.npy'), exp_RxGamma_z_gs)
-    np.save(os.path.join(folder, f'matrix_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_z_es_split_{args.split_idx}.npy'), exp_RxGamma_z_es)
+    if args.splits > 0:
 
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_Ad_nsg_split_{args.split_idx}.npy'), Ad_nsg)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_Ad_nse_split_{args.split_idx}.npy'), Ad_nse)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_EPSg_split_{args.split_idx}.npy'), EPSg)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_EPSe_split_{args.split_idx}.npy'), EPSe)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_y_gs_split_{args.split_idx}.npy'), exp_RxGamma_y_gs)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_y_es_split_{args.split_idx}.npy'), exp_RxGamma_y_es)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_z_gs_split_{args.split_idx}.npy'), exp_RxGamma_Z_gs)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_z_es_split_{args.split_idx}.npy'), exp_RxGamma_Z_es)
+
+    else:
+        
+        np.save(os.path.join(folder, f'matrix3D_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_EPSg_split_{args.split_idx}.npy'), EPSg)
+        np.save(os.path.join(folder, f'matrix3D_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_EPSe_split_{args.split_idx}.npy'), EPSe)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_y_gs_split_{args.split_idx}.npy'), exp_RxGamma_y_gs)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_y_es_split_{args.split_idx}.npy'), exp_RxGamma_y_es)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_z_gs_split_{args.split_idx}.npy'), exp_RxGamma_z_gs)
+        np.save(os.path.join(folder, f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_exp_RxGamma_z_es_split_{args.split_idx}.npy'), exp_RxGamma_z_es)
+
+        Hbo_g = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_nsg)
+        Ad_vn_g = batch_eigvalsh(Hbo_g)
+        e_bo_g = xp.sort(Ad_vn_g.flatten())
+        print("e_bo_new g.s.",e_bo_g[0:10])
+        bo_vib_ggap = e_bo_g[1] - e_bo_g[0]
+        print("BO new vib gap g.s.",bo_vib_ggap,flush=True)
+
+        Hbo_e = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_nse)
+        Ad_vn_e = batch_eigvalsh(Hbo_e)
+        e_bo_e = xp.sort(Ad_vn_e.flatten())
+        print("e_bo_new e.s.",e_bo_e[0:10])
+        bo_vib_egap = e_bo_e[1] - e_bo_e[0]
+        print("BO new vib gap e.s.",bo_vib_egap,flush=True)
+#
+        EPSg += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
+        HPSg = inverse_weyl_transform(EPSg, H.shape[0], H.R, H.P_R)
+        EPSvg, evecs_vg = xp.linalg.eigh(HPSg)
+        print("EPSv g.s.",xp.sort(EPSvg.flatten())[:10])
+        print("PS vib gap g.s.",EPSvg[1]-EPSvg[0],flush=True)
+
+        EPSe += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
+        HPSe = inverse_weyl_transform(EPSe, H.shape[0], H.R, H.P_R)
+        EPSve,evecs_ve = xp.linalg.eigh(HPSe)
+        print("EPSv e.s.",xp.sort(EPSve.flatten())[:10])
+        print("PS vib gap e.s.",EPSve[1]-EPSve[0],flush=True)
+       
+        print("norm HPSg",xp.linalg.norm(HPSg+HPSg.conj().T))
+        print("HPSg",HPSg[0:6,0:6])
+        print("norm HPSe",xp.linalg.norm(HPSe+HPSe.conj().T))
+        print("HPSe",HPSe[0:6,0:6])
+
+
+        HGamma_RRy_gs = inverse_weyl_transform(exp_RxGamma_y_gs,NR,H.R,H.P_R)
+        HGamma_RRy_es = inverse_weyl_transform(exp_RxGamma_y_es,NR,H.R,H.P_R)
+        HGamma_RRz_gs = inverse_weyl_transform(exp_RxGamma_z_gs,NR,H.R,H.P_R)
+        HGamma_RRz_es = inverse_weyl_transform(exp_RxGamma_z_es,NR,H.R,H.P_R)
+
+
+
+        EPSg += 1/(2*mu12) * (Pval**2 + H.Pphi**2/Rval**2 + H.Ptheta**2/Rval**2 + 1/(2*Rval)**2)
+        EPSe += 1/(2*mu12) * (Pval**2 + H.Pphi**2/Rval**2 + H.Ptheta**2/Rval**2 + 1/(2*Rval)**2)
+
+        HPSg = inverse_weyl_transform(EPSg, NR, H.R, H.P_R)
+        HPSe = inverse_weyl_transform(EPSe, NR, H.R, H.P_R)
+
+        EPSvg, evecs_vg = xp.linalg.eigh(HPSg)
+        EPSve, evecs_ve = xp.linalg.eigh(HPSe)
+        print('EPSv g.s.', xp.sort(EPSvg.flatten())[:10])
+        print('EPSv e.s.', xp.sort(EPSve.flatten())[:10])
+
+        print("norm HPSg",xp.linalg.norm(HPSg-HPSg.conj().T))
+        print("HPSg",HPSg[0:6,0:6])
+        print("norm HPSe",xp.linalg.norm(HPSe-HPSe.conj().T))
+        print("HPSe",HPSe[0:6,0:6])
+
+
+        RxGamma_y_gs = xp.conj(evecs_vg[:,0]).T @ (HGamma_RRy_gs @ evecs_vg[:,0])
+        RxGamma_y_es = xp.conj(evecs_ve[:,1]).T @ (HGamma_RRy_es @ evecs_ve[:,1])
+        RxGamma_z_gs = xp.conj(evecs_vg[:,0]).T @ (HGamma_RRz_gs @ evecs_vg[:,0])
+        RxGamma_z_es = xp.conj(evecs_ve[:,1]).T @ (HGamma_RRz_es @ evecs_ve[:,1])
+        print("RxGamma_y_gs",RxGamma_y_gs)
+        print("RxGamma_y_es",RxGamma_y_es)
+        print("RxGamma_z_gs",RxGamma_z_gs)
+        print("RxGamma_z_es",RxGamma_z_es)
+        print("evecs_vg",evecs_vg.shape)
+        print("exp_RxGamma_y_gs",exp_RxGamma_y_gs.shape)
+
+
+        EPS_bog = xp.zeros((H.shape[0], H.shape[0]))
+        Helmatg = xp.repeat(ivalg,H.shape[0],axis=1)
+        EPS_bog += Helmatg   
+        EPS_bog += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
+        HPS_bog = inverse_weyl_transform(EPS_bog, H.shape[0], H.R, H.P_R)
+        EPSv_bog = batch_eigvalsh(HPS_bog)
+        print("EPSv_bo",EPSv_bog[0:10])
+    
+        EPS_boe = xp.zeros((H.shape[0], H.shape[0]))
+        Helmate = xp.repeat(ivale,H.shape[0],axis=1)
+        EPS_boe += Helmate   
+        EPS_boe += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
+        HPS_boe = inverse_weyl_transform(EPS_boe, H.shape[0], H.R, H.P_R)
+        EPSv_boe = batch_eigvalsh(HPS_boe)
+        print("EPSv_bo",EPSv_boe[0:10])

@@ -47,7 +47,7 @@ def parse_args():
 
 def file_prefix(args):
     return (
-        f'matrix_{args.potential}_j_{args.J}_m_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_'
+        f'matrix_spin_{args.potential}_j_{args.J}_Pth_{args.Ptheta}_Pph_{args.Pphi}_a_{args.alpha}_m_{args.M_2}_'
     )
 
 
@@ -72,11 +72,12 @@ def main():
     prefix = file_prefix(args)
     NR = args.NR
 
-    names = ['Ad_nsg', 'Ad_nse', 'EPSg', 'EPSe', 'exp_RxGamma_y_gs', 'exp_RxGamma_y_es', 'exp_RxGamma_z_gs', 'exp_RxGamma_z_es']
+    #names = ['Ad_nsg', 'Ad_nse', 'EPSg', 'EPSe', 'exp_RxGamma_y_gs', 'exp_RxGamma_y_es', 'exp_RxGamma_z_gs', 'exp_RxGamma_z_es']
+    names = ['EPSg', 'EPSe', 'exp_RxGamma_y_gs', 'exp_RxGamma_y_es', 'exp_RxGamma_z_gs', 'exp_RxGamma_z_es']
     print('Loading split files from', folder, '...')
     data = load_splits(folder, prefix, args.splits, names)
-    Ad_nsg = xp.asarray(data['Ad_nsg'])
-    Ad_nse = xp.asarray(data['Ad_nse'])
+    #Ad_nsg = xp.asarray(data['Ad_nsg'])
+    #Ad_nse = xp.asarray(data['Ad_nse'])
     EPSg = xp.asarray(data['EPSg'])
     EPSe = xp.asarray(data['EPSe'])
     exp_RxGamma_y_gs = xp.asarray(data['exp_RxGamma_y_gs'])
@@ -84,7 +85,7 @@ def main():
     exp_RxGamma_z_gs = xp.asarray(data['exp_RxGamma_z_gs'])
     exp_RxGamma_z_es = xp.asarray(data['exp_RxGamma_z_es'])
     print("EPSg",EPSg)
-    print("Ad_nsg",Ad_nsg)
+    #print("Ad_nsg",Ad_nsg)
 
     extent_func = potentials.extents_borgis if args.potential == 'borgis' else potentials.extents_erf_coulomb
     M_1 = args.M_1
@@ -115,11 +116,11 @@ def main():
 
     Hbo_g = (
         +1/(2*mu12) * (-ddR2 + xp.diag(Pphi**2/R**2) + xp.diag(Ptheta**2/R**2) + xp.diag(1/(2*R)**2))
-        + xp.diag(Ad_nsg)
+        #+ xp.diag(Ad_nsg)
     )
     Hbo_e = (
         +1/(2*mu12) * (-ddR2 + xp.diag(Pphi**2/R**2) + xp.diag(Ptheta**2/R**2) + xp.diag(1/(2*R)**2))
-        + xp.diag(Ad_nse)
+        #+ xp.diag(Ad_nse)
     )
     Ad_vn_g = xp.linalg.eigvalsh(Hbo_g)
     Ad_vn_e = xp.linalg.eigvalsh(Hbo_e)
@@ -137,24 +138,56 @@ def main():
         pass
     # #endregion
 
+    HGamma_RRy_gs = inverse_weyl_transform(exp_RxGamma_y_gs,NR,R,P_R)
+    HGamma_RRy_es = inverse_weyl_transform(exp_RxGamma_y_es,NR,R,P_R)
+    HGamma_RRz_gs = inverse_weyl_transform(exp_RxGamma_z_gs,NR,R,P_R)
+    HGamma_RRz_es = inverse_weyl_transform(exp_RxGamma_z_es,NR,R,P_R)
+
+    print("HGamma_RRy_gs",HGamma_RRy_gs[0:6,0:6])
+    print("HGamma_RRy_es",HGamma_RRy_es[0:6,0:6])
+    print("HGamma_RRz_gs",HGamma_RRz_gs[0:6,0:6])
+    print("HGamma_RRz_es",HGamma_RRz_es[0:6,0:6])
+    #E_RGammay_gs,evecs_RGammay_gs = xp.linalg.eigh(HGamma_RRy_gs)
+    #E_RGammay_es,evecs_RGammay_es = xp.linalg.eigh(HGamma_RRy_es)
+    #E_RGammaz_gs,evecs_RGammaz_gs = xp.linalg.eigh(HGamma_RRz_gs)
+    #E_RGammaz_es,evecs_RGammaz_es = xp.linalg.eigh(HGamma_RRz_es)
+    #RxGamma_y_gs = xp.conj(evecs_RGammay_gs[:,0]).T @ (HGamma_RRy_gs @ evecs_RGammay_gs[:,0])
+    #RxGamma_y_es = xp.conj(evecs_RGammay_es[:,0]).T @ (HGamma_RRy_es @ evecs_RGammay_es[:,0])
+    #RxGamma_z_gs = xp.conj(evecs_RGammaz_gs[:,1]).T @ (HGamma_RRz_gs @ evecs_RGammaz_gs[:,1])
+    #RxGamma_z_es = xp.conj(evecs_RGammaz_es[:,1]).T @ (HGamma_RRz_es @ evecs_RGammaz_es[:,1])
+    
+
     EPSg += 1/(2*mu12) * (Pval**2 + Pphi**2/Rval**2 + Ptheta**2/Rval**2 + 1/(2*Rval)**2)
     EPSe += 1/(2*mu12) * (Pval**2 + Pphi**2/Rval**2 + Ptheta**2/Rval**2 + 1/(2*Rval)**2)
 
     HPSg = inverse_weyl_transform(EPSg, NR, R, P_R)
     HPSe = inverse_weyl_transform(EPSe, NR, R, P_R)
+
     EPSvg, evecs_vg = xp.linalg.eigh(HPSg)
     EPSve, evecs_ve = xp.linalg.eigh(HPSe)
     print('EPSv g.s.', xp.sort(EPSvg.flatten())[:10])
     print('EPSv e.s.', xp.sort(EPSve.flatten())[:10])
 
-    RxGamma_y_gs = np.conj(evecs_vg).T @ (exp_RxGamma_y_gs @ evecs_vg)
-    RxGamma_y_es = np.conj(evecs_ve).T @ (exp_RxGamma_y_es @ evecs_ve)
-    RxGamma_z_gs = np.conj(evecs_vg).T @ (exp_RxGamma_z_gs @ evecs_vg)
-    RxGamma_z_es = np.conj(evecs_ve).T @ (exp_RxGamma_z_es @ evecs_ve)
+    print("norm HPSg",xp.linalg.norm(HPSg-HPSg.conj().T))
+    print("HPSg",HPSg[0:6,0:6])
+    print("norm HPSe",xp.linalg.norm(HPSe-HPSe.conj().T))
+    print("HPSe",HPSe[0:6,0:6])
+
+    print("exp_RxGamma_y_gs",exp_RxGamma_y_gs[0:6,0:6])
+    print("exp_RxGamma_y_es",exp_RxGamma_y_es[0:6,0:6])
+    print("exp_RxGamma_z_gs",exp_RxGamma_z_gs[0:6,0:6])
+    print("exp_RxGamma_z_es",exp_RxGamma_z_es[0:6,0:6])
+
+    RxGamma_y_gs = xp.conj(evecs_vg[:,0]).T @ (HGamma_RRy_gs @ evecs_vg[:,0])
+    RxGamma_y_es = xp.conj(evecs_ve[:,1]).T @ (HGamma_RRy_es @ evecs_ve[:,1])
+    RxGamma_z_gs = xp.conj(evecs_vg[:,0]).T @ (HGamma_RRz_gs @ evecs_vg[:,0])
+    RxGamma_z_es = xp.conj(evecs_ve[:,1]).T @ (HGamma_RRz_es @ evecs_ve[:,1])
     print("RxGamma_y_gs",RxGamma_y_gs)
     print("RxGamma_y_es",RxGamma_y_es)
     print("RxGamma_z_gs",RxGamma_z_gs)
     print("RxGamma_z_es",RxGamma_z_es)
+    print("evecs_vg",evecs_vg.shape)
+    print("exp_RxGamma_y_gs",exp_RxGamma_y_gs.shape)
 
 if __name__ == '__main__':
     args = parse_args()

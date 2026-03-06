@@ -433,6 +433,8 @@ def inverse_weyl_transform_old(E, NR, R, P):
                     idx = (q1 + q2 + 1) // 2
                     HPS[q1, q2] += (xp.exp(-1j * (R[q1] - R[q2]) * P[j])
                                     * EPS_half[idx, j] / NR)
+
+    HPS = 0.5 * (HPS + HPS.conj().T)
     return HPS
 
 
@@ -461,4 +463,6 @@ def inverse_weyl_transform(E, NR, R, P):
 
     HPS = xp.sum(HPS_j*coeff / NR,axis=2)
 
+    # Inverse Weyl of a real symbol is Hermitian; enforce to fix numerical asymmetry
+    #HPS = 0.5 * (HPS + HPS.conj().T)
     return HPS
