@@ -22,7 +22,7 @@ import linalg_helper as lib
 #from pyscf import lib
 import potentials
 from constants import *
-from hamiltonian import  KE, KE_FFT, KE_Borisov_3D, inverse_weyl_transform
+from hamiltonian import  KE, KE_FFT, KE_Borisov_3D, inverse_weyl_transform, inverse_weyl_transform_old
 from davidson import phase_match, phase_match_mem_constrained, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
@@ -222,7 +222,7 @@ def Gamma_erf(R,rx,ry,rz,M1,M2,mu12,gammaetf):
     Gammaerfza = (H.M_2*gammaerf1za-H.M_1*gammaerf2za)/(H.M_1+H.M_2)
     Gammaerfzb = (H.M_2*gammaerf1zb-H.M_1*gammaerf2zb)/(H.M_1+H.M_2)
     
-    return Gammaerfya, Gammaerfyb, gammaerf1yc, Gammaerfza, Gammaerfzb
+    return Gammaerfya, Gammaerfyb, Gammaerfyc, Gammaerfza, Gammaerfzb
 
 
 def Tx(xdav):
@@ -296,11 +296,11 @@ def apply_pr(H, xdav):
     dzdr = H.z[None,None,:]/r ## cos(gamma)
     ### Symmetrized product
     ddr1 = (0-1j)*0.5*(xp.einsum('xyz, xa, Bxyz -> Bayz ', dxdr , H.ddx1, x, optimize=True)
-                    + xp.einsum('xyz, ax, Bxyz -> Bayz', -dxdr, H.ddx1, x, optimize=True)
+                    + xp.einsum('ayz, xa, Bxyz -> Bayz', dxdr, H.ddx1, x, optimize=True)
                     + xp.einsum('xyz, yb, Bxyz -> Bxbz', dydr, H.ddy1, x, optimize=True)
-                    + xp.einsum('xyz, by, Bxyz -> Bxbz', -dydr, H.ddy1, x, optimize=True)
+                    + xp.einsum('xbz, yb, Bxyz -> Bxbz', dydr, H.ddy1, x, optimize=True)
                     + xp.einsum('xyz, zc, Bxyz -> Bxyc', dzdr, H.ddz1, x, optimize=True)
-                    + xp.einsum('xyz, cz, Bxyz -> Bxyc', -dzdr, H.ddz1, x, optimize=True))
+                    + xp.einsum('xyc, zc, Bxyz -> Bxyc', dzdr, H.ddz1, x, optimize=True))
     return ddr1.reshape(xdav.shape)
 
 def Hbo_dav(H,i):
@@ -404,6 +404,8 @@ if __name__ == '__main__':
 
     Rval, Pval = H.RP_grid
 
+    ###
+
     EPS = xp.zeros((H.shape[0], H.shape[0]))
     pPS = xp.zeros((4, H.shape[0], H.shape[0]), dtype=xp.complex128) # <pe>(R,P)
 
@@ -476,57 +478,57 @@ if __name__ == '__main__':
             Gammatot =  (gammaetfx, gammaetfy, gammaetfz, gammaerfya, gammaerfyb, gammaerfyc, gammaerfza, gammaerfzb)
 
             term2 = (
-                    gammacoeff_phi[i] * gammaetfy +
-                    gammacoeff_theta[i] * gammaerfzb
+                    gammacoeff_phi[i] * gammaetfy 
+                     + gammacoeff_theta[i] * gammaerfzb
                 )
             term3 = (
-                    gammacoeff_phi[i] * (gammaerfyb + gammaerfyc) +
+                     gammacoeff_phi[i] * (gammaerfyb + gammaerfyc) +
                     gammacoeff_theta[i] * (gammaetfz + gammaerfza)
                 )
             
             with timer_ctx(f"P for loop"):
                 for j in ps_sequence:
                 
-                    print("Atom Ri",i,"Atom Rj",j,flush=True)
+                    print("Atom Ri",i,"Atom Pj",j,flush=True)
                     gammacoeff = (gammacoeff_R[i,j], gammacoeff_phi[i], gammacoeff_theta[i])
 
                     term1 = (
-                        gammacoeff_R[i,j] * gammaetfx +
-                        gammacoeff_phi[i] * gammaerfya
+                        gammacoeff_R[i,j] * gammaetfx 
+                         + gammacoeff_phi[i] * gammaerfya
                     )
                     if evecs_prev == True and j==NR//2:
                         guess_ps = evecs
                         evecs_prev = False
                     else:
                         guess_ps = evecs_save
-
+                    
+                    Hx_ps = ps_ham(H,term1,term2,term3)
                     with timer_ctx(f"Davidson of size {H.size}"):
                         conv, e_ps_approx, evecs_save = lib.davidson1(
-                            ps_ham(H,term1,term2,term3),
+                            Hx_ps,
                             guess_ps,
-                            lambda dx, e, x0: dx/(diag-e+1e-5),
+                            lambda dx, e, x0: dx/(diag-e-(1e-5-1e-5j)),
                             nroots=args.k,
                             max_cycle=args.iterations,
                             verbose=args.verbosity,
                             max_space=args.subspace,
                             max_memory=get_davidson_mem(0.75),
                             #tol=1e-12, #FIXME:DEBUG
-                            tol=1e-10,
+                            tol=1e-12,
                         )
     
                     print("Davidson:", e_ps_approx)
-                    dx = H.x[1]-H.x[0]
-                    dy = H.y[1]-H.x[0]
-                    dz = H.z[1]-H.z[0]
-                    dV = dx*dy*dz
-                    pe_r = xp.sum(evecs[0].conj()*apply_pr(H,evecs[0]))*dV # < 0 | p_e | 0 > for PS
-                    v0 = evecs[0].reshape(H.boshape)
-                    v1 = evecs[1].reshape(H.boshape)
-                    pe_x = xp.einsum('xyz, xa, ayz ->', v0.conj(), (0-1j)*H.ddx1, v1)*dV
-                    pe_y = xp.einsum('xyz, yb, ayz ->', v0.conj(), (0-1j)*H.ddy1, v1)*dV
-                    pe_z = xp.einsum('xyz, zc, xyc ->', v0.conj(), (0-1j)*H.ddz1, v1)*dV
-                    print("<pe> on g.s.", pe_x, pe_y, pe_z, pe_r)
+
+                    pe_r = xp.sum(evecs_save[0].conj()*apply_pr(H,evecs_save[0])) # < 0 | p_e | 0 > for PS
+                    psi0 = evecs_save[0].reshape(H.boshape)
+                    pe_x = xp.einsum('xyz, xa, ayz ->', psi0.conj(), (0-1j)*H.ddx1, psi0)
+                    pe_y = xp.einsum('xyz, yb, ayz ->', psi0.conj(), (0-1j)*H.ddy1, psi0)
+                    pe_z = xp.einsum('xyz, zc, xyc ->', psi0.conj(), (0-1j)*H.ddz1, psi0)
+
+                    print("<pe> on g.s.", pe_x.real, pe_y.real, pe_z.real, pe_r.real)
+                    print("<x>,", xp.einsum('xyz, x, xyz-> ', psi0.conj(), H.x, psi0 ))
                     print(conv)#
+
                     EPS[i, j] = e_ps_approx[0]
                     pPS[:,i,j] = xp.asarray([pe_x,pe_y,pe_z,pe_r])
                     
@@ -538,11 +540,14 @@ if __name__ == '__main__':
     #Ad_n= ivalload
 
     Hbo_new = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_n)
-    Ad_vn_new = batch_eigvalsh(Hbo_new)
+    Ad_vn_new, Unv_bo = xp.linalg.eigh(Hbo_new)
     e_bo_new = xp.sort(Ad_vn_new.flatten())
     bo_new = e_bo_new[1] - e_bo_new[0]
     print("e_bo_new",e_bo_new[0:10])
     print("BO new vib gap",bo_new,flush=True)
+
+    R_bo = xp.sum(Unv_bo[:,0].conj()*H.R*Unv_bo[:,0]).real
+    print("BO bond length: <chi_0| R| chi_0 >:", R_bo)
 
     EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
     Helmat = xp.repeat(ival,H.shape[0],axis=1)
@@ -554,19 +559,35 @@ if __name__ == '__main__':
     print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
 
     EPS += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
-    HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P_R)
+    HPS = inverse_weyl_transform_old(EPS, H.shape[0], H.R, H.P_R)
     EPSv = batch_eigvalsh(HPS)
     EPSv, UPSv = xp.linalg.eigh(HPS)
     print("e_bo_new Weyl",EPSv[0:10])
     print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
 
-    Hpe_x = inverse_weyl_transform(pPS[0], H.shape[0], H.R, H.P_R)
-    Hpe_y = inverse_weyl_transform(pPS[1], H.shape[0], H.R, H.P_R)
-    Hpe_z = inverse_weyl_transform(pPS[2], H.shape[0], H.R, H.P_R)
-    Hpe_r = inverse_weyl_transform(pPS[3], H.shape[0], H.R, H.P_R)
-    pe_chix = xp.sum(UPSv[:,1].conj()*Hpe_x@UPSv[:,0]).real 
-    pe_chiy = xp.sum(UPSv[:,1].conj()*Hpe_y@UPSv[:,0]).real
-    pe_chiz = xp.sum(UPSv[:,1].conj()*Hpe_z@UPSv[:,0]).real
-    pe_chir = xp.sum(UPSv[:,1].conj()*Hpe_r@UPSv[:,0]).real
+    print("Real pPS check", [xp.sum(xp.abs(pPS[i].imag)) for i in range(4)])
+
+    print("Weyl check HPS Hermitian", xp.sum(xp.abs(HPS.conj().T - HPS)))
+    with xp.printoptions(precision=3):
+        print(HPS[:4,:4])
+
+    Hpe_x = inverse_weyl_transform_old(pPS[0], H.shape[0], H.R, H.P_R)
+    Hpe_y = inverse_weyl_transform_old(pPS[1], H.shape[0], H.R, H.P_R)
+    Hpe_z = inverse_weyl_transform_old(pPS[2], H.shape[0], H.R, H.P_R)
+    Hpe_r = inverse_weyl_transform_old(pPS[3], H.shape[0], H.R, H.P_R)
+    print("check Hpe_x Weyl hermitian", xp.sum(xp.abs(Hpe_x.conj().T-Hpe_x)))
+    with xp.printoptions(precision=3):
+        print(Hpe_x[:4,:4])
+    
+    dR = H.R[1]-H.R[0]
+    pe_chix = xp.sum(UPSv[:,1].conj()*Hpe_x@UPSv[:,0])
+    pe_chiy = xp.sum(UPSv[:,1].conj()*Hpe_y@UPSv[:,0])
+    pe_chiz = xp.sum(UPSv[:,1].conj()*Hpe_z@UPSv[:,0])
+    pe_chir = xp.sum(UPSv[:,1].conj()*Hpe_r@UPSv[:,0])
     print("<chi_1|pe| chi0>:", pe_chix, pe_chiy, pe_chiz, pe_chir)
+
+    R_ps = xp.sum(UPSv[:,0].conj()*H.R*UPSv[:,0]).real
+    print("PS bond length: <chi_0| R| chi_0 >:", R_ps)
+
+    xp.savez("test_PS_3D.npz", R=H.R, P=H.P_R, EPS=EPS, HPS=HPS,EPSv=EPSv, UPSv=UPSv, pPS=pPS)
 

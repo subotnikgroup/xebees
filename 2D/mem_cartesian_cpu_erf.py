@@ -58,7 +58,7 @@ class Hamiltonian:
         'axes', 'dtype', 'args',
         'max_threads','xp_grid','yp_grid',
         'preconditioner', 'make_guess', '_Vfunc',
-        'Vgrid', 'ddR2', 'ddx2', 'ddy2', 'ddx', 'ddy',
+        'Vgrid', 'ddR2', 'ddx2', 'ddy2', 'ddx', 'ddy', 'ddr'
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data','theta',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2','RP_grid'
@@ -141,6 +141,17 @@ class Hamiltonian:
         self.ddx = KE(args.Nx, dx, bare=True, cyclic=False, order=1)
         self.ddy2 = KE(args.Ny, dy, bare=True, cyclic=False)
         self.ddy = KE(args.Ny, dy, bare=True, cyclic=False, order=1)
+
+        ### ddr = dr/dx ddx1 + dr/dy ddy1 = cos(gamma)ddx1 + sin(gamma)ddy1
+        ### cosgamma = x/(x^2+y^2)^(0.5)
+        ### singamma =  y/(x^2 + y^2)^(0.5)
+        cosgamma = self.x[:,None]/xp.sqrt(self.x[:,None]**2 + self.y[None,:]**2) #shape xy
+        singamma = self.y[None,:]/xp.sqrt(self.x[:,None]**2 + self.y**2[None,:]) # shape xy
+        ### Symmetrized product
+        self.ddr = 0.5*(xp.einsum('xy, xa, yb -> xyab', cosgamma, self.ddx1, xp.eye(args.Ny), optimize=True)
+                     + xp.einsum('ay, xa, yb -> xyab', cosgamma, self.ddx1, xp.eye(args.Ny), optimize=True)
+                     + xp.einsum('xy, yb, xa -> xyab', singamma, self.ddy1, xp.eye(args.Nx), optimize=True)
+                     + xp.einsum('xb, yb, xa -> xyab', singamma, self.ddy1, xp.eye(args.Ny), optimize=True))
 
         # since we need these in Hx; maybe fine to compute on the fly?
 

@@ -880,6 +880,7 @@ if __name__ == '__main__':
 
     print("Davidson:", e_approx)
     print(conv)
+    print("evecs dtype", evecs.dtype)
 
     if args.evecs:
         numpy.savez_compressed(args.evecs, guess=evecs, H=H)

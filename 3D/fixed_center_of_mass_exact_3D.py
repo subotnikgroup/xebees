@@ -865,8 +865,11 @@ if __name__ == '__main__':
     print(conv)
     char,proj = get_wfc_proj(evecs,H)
 
-    p01_x, p01_r = get_p01_radial(evecs,H)
-    print("P01, radial momentum between state 0 and 1:", p01_x, p01_r)
+    p01_z, p01_r = get_p01_radial(evecs,H)
+    print("<0|pe|1>, momentum z and r direction:", p01_z, p01_r)
+    wfc0 = (evecs[0]).reshape(H.shape)
+    R_ex = xp.einsum('RrjO, R, RrjO ->', wfc0, H.R_lab, wfc0)
+    print("<0|R|0>, bond length:", R_ex)
     
     print("e_approx, char, proj:")
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):

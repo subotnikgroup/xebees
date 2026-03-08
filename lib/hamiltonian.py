@@ -402,7 +402,7 @@ def Gamma_etf_erf_old(R,r,g,pr,pg,M_1,M_2,mu12,r1e2,r2e2):
 #@nvtx.annotate("inverse_weyl_transform", color="pink")
 def inverse_weyl_transform_old(E, NR, R, P):
     """
-    Perform the inverse Weyl transform
+    Perform the inverse Weyl transform: only works for odd NR!!!
     """
     HPS = xp.zeros((NR, NR), dtype=complex)
     EPP = xp.zeros((NR, NR), dtype=complex)
@@ -431,10 +431,10 @@ def inverse_weyl_transform_old(E, NR, R, P):
                                     * E[(q1 + q2) // 2, j] / NR)
                 else:
                     idx = (q1 + q2 + 1) // 2
+                    idx2 = (q1 + q2 -1)//2
                     HPS[q1, q2] += (xp.exp(-1j * (R[q1] - R[q2]) * P[j])
                                     * EPS_half[idx, j] / NR)
 
-    HPS = 0.5 * (HPS + HPS.conj().T)
     return HPS
 
 

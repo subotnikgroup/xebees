@@ -58,7 +58,7 @@ class Hamiltonian:
         'axes', 'dtype', 'args',
         'max_threads','xp_grid','yp_grid',
         'preconditioner', 'make_guess', '_Vfunc',
-        'Vgrid', 'ddR2', 'ddx2', 'ddy2', 'ddx', 'ddy',
+        'Vgrid', 'ddR2', 'ddx2', 'ddy2', 'ddx', 'ddy', 'ddr',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data','theta',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2','RP_grid'
@@ -145,6 +145,17 @@ class Hamiltonian:
         self.ddx = KE(args.Nx, dx, bare=True, cyclic=False, order=1)
         self.ddy2 = KE(args.Ny, dy, bare=True, cyclic=False)
         self.ddy = KE(args.Ny, dy, bare=True, cyclic=False, order=1)
+
+        ### ddr = dr/dx ddx1 + dr/dy ddy1 = cos(gamma)ddx1 + sin(gamma)ddy1
+        ### cosgamma = x/(x^2+y^2)^(0.5)
+        ### singamma =  y/(x^2 + y^2)^(0.5)
+        cosgamma = self.x[:,None]/xp.sqrt(self.x[:,None]**2 + self.y[None,:]**2) #shape xy
+        singamma = self.y[None,:]/xp.sqrt(self.x[:,None]**2 + self.y[None,:]**2) # shape xy
+        ### Symmetrized product
+        self.ddr = 0.5*(xp.einsum('xy, xa, yb -> xyab', cosgamma, self.ddx, xp.eye(args.Ny), optimize=True)
+                     + xp.einsum('ay, xa, yb -> xyab', cosgamma, self.ddx, xp.eye(args.Ny), optimize=True)
+                     + xp.einsum('xy, yb, xa -> xyab', singamma, self.ddy, xp.eye(args.Nx), optimize=True)
+                     + xp.einsum('xb, yb, xa -> xyab', singamma, self.ddy, xp.eye(args.Ny), optimize=True))
 
         # since we need these in Hx; maybe fine to compute on the fly?
 
@@ -275,15 +286,25 @@ def Gamma_etf_cart(R,x,y,ddx,ddy,M_1,M_2,mu12,r1e2,r2e2):
 
 def compute_EPS(info):
     
-    Rval, Pval, Htot_bo, gammacoeff_R, gammacoeff_theta, gammatotx, gammatoty, gammasqtotx, gammasqtoty, mu12 = info
-    #print("i,j",Rval,Pval,flush=True)           
+    Rval, Pval, H, Htot_bo, gammacoeff_R, gammacoeff_theta, gammatotx, gammatoty, gammasqtotx, gammasqtoty, mu12 = info
+    #print("i,j",Rval,Pval,flush=True)  
+    Nx = H.x.size
+    Ny = H.y.size         
     
     Htot = Htot_bo[Rval]+(gammacoeff_R[Rval,Pval]*gammatotx)+(gammacoeff_theta[Rval]*gammatoty)
     Htot_sq = Htot - (gammasqtotx + gammasqtoty)/(2*mu12) 
-    e_approx = xp.linalg.eigvalsh(Htot)
-    e_approx_sq = xp.linalg.eigvalsh(Htot_sq)   
+    e_approx, v_approx = xp.linalg.eigh(Htot)
+    e_approx_sq, v_approx_sq = xp.linalg.eigh(Htot_sq)   
+    
+    pe_x = xp.einsum('xy, xa, ay ->', (v_approx[:,0].conj().reshape((Nx,Ny))), -1j*H.ddx, v_approx[:,0].reshape((Nx,Ny)))
+    pe_y = xp.einsum('xy, yb, xb ->', (v_approx[:,0].conj().reshape((Nx,Ny))), -1j*H.ddy, v_approx[:,0].reshape((Nx,Ny)))
+    pe_r = xp.einsum('xy, xyab, ay ->', (v_approx[:,0].conj().reshape((Nx,Ny))), -1j*H.ddr, v_approx[:,0].reshape((Nx,Ny)))
+    
+    pe_x_sq = xp.einsum('xy, xa, ay ->', (v_approx_sq[:,0].conj().reshape((Nx,Ny))), -1j*H.ddx, v_approx_sq[:,0].reshape((Nx,Ny)))
+    pe_y_sq = xp.einsum('xy, yb, xb ->', (v_approx_sq[:,0].conj().reshape((Nx,Ny))), -1j*H.ddy, v_approx_sq[:,0].reshape((Nx,Ny)))
+    pe_r_sq = xp.einsum('xy, xyab, ay ->', (v_approx_sq[:,0].conj().reshape((Nx,Ny))), -1j*H.ddr, v_approx_sq[:,0].reshape((Nx,Ny)))
 
-    return Rval,Pval,e_approx[0],e_approx_sq[0]
+    return Rval,Pval,e_approx[0],e_approx_sq[0], xp.stack((pe_x,pe_y,pe_r)), xp.stack((pe_x_sq, pe_y_sq, pe_r_sq))
 
 
 def parse_args():
@@ -387,6 +408,8 @@ if __name__ == '__main__':
 
     EPS = xp.zeros((H.shape[0], H.shape[0]))
     EPSsq = xp.zeros((H.shape[0], H.shape[0]))
+    pPS = xp.zeros((3,H.shape[0], H.shape[0]), dtype=xp.complex128)
+    pPS_sq = xp.zeros((3,H.shape[0], H.shape[0]), dtype=xp.complex128)
     
     Rval, Pval = H.RP_grid
     gammacoeff_R = -1j*(Pval-1/(2*Rval))/H.mu12
@@ -397,7 +420,7 @@ if __name__ == '__main__':
     Gammatoty = xp.zeros([Nelec,Nelec],dtype=complex)
 
     for i in range(H.shape[0]):
-        print("i",i,flush=True)
+        print("Ri",i,flush=True)
 
         r1e2, r2e2 = H.V(H.R[i], H.x_grid, H.y_grid, spitvals=True)
         with timer_ctx("build gamma"):
@@ -417,7 +440,7 @@ if __name__ == '__main__':
         Gammasqtotx = ((H.M_2**2*gammasq1x)+(H.M_1**2*gammasq2x)-(H.M_1*H.M_2*gamma1x2x)-(H.M_1*H.M_2*gamma2x1x))/(H.M_1+H.M_2)**2
         Gammasqtoty = ((H.M_2**2*gammasq1y)+(H.M_1**2*gammasq2y)-(H.M_1*H.M_2*gamma1y2y)-(H.M_1*H.M_2*gamma2y1y))/(H.M_1+H.M_2)**2 
 
-        index_pairs = [(i, k, Htot_bo_test, gammacoeff_R, gammacoeff_theta, Gammatotx, Gammatoty, Gammasqtotx, Gammasqtoty, H.mu12) for k in range(NR)]
+        index_pairs = [(i, k, H, Htot_bo_test, gammacoeff_R, gammacoeff_theta, Gammatotx, Gammatoty, Gammasqtotx, Gammasqtoty, H.mu12) for k in range(NR)]
 
 
         threadctl = ThreadpoolController()
@@ -428,9 +451,12 @@ if __name__ == '__main__':
             results = list(tqdm(
                ex.map(compute_EPS, index_pairs),
                total=H.shape[0], desc="Building EPS"))
-        for i,k,val,valsq in results:
+        for i,k,val,valsq, pe, pe_sq in results:
             EPS[i, k] = val
             EPSsq[i, k] = valsq
+            pPS[:,i,k] = pe
+            pPS_sq[:,i,k] = pe_sq
+
 
     #blasthreads x max_workers =< args.t =< 48
 
@@ -443,24 +469,45 @@ if __name__ == '__main__':
     if args.evecs:        
         EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
         HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
-        EPSv,EPSvwfn = xp.linalg.eigh(HPS)
+        EPSv,EPSvwfn = xp.linalg.eigh(HPS.real)
         print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
+
+        Hpex = inverse_weyl_transform(pPS[0], H.shape[0], H.R, H.P)
+        Hpey = inverse_weyl_transform(pPS[1], H.shape[0], H.R, H.P)
+        Hper = inverse_weyl_transform(pPS[2], H.shape[0], H.R, H.P)
+        pex = EPSvwfn[:,1].conj().T@(Hpex)@EPSvwfn[:,0]
+        pey = EPSvwfn[:,1].conj().T@(Hpey)@EPSvwfn[:,0]
+        per = EPSvwfn[:,1].conj().T@(Hper)@EPSvwfn[:,0]
+        print("pe_xyr", pex, pey, per)
+        # pex = EPSvwfn[:,1].conj().T@(1j*Hpex.imag)@EPSvwfn[:,0]
+        # pey = EPSvwfn[:,1].conj().T@(1j*Hpey.imag)@EPSvwfn[:,0]
+        # per = EPSvwfn[:,1].conj().T@(1j*Hper.imag)@EPSvwfn[:,0]
+        # print("pexyr", pex, pey, per)
+
 
         EPSsq += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
         HPSsq = inverse_weyl_transform(EPSsq, H.shape[0], H.R, H.P)
         EPSvsq,EPSvsqwfn = xp.linalg.eigh(HPSsq)
         print("PS vib gap sq",EPSvsq[1]-EPSvsq[0],flush=True)
 
-        #EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
-        #Helmat = xp.repeat(ival,H.shape[0],axis=1)
-        #EPS_bo += Helmat   
-        #EPS_bo += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
-        #HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P)
-        #EPSv_bo,EPSvbowfn = xp.linalg.eigh(HPS_bo)
-        #print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
+        Hpex_sq = inverse_weyl_transform(pPS_sq[0], H.shape[0], H.R, H.P)
+        Hpey_sq = inverse_weyl_transform(pPS_sq[1], H.shape[0], H.R, H.P)
+        Hper_sq = inverse_weyl_transform(pPS_sq[2], H.shape[0], H.R, H.P)
+        pex_sq = EPSvsqwfn[:,1].conj().T@(Hpex_sq)@EPSvsqwfn[:,0]
+        pey_sq = EPSvsqwfn[:,1].conj().T@(Hpey_sq)@EPSvsqwfn[:,0]
+        per_sq = EPSvsqwfn[:,1].conj().T@(Hper_sq)@EPSvsqwfn[:,0]
+        print("pe_xyr sq", pex_sq, pey_sq, per_sq)
+
+        EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
+        Helmat = xp.repeat(ival,H.shape[0],axis=1)
+        EPS_bo += Helmat   
+        EPS_bo += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
+        HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P)
+        EPSv_bo,EPSvbowfn = xp.linalg.eigh(HPS_bo)
+        print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
         
-        numpy.savez_compressed(args.evecs, EPS=EPSvwfn, H=H.R)
-        numpy.savez_compressed("SQ"+str(args.evecs), EPS=EPSvsqwfn, H=H.R)
+        numpy.savez_compressed(args.evecs, EPSvwfn=EPSvwfn, EPSv=EPSv, EPS=EPS, H=H.R, pPS=pPS)
+        numpy.savez_compressed("SQ"+str(args.evecs), EPS=EPSvsqwfn, H=H.R, EPSsq=EPSsq, pPS_sq=pPS_sq)
         numpy.savez_compressed("BO"+str(args.evecs), EPS=EPSvbowfn, H=H.R)
         print("Wrote eigenvectors to", args.evecs)
 
@@ -468,6 +515,7 @@ if __name__ == '__main__':
         EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
         HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
         EPSv = batch_eigvalsh(HPS)
+        # EPSv, VPS = xp.linalg.eigh(HPS)
         print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
 
         EPSsq += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
