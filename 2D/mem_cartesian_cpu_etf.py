@@ -479,6 +479,8 @@ if __name__ == '__main__':
         pey = EPSvwfn[:,1].conj().T@(Hpey)@EPSvwfn[:,0]
         per = EPSvwfn[:,1].conj().T@(Hper)@EPSvwfn[:,0]
         print("pe_xyr", pex, pey, per)
+        Rps = xp.sum(EPSvwfn[:,0].conj()*(H.R)*EPSvwfn[:,0]).real
+        print("<R> PS:", Rps)
         # pex = EPSvwfn[:,1].conj().T@(1j*Hpex.imag)@EPSvwfn[:,0]
         # pey = EPSvwfn[:,1].conj().T@(1j*Hpey.imag)@EPSvwfn[:,0]
         # per = EPSvwfn[:,1].conj().T@(1j*Hper.imag)@EPSvwfn[:,0]
@@ -497,6 +499,8 @@ if __name__ == '__main__':
         pey_sq = EPSvsqwfn[:,1].conj().T@(Hpey_sq)@EPSvsqwfn[:,0]
         per_sq = EPSvsqwfn[:,1].conj().T@(Hper_sq)@EPSvsqwfn[:,0]
         print("pe_xyr sq", pex_sq, pey_sq, per_sq)
+        Rps_sq = xp.sum(EPSvsqwfn[:,0].conj()*(H.R)*EPSvsqwfn[:,0]).real
+        print("<R> PSsq:", Rps_sq)
 
         EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
         Helmat = xp.repeat(ival,H.shape[0],axis=1)
@@ -505,6 +509,8 @@ if __name__ == '__main__':
         HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P)
         EPSv_bo,EPSvbowfn = xp.linalg.eigh(HPS_bo)
         print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
+        Rbo = xp.sum(EPSvbowfn[:,0].conj()*(H.R)*EPSvbowfn[:,0]).real
+        print("<R> BO:", Rbo)
         
         numpy.savez_compressed(args.evecs, EPSvwfn=EPSvwfn, EPSv=EPSv, EPS=EPS, H=H.R, pPS=pPS)
         numpy.savez_compressed("SQ"+str(args.evecs), EPS=EPSvsqwfn, H=H.R, EPSsq=EPSsq, pPS_sq=pPS_sq)
