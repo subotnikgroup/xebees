@@ -65,18 +65,18 @@ def get_p01_radial(evecs,H):
 
     if len(H.shape)==3: #identify a 2D wfc 
         dg = H.g[1]-H.g[0]
-        p01_r = xp.einsum('Rrg, rv, Rvg -> ', xp.conj(wfc0), ddr1-xp.diag(2/H.r), wfc1)
-        p01_z = xp.einsum('Rrg, rv,g, Rvg -> ', xp.conj(wfc0), ddr1-xp.diag(2/H.r), xp.cos(H.g), wfc1)*dg
+        p01_r = -1j*xp.einsum('Rrg, rv, Rvg -> ', xp.conj(wfc0), ddr1-xp.diag(1/H.r/2), wfc1)
+        p01_z = -1j*xp.einsum('Rrg, rv,g, Rvg -> ', xp.conj(wfc0), ddr1-xp.diag(1/H.r/2), xp.cos(H.g), wfc1)*dg
 
     elif len(H.shape)==4: #identify a 3D wfc without spin
         dg =  H.g[1]-H.g[0]
-        p01_r = xp.einsum('RrjO, rv, RvjO ->', wfc0, ddr1- xp.diag(1/H.r), wfc1)
-        p01_z = xp.einsum('RrjO, g, Ojkg, rv, RvkO->', 
+        p01_r = -1j*xp.einsum('RrjO, rv, RvjO ->', wfc0, ddr1- xp.diag(1/H.r), wfc1)
+        p01_z = -1j*xp.einsum('RrjO, g, Ojkg, rv, RvkO->', 
                           wfc0, xp.sin(H.g)*xp.cos(H.g), H.Pjk, ddr1-xp.diag(1/H.r), wfc1, optimize=True)*dg
         
     elif len(H.shape)==5: #identify a 3D wfc with spin
         # note the 2nd excited state is the first vibration we want to check against
-        p01_r = xp.einsum('RrjsO, rv, RvjsO ->', wfc0, ddr1-xp.diag(1/H.r), wfc2)
+        p01_r = -1j*xp.einsum('RrjsO, rv, RvjsO ->', wfc0, ddr1-xp.diag(1/H.r), wfc2)
         p01_z = 0 ### not implemented yet
 
     return p01_z, p01_r

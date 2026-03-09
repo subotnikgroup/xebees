@@ -41,6 +41,7 @@ from hamiltonian import  KE, KE_FFT, KE_Borisov
 from davidson import phase_match, phase_match_mem_constrained, get_interpolated_guess, get_davidson_mem, solve_exact_gen, eye_lazy
 from debug import prms, timer, timer_ctx
 from threadpoolctl import ThreadpoolController
+from analysis import get_p01_radial
 
 if __name__ == '__main__':
     from tqdm import tqdm
@@ -880,7 +881,12 @@ if __name__ == '__main__':
 
     print("Davidson:", e_approx)
     print(conv)
-    print("evecs dtype", evecs.dtype)
+
+    p01_z, p01_r = get_p01_radial(evecs,H)
+    print("<0|pe|1>, momentum z and r direction:", p01_z, p01_r)
+    wfc0 = (evecs[0]).reshape(H.shape)
+    R_ex = xp.einsum('Rrg, R, Rrg ->', wfc0.conj(), H.R_lab, wfc0)
+    print("<0|R|0>, bond length:", R_ex.real)
 
     if args.evecs:
         numpy.savez_compressed(args.evecs, guess=evecs, H=H)
@@ -896,6 +902,7 @@ if __name__ == '__main__':
     elif all(conv):
         ex = e_approx[1] - e_approx[0]
         print("exact gap", ex)
+
 
     if args.save is not None:
         if all(conv):
