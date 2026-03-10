@@ -233,7 +233,7 @@ class Hamiltonian:
         return Hsocdav.reshape(xdav.shape)
 
 
-    def ps_ham(self,term1,term2,term3,coeffgammaerfy,coeffgammaerfz,Ri,soc_data_i):
+    def ps_ham(self,term1,term2,term3,coeffgammaerfsy,coeffgammaerfsz,Ri,soc_data_i):
 
         def Hx_ps(xdav):
             x = xdav.reshape((-1,)+self.bospinshape).astype(complex) 
@@ -244,8 +244,8 @@ class Hamiltonian:
                     +xp.einsum('xayz,BSxyz->BSayz', ddx_terms, x, optimize=True) 
                     +xp.einsum('xybz,BSxyz->BSxbz', ddy_terms, x, optimize=True) 
                     +xp.einsum('xyzc,BSxyz->BSxyc', ddz_terms, x, optimize=True)
-                    +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sz,coeffgammaerfy,x,optimize=True)
-                    +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sy,coeffgammaerfz,x,optimize=True)
+                    +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sz,coeffgammaerfsy,x,optimize=True)
+                    +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sy,coeffgammaerfsz,x,optimize=True)
                 )
                 
             elif self.soc =='no_spin_erf':
@@ -258,11 +258,11 @@ class Hamiltonian:
             elif self.soc =='no_soc':
                 Hpsdav = (
                     self.Vgrid[Ri]*x + self.Tx(x)
-                    #+xp.einsum('xayz,BSxyz->BSayz', ddx_terms, x, optimize=True) 
-                    #+xp.einsum('xybz,BSxyz->BSxbz', ddy_terms, x, optimize=True) 
-                    #+xp.einsum('xyzc,BSxyz->BSxyc', ddz_terms, x, optimize=True)
-                    #+xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sz,coeffgammaerfy,x,optimize=True)
-                    #+xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sy,coeffgammaerfz,x,optimize=True)
+                    +xp.einsum('xayz,BSxyz->BSayz', ddx_terms, x, optimize=True) 
+                    +xp.einsum('xybz,BSxyz->BSxbz', ddy_terms, x, optimize=True) 
+                    +xp.einsum('xyzc,BSxyz->BSxyc', ddz_terms, x, optimize=True)
+                    +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sz,coeffgammaerfsy,x,optimize=True)
+                    +xp.einsum('sS,xyz,BSxyz->Bsxyz',self.sy,coeffgammaerfsz,x,optimize=True)
                 )
             return Hpsdav.reshape(xdav.shape)
 
@@ -457,15 +457,6 @@ def Gamma_erf_orb(H,Ridx, t1, t2):
     Jzc = 1/H.R[Ridx]*xp.einsum('xyz,xyzc->xyzc', coeff,ddz1,optimize=True)
     Jzd = 1/H.R[Ridx]*xp.einsum('xyzc,xyc->xyzc', ddz1, coeff,optimize=True)
 
-    Jya = xp.zeros_like(Jya)
-    Jza = xp.zeros_like(Jza) #z ok y not ok
-    Jyb = xp.zeros_like(Jyb)#y ok z not ok
-    Jzb = xp.zeros_like(Jzb)#z ok y not ok
-    Jyc = xp.zeros_like(Jyc)#y ok z not ok
-    Jzc = xp.zeros_like(Jzc)#y ok z not ok
-    Jyd = xp.zeros_like(Jyd)#y ok z not ok
-    Jzd = xp.zeros_like(Jzd)#z ok y not ok
-
     return Jya, Jyb, Jyc, Jyd, Jza, Jzb, Jzc, Jzd
 
 def R_Gamma_exp_old(H,Ridx,evecs_save,gammavals):
@@ -525,8 +516,7 @@ def R_Gamma_exp(H,Ridx,evecs_save,gammavals):
 
     
     Gamma_y_gs_etf_erf_acd = xp.einsum('sxyz,sS,xybz,Sxbz->', evecs_conj_gs, H.si, (gammaetfy +Jya- Jyc- Jyd), evecs_gs, optimize=True)
-    #Gamma_y_gs_etf_erf_acd = xp.einsum('sxyz,sS,xybz,Sxbz->', evecs_conj_gs, H.si, (gammaetfy), evecs_gs, optimize=True)
-    Gamma_y_gs_erf_b = xp.einsum('sxyz,sS,xayz,Sabz->', evecs_conj_gs, H.si, (Jyb), evecs_gs, optimize=True)
+    Gamma_y_gs_erf_b = xp.einsum('sxyz,sS,xayz,Sayz->', evecs_conj_gs, H.si, (-Jyb), evecs_gs, optimize=True)
     Gamma_y_gs_serf = xp.einsum('sxyz,sS,xyz,Sxyz->', evecs_conj_gs,H.sz, gammaerfsy, evecs_gs, optimize=True) 
 
     Gamma_z_gs_etf_erf_bcd = xp.einsum('sxyz,sS,xyzc,Sxyc->', evecs_conj_gs, H.si, (gammaetfz-Jzb+Jzc+Jzd), evecs_gs, optimize=True)
@@ -534,7 +524,7 @@ def R_Gamma_exp(H,Ridx,evecs_save,gammavals):
     Gamma_z_gs_serf = xp.einsum('sxyz,sS,xyz,Sxyz->', evecs_conj_gs,H.sy, gammaerfsz, evecs_gs, optimize=True) 
 
     Gamma_y_es_etf_erf_acd = xp.einsum('sxyz,sS,xybz,Sxbz->', evecs_conj_es, H.si, (gammaetfy +Jya- Jyc- Jyd), evecs_es, optimize=True)
-    Gamma_y_es_erf_b = xp.einsum('sxyz,sS,xayz,Sabz->', evecs_conj_es, H.si, (Jyb), evecs_es, optimize=True)
+    Gamma_y_es_erf_b = xp.einsum('sxyz,sS,xayz,Sayz->', evecs_conj_es, H.si, (-Jyb), evecs_es, optimize=True)
     Gamma_y_es_serf = xp.einsum('sxyz,sS,xyz,Sxyz->', evecs_conj_es,H.sz, gammaerfsy, evecs_es, optimize=True) 
 
     Gamma_z_es_etf_erf_bcd = xp.einsum('sxyz,sS,xyzc,Sxyc->', evecs_conj_es, H.si, (gammaetfz-Jzb+Jzc+Jzd), evecs_es, optimize=True)
@@ -545,16 +535,11 @@ def R_Gamma_exp(H,Ridx,evecs_save,gammavals):
     Gamma_z_gs = Gamma_z_gs_etf_erf_bcd + Gamma_z_gs_erf_a + Gamma_z_gs_serf
     Gamma_y_es = Gamma_y_es_etf_erf_acd + Gamma_y_es_erf_b + Gamma_y_es_serf
     Gamma_z_es = Gamma_z_es_etf_erf_bcd + Gamma_z_es_erf_a + Gamma_z_es_serf
-
-    #Gamma_y_gs = Gamma_y_gs_etf_erf_acd
-    #Gamma_z_gs = Gamma_z_gs_etf_erf_bcd
-    #Gamma_y_es = Gamma_y_es_etf_erf_acd
-    #Gamma_z_es = Gamma_z_es_etf_erf_bcd
     
-    R_Gamma_y_gs = 1j*H.R[Ridx]*Gamma_z_gs
-    R_Gamma_y_es = 1j*H.R[Ridx]*Gamma_z_es
-    R_Gamma_z_gs = -1j*H.R[Ridx]*Gamma_y_gs
-    R_Gamma_z_es = -1j*H.R[Ridx]*Gamma_y_es
+    R_Gamma_y_gs = -1j*H.R[Ridx]*Gamma_z_gs
+    R_Gamma_y_es = -1j*H.R[Ridx]*Gamma_z_es
+    R_Gamma_z_gs = 1j*H.R[Ridx]*Gamma_y_gs
+    R_Gamma_z_es = 1j*H.R[Ridx]*Gamma_y_es
     
     return R_Gamma_y_gs, R_Gamma_y_es, R_Gamma_z_gs, R_Gamma_z_es
 
@@ -601,22 +586,16 @@ def exp_l_s(H,evecs_save,Ridx,t1,t2):
     exp_lz_es_d = H.R[Ridx]/(2*(H.M_1+H.M_2))*xp.einsum('sxyz,yb,xbz,sxbz->',evecs_conj_es, H.ddy1, (H.M_2*t1-H.M_1*t2), evecs_es, optimize=True)
     exp_lz_es = exp_lz_es_a - exp_lz_es_b - exp_lz_es_c - exp_lz_es_d
 
-    exp_l = (1j*exp_lx_gs, 1j*exp_lx_es, 1j*exp_ly_gs, 1j*exp_ly_es, 1j*exp_lz_gs, 1j*exp_lz_es)
+    exp_l = (-1j*exp_lx_gs, -1j*exp_lx_es, -1j*exp_ly_gs, -1j*exp_ly_es, -1j*exp_lz_gs, -1j*exp_lz_es)
 
 
-    exp_sx_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs, H.sx, evecs_gs, optimize=True)
-    exp_sx_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es, H.sx, evecs_es, optimize=True)
-    exp_sy_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs, H.sy, evecs_gs, optimize=True)
-    exp_sy_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es, H.sy, evecs_es, optimize=True)
-    exp_sz_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs, H.sz, evecs_gs, optimize=True)
-    exp_sz_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es, H.sz, evecs_es, optimize=True)
+    exp_sx_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs, 0.5*H.sx, evecs_gs, optimize=True)
+    exp_sx_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es, 0.5*H.sx, evecs_es, optimize=True)
+    exp_sy_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs, 0.5*H.sy, evecs_gs, optimize=True)
+    exp_sy_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es, 0.5*H.sy, evecs_es, optimize=True)
+    exp_sz_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs, 0.5*H.sz, evecs_gs, optimize=True)
+    exp_sz_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es, 0.5*H.sz, evecs_es, optimize=True)
 
-    exp_sx_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs, H.sx, evecs_gs, optimize=True)
-    exp_sx_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es, H.sx, evecs_es, optimize=True)
-    exp_sy_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs, H.sy, evecs_gs, optimize=True)
-    exp_sy_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es, H.sy, evecs_es, optimize=True)
-    exp_sz_gs = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_gs, H.sz, evecs_gs, optimize=True)
-    exp_sz_es = xp.einsum('sxyz,sS,Sxyz->',evecs_conj_es, H.sz, evecs_es, optimize=True)
 
     exp_s = (exp_sx_gs, exp_sx_es, exp_sy_gs, exp_sy_es, exp_sz_gs, exp_sz_es)
 
@@ -899,13 +878,13 @@ if __name__ == '__main__':
                 )
 
             ddz_terms = (
-                    gammacoeff_theta[i]*(-Jzb+Jzc+Jzd+gammaetfz)  
+                    gammacoeff_theta[i]*(-Jzb+Jzc+Jzd+gammaetfz)
+                   
                 )
-
             
 
-            coeffgammaerfy = gammacoeff_phi[i]*gammaerfsy
-            coeffgammaerfz = gammacoeff_theta[i]*gammaerfsz
+            coeffgammaerfsy = gammacoeff_phi[i]*gammaerfsy
+            coeffgammaerfsz = gammacoeff_theta[i]*gammaerfsz
 
 
             with timer_ctx(f"P for loop"):
@@ -919,13 +898,13 @@ if __name__ == '__main__':
                         evecs_prev = False
                     else:
                         guess_ps = evecs_save
-                    ddx_terms = (gammacoeff_R[i,j] * gammaetfx+ gammacoeff_phi[i] * Jyb +
+                    ddx_terms = (gammacoeff_R[i,j] * gammaetfx - gammacoeff_phi[i] * Jyb +
                                  gammacoeff_theta[i]* (Jza))
-            
+#
                     
                     with timer_ctx(f"Davidson of size {H.size}"):
                         conv, e_ps_approx, evecs_save = lib.davidson1(
-                            H.ps_ham(ddx_terms,ddy_terms,ddz_terms,coeffgammaerfy,coeffgammaerfz,i,soc_data_i),
+                            H.ps_ham(ddx_terms,ddy_terms,ddz_terms,coeffgammaerfsy,coeffgammaerfsz,i,soc_data_i),
                             guess_ps,
                             lambda dx, e, x0: dx/(diag-e+1e-5),
                             nroots=args.k,
@@ -934,7 +913,7 @@ if __name__ == '__main__':
                             max_space=args.subspace,
                             max_memory=get_davidson_mem(0.75),
                             #tol=1e-12, #FIXME:DEBUG
-                            tol=1e-10,
+                            tol=1e-12,
                         )
     
                     print("Davidson:", e_ps_approx)
@@ -955,31 +934,49 @@ if __name__ == '__main__':
                     exp_RxGamma_z_gs[i,j] = R_Gamma_z_gs.real
                     exp_RxGamma_z_es[i,j] = R_Gamma_z_es.real
 
-                    if (R_Gamma_y_es.imag > 1e-10 or R_Gamma_y_gs.imag > 1e-10 or R_Gamma_z_es.imag > 1e-10 or R_Gamma_z_gs.imag > 1e-10):
-                        print("R_Gamma_y_es",R_Gamma_y_es)
-                        print("R_Gamma_y_gs",R_Gamma_y_gs)
-                        print("R_Gamma_z_es",R_Gamma_z_es)
-                        print("R_Gamma_z_gs",R_Gamma_z_gs)
-                        #exit()
+                    #if (R_Gamma_y_es.imag > 1e-10 or R_Gamma_y_gs.imag > 1e-10 or R_Gamma_z_es.imag > 1e-10 or R_Gamma_z_gs.imag > 1e-10):
+                    #    print("R_Gamma_y_es",R_Gamma_y_es)
+                    #    print("R_Gamma_y_gs",R_Gamma_y_gs)
+                    #    print("R_Gamma_z_es",R_Gamma_z_es)
+                    #    print("R_Gamma_z_gs",R_Gamma_z_gs)
+                    #    #exit()
 
                     exp_l, exp_s = exp_l_s(H,evecs_save,i,t1,t2)
                     lx_gs, lx_es, ly_gs, ly_es, lz_gs, lz_es = exp_l
                     sx_gs, sx_es, sy_gs, sy_es, sz_gs, sz_es = exp_s
 
+                    check_gamma_y_gs = R_Gamma_y_gs + sy_gs + ly_gs
+                    check_gamma_y_es = R_Gamma_y_es + sy_es + ly_es
+                    check_gamma_z_gs = R_Gamma_z_gs + sz_gs + lz_gs
+                    check_gamma_z_es = R_Gamma_z_es + sz_es + lz_es
+                    check_x_gs = sx_gs + lx_gs
+                    check_x_es = sx_es + lx_es
+                    print("check_gamma_y_gs",check_gamma_y_gs)
+                    print("check_gamma_y_es",check_gamma_y_es)
+                    print("check_gamma_z_gs",check_gamma_z_gs)
+                    print("check_gamma_z_es",check_gamma_z_es)
+                    print("check_x_gs",check_x_gs)
+                    print("check_x_es",check_x_es)
 
-                    if (sx_es.imag > 1e-10 or sx_gs.imag > 1e-10 or sy_es.imag > 1e-10 or sy_gs.imag > 1e-10 or sz_es.imag > 1e-10 or sz_gs.imag > 1e-10):
-                        print("sx_es",sx_es)
-                        print("sx_gs",sx_gs)
-                        print("sy_es",sy_es)
-                        print("sy_gs",sy_gs)
-                        print("sz_es",sz_es)
-                        print("sz_gs",sz_gs)
-                        print("lx_es",lx_es)
-                        print("lx_gs",lx_gs)
-                        print("ly_es",ly_es)
-                        print("ly_gs",ly_gs)
-                        print("lz_es",lz_es)
-                        print("lz_gs",lz_gs)
+                    def _s(x):
+                        return float(xp.asarray(x).real) if xp.size(x) == 1 else float(x)
+
+                    fmt = "  {:>12.7f}"
+                    print("gs")
+                    print("         gamma          l          s           sum")
+                    print("  x " + fmt.format(0.0)           + fmt.format(_s(lx_gs)) + fmt.format(_s(sx_gs)) + fmt.format(_s(check_x_gs)))
+                    print("  y " + fmt.format(_s(R_Gamma_y_gs)) + fmt.format(_s(ly_gs)) + fmt.format(_s(sy_gs)) + fmt.format(_s(check_gamma_y_gs)))
+                    print("  z " + fmt.format(_s(R_Gamma_z_gs)) + fmt.format(_s(lz_gs)) + fmt.format(_s(sz_gs)) + fmt.format(_s(check_gamma_z_gs)))
+                    print("es")
+                    print("         gamma          l          s           sum")
+                    print("  x " + fmt.format(0.0)           + fmt.format(_s(lx_es)) + fmt.format(_s(sx_es)) + fmt.format(_s(check_x_es)))
+                    print("  y " + fmt.format(_s(R_Gamma_y_es)) + fmt.format(_s(ly_es)) + fmt.format(_s(sy_es)) + fmt.format(_s(check_gamma_y_es)))
+                    print("  z " + fmt.format(_s(R_Gamma_z_es)) + fmt.format(_s(lz_es)) + fmt.format(_s(sz_es)) + fmt.format(_s(check_gamma_z_es)))
+                    
+                    print("gs:<sx>^2 + <sy>^2 + <sz>^2", sx_gs**2 + sy_gs**2 + sz_gs**2)
+                    print("es:<sx>^2 + <sy>^2 + <sz>^2", sx_es**2 + sy_es**2 + sz_es**2)
+                    print("gs:<lx>^2 + <ly>^2 + <lz>^2", lx_gs**2 + ly_gs**2 + lz_gs**2)
+                    print("es:<lx>^2 + <ly>^2 + <lz>^2", lx_es**2 + ly_es**2 + lz_es**2)
                         
                     exp_sx_gs[i,j] = sx_gs.real
                     exp_sx_es[i,j] = sx_es.real
@@ -1007,6 +1004,8 @@ if __name__ == '__main__':
                     print("ly_gs",ly_gs)
                     print("lz_es",lz_es)
                     print("lz_gs",lz_gs)
+
+                    exit()
 
                     
 
