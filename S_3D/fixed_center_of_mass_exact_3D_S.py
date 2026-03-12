@@ -1567,7 +1567,7 @@ def parse_args():
     parser.add_argument('--subspace', metavar='max_subspace', default=1000, type=int)
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
-    parser.add_argument('--soc', metavar="SOC type:None/lazy/roi/full", choices=[None,'lazy','full', 'roi'], type=str, default=None)
+    parser.add_argument('--soc', metavar="SOC type:None/lazy/roi/full", choices=['None','lazy','full', 'roi'], type=str, default=None)
     parser.add_argument('--alpha', metavar="SOC enhancement", type=float, default=1.)
     parser.add_argument('--save', metavar="filename")
     parser.add_argument('--davBOspec', action='store_true')

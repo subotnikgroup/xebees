@@ -119,7 +119,8 @@ class Hamiltonian:
         # N.B.: These all lack the factor of -1/(2 * mu)
         # We also are throwing away the returned jacobian of R/r
         #self.ddR2, _ = KE_Borisov(self.R, bare=True)
-        self.ddR2  = KE(args.NR, dR, bare=True, cyclic=False)
+        #self.ddR2  = KE(args.NR, dR, bare=True, cyclic=False)
+        self.ddR2  = KE_FFT(args.NR, self.P_R, self.R)
     
         self.ddx2 = KE(args.Nx, dx, bare=True, cyclic=False)
         self.ddx1 = KE(args.Nx, dx, bare=True, cyclic=False, order=1) 
@@ -222,17 +223,17 @@ def Tx(H,xdav):
         )
     return Hel_dav.reshape(xdav.shape)
 
-def ps_ham(H,ddx_terms,ddy_terms,ddz_terms):
+def ps_ham(H,ddx_terms,ddy_terms,ddz_terms,Ri):
         
     def Hx_ps(xdav):
         x = xdav.reshape((-1,)+H.boshape).astype(complex) 
         
         
         Hpsdav = (
-            H.Vgrid[i]*x + Tx(H,x) 
+            H.Vgrid[Ri]*x + Tx(H,x) 
             +xp.einsum('xayz,Bayz->Bxyz', ddx_terms, x, optimize=True) 
-            +xp.einsum('xybz,Bxbz->Bxyz', ddy_terms, x, optimize=True) 
-            +xp.einsum('xyzc,Bxyc->Bxyz', ddz_terms, x, optimize=True)
+            #+xp.einsum('xybz,Bxbz->Bxyz', ddy_terms, x, optimize=True) 
+            #+xp.einsum('xyzc,Bxyc->Bxyz', ddz_terms, x, optimize=True)
         )
         return Hpsdav.reshape(xdav.shape)
         
@@ -260,6 +261,7 @@ def apply_pr(H, xdav):
                     + xp.einsum('xbz, yb, Bxyz -> Bxbz', dydr, H.ddy1, x, optimize=True)
                     + xp.einsum('xyz, zc, Bxyz -> Bxyc', dzdr, H.ddz1, x, optimize=True)
                     + xp.einsum('xyc, zc, Bxyz -> Bxyc', dzdr, H.ddz1, x, optimize=True))
+
     return ddr1.reshape(xdav.shape)
 
 def Hbo_dav(H,i):
@@ -391,13 +393,13 @@ if __name__ == '__main__':
     psi0p = xp.zeros((Nelec), dtype=xp.complex128)
     psi0m = xp.zeros((Nelec), dtype=xp.complex128)
 
-    # gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
-    # gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
-    # gammacoeff_theta = +1j*(H.Ptheta/H.R-1/H.R)/H.mu12
-
-    gammacoeff_R = -1j*(Pval)/H.mu12 #-1/Rval)/H.mu12 
+    gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
     gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
-    gammacoeff_theta = +1j*(H.Ptheta/H.R)/H.mu12#-1/H.R)/H.mu12
+    gammacoeff_theta = +1j*(H.Ptheta/H.R-1/H.R)/H.mu12
+
+    #gammacoeff_R = -1j*(Pval)/H.mu12 #-1/Rval)/H.mu12 
+    #gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
+    #gammacoeff_theta = +1j*(H.Ptheta/H.R)/H.mu12#-1/H.R)/H.mu12
 
     if args.splits > 0:
         sequence = generalized_sequence(NR, args.splits, args.split_idx)
@@ -450,11 +452,14 @@ if __name__ == '__main__':
             theta2 = xp.exp(-r2e2)
             partition = theta1 + theta2
     
-            t1 = theta1/partition
-            t2 = theta2/partition
+            #t1 = theta1/partition
+            #t2 = theta2/partition
+
+            t1 = 1/(1+xp.exp(r1e2-r2e2))
+            t2 = 1/(1+xp.exp(r2e2-r1e2))
     
             gammaetf1x,gammaetf1y,gammaetf1z = Gamma_etf(H, t1)
-            gammaetf2x,gammaetf2y,gammaetf2z = Gamma_etf(H, t1)
+            gammaetf2x,gammaetf2y,gammaetf2z = Gamma_etf(H, t2)
             
             Jya, Jyb, Jyc, Jyd, Jza, Jzb, Jzc, Jzd = Gamma_erf_orb(H,i, t1, t2)
 
@@ -462,13 +467,22 @@ if __name__ == '__main__':
             gammaetfy = (H.M_2*gammaetf1y-H.M_1*gammaetf2y)/(H.M_1+H.M_2)
             gammaetfz = (H.M_2*gammaetf1z-H.M_1*gammaetf2z)/(H.M_1+H.M_2)
 
+            #ddy_terms = (                    
+            #        gammacoeff_phi[i] * (Jya- Jyc- Jyd+gammaetfy)
+            #    )
+            #
+            #ddz_terms = (
+            #        gammacoeff_theta[i]*(-Jzb+Jzc+Jzd+gammaetfz)                   
+            #    )
+
             ddy_terms = (                    
-                    gammacoeff_phi[i] * (Jya- Jyc- Jyd+gammaetfy)
+                    gammacoeff_phi[i] * (gammaetfy)
                 )
             
             ddz_terms = (
-                    gammacoeff_theta[i]*(-Jzb+Jzc+Jzd+gammaetfz)                   
+                    gammacoeff_theta[i]*(gammaetfz)                   
                 )
+
 
             
             
@@ -476,24 +490,29 @@ if __name__ == '__main__':
                 for j in ps_sequence:
                 
                     print("Atom Ri",i,"Atom Pj",j,flush=True)
-                    gammacoeff = (gammacoeff_R[i,j], gammacoeff_phi[i], gammacoeff_theta[i])
+                    print("P",H.P_R[j])
+                    #gammacoeff = (gammacoeff_R[i,j], gammacoeff_phi[i], gammacoeff_theta[i])
 
                     
-                    ddx_terms = (gammacoeff_R[i,j] * gammaetfx - gammacoeff_phi[i] * Jyb +
-                                 gammacoeff_theta[i]* (Jza))
+                    #ddx_terms = (gammacoeff_R[i,j] * gammaetfx - gammacoeff_phi[i] * Jyb +
+                    #             gammacoeff_theta[i]* (Jza))
 
-                    if evecs_prev == True or j==NR//2:
+                    ddx_terms = (gammacoeff_R[i,j] * gammaetfx)
+                    print("ddx_terms",gammacoeff_R[i,j])
+
+                    if evecs_prev == True and j==NR//2:
                         guess_ps = evecs
                         evecs_prev = False
                     else:
                         guess_ps = evecs_save
                     
-                    Hx_ps = ps_ham(H,ddx_terms,ddy_terms,ddz_terms)
+                    Hx_ps = ps_ham(H,ddx_terms,ddy_terms,ddz_terms,i)
                     with timer_ctx(f"Davidson of size {H.size}"):
                         conv, e_ps_approx, evecs_save = lib.davidson1(
-                            Hx_ps,
+                            ps_ham(H,ddx_terms,ddy_terms,ddz_terms,i),
                             guess_ps,
-                            lambda dx, e, x0: dx/(diag-e-(1e-5-1e-5j)),
+                            #lambda dx, e, x0: dx/(diag-e-(1e-5-1e-5j)),
+                            lambda dx, e, x0: dx/(diag-e+(1e-5)),
                             nroots=args.k,
                             max_cycle=args.iterations,
                             verbose=args.verbosity,
@@ -507,20 +526,22 @@ if __name__ == '__main__':
                     print("Davidson:", e_ps_approx)
                     print(conv)#
 
-                    if j== NR//2:
-                        print(" check P = ", H.P_R[j],"psi0 imag part = ", xp.sum(xp.abs(evecs_save[0].imag)))
-                    if j==0:
-                        print("check save m P =", H.R[i],H.P_R[j])
-                        psi0m = evecs_save[0]
-                    elif j== NR-1:
-                        print("check save p P =", H.R[i], H.P_R[j])
-                        psi0p = evecs_save[0]
+                    print("evecs_save",evecs_save[0:10])
+
+                    #if j== NR//2:
+                    #    print(" check P = ", H.P_R[j],"psi0 imag part = ", xp.sum(xp.abs(evecs_save[0].imag)))
+                    #if j==0:
+                    #    print("check save m P =", H.R[i],H.P_R[j])
+                    #    psi0m = evecs_save[0]
+                    #elif j== NR-1:
+                    #    print("check save p P =", H.R[i], H.P_R[j])
+                    #    psi0p = evecs_save[0]
 
                     pe_r = xp.sum(evecs_save[0].conj()*apply_pr(H,evecs_save[0])) # < 0 | p_e | 0 > for PS
                     psi0 = evecs_save[0].reshape(H.boshape)
-                    pe_x = xp.einsum('xyz, xa, ayz ->', psi0.conj(), (0-1j)*H.ddx1, psi0)
-                    pe_y = xp.einsum('xyz, yb, xbz ->', psi0.conj(), (0-1j)*H.ddy1, psi0)
-                    pe_z = xp.einsum('xyz, zc, xyc ->', psi0.conj(), (0-1j)*H.ddz1, psi0)
+                    pe_x = xp.einsum('xyz, xa, ayz ->', psi0.conj(), (-1j)*H.ddx1, psi0, optimize=True)
+                    pe_y = xp.einsum('xyz, yb, xbz ->', psi0.conj(), (-1j)*H.ddy1, psi0, optimize=True)
+                    pe_z = xp.einsum('xyz, zc, xyc ->', psi0.conj(), (-1j)*H.ddz1, psi0, optimize=True)
 
                     print("<pe> on g.s.", pe_x.real, pe_y.real, pe_z.real, pe_r.real)
                     print("<x>,", xp.einsum('xyz, x, xyz-> ', psi0.conj(), H.x, psi0 ))
@@ -528,9 +549,9 @@ if __name__ == '__main__':
 
                     EPS[i, j] = e_ps_approx[0]
                     pPS[:,i,j] = xp.asarray([pe_x,pe_y,pe_z,pe_r])
-            test_conj = xp.sum(xp.abs(psi0m - psi0p.conj()))
-            test_conj2 = xp.sum(xp.abs(psi0m + psi0p.conj()))
-            print("test psi symmetry:", test_conj, test_conj2)
+            #test_conj = xp.sum(xp.abs(psi0m - psi0p.conj()))
+            #test_conj2 = xp.sum(xp.abs(psi0m + psi0p.conj()))
+            #print("test psi symmetry:", test_conj, test_conj2)
             
                     
 

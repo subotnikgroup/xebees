@@ -392,6 +392,26 @@ if __name__ == '__main__':
     #    kwargs = {}
     #xp.einsum(..., **kwargs)  
 
+    def generalized_sequence(NR, num_splits, split_idx):
+        nodes = xp.linspace(0, NR, num_splits + 1, dtype=xp.int32).tolist()
+        parts = []
+        midpoint_idx = num_splits // 2
+        for i in range(num_splits):
+            start = nodes[i]
+            end = nodes[i + 1]
+            if i < midpoint_idx:
+                if i == 0:
+                    chunk = np.arange(end, start - 1, -1)
+                else:
+                    chunk = np.arange(end, start, -1)
+            else:
+                if i == num_splits - 1:
+                    chunk = np.arange(start + 1, end)
+                else:
+                    chunk = np.arange(start + 1, end + 1)
+            parts.append(chunk)
+        return parts[split_idx - 1]
+
     H = Hamiltonian(args)
 
     start_script = perf_counter()
@@ -477,13 +497,20 @@ if __name__ == '__main__':
                 
             Gammatot =  (gammaetfx, gammaetfy, gammaetfz, gammaerfya, gammaerfyb, gammaerfyc, gammaerfza, gammaerfzb)
 
+            #term2 = (
+            #        gammacoeff_phi[i] * gammaetfy 
+            #         + gammacoeff_theta[i] * gammaerfzb
+            #    )
+            #term3 = (
+            #         gammacoeff_phi[i] * (gammaerfyb + gammaerfyc) +
+            #        gammacoeff_theta[i] * (gammaetfz + gammaerfza)
+            #    )
+
             term2 = (
                     gammacoeff_phi[i] * gammaetfy 
-                     + gammacoeff_theta[i] * gammaerfzb
                 )
             term3 = (
-                     gammacoeff_phi[i] * (gammaerfyb + gammaerfyc) +
-                    gammacoeff_theta[i] * (gammaetfz + gammaerfza)
+                    gammacoeff_theta[i] * gammaetfz
                 )
             
             with timer_ctx(f"P for loop"):
@@ -492,9 +519,12 @@ if __name__ == '__main__':
                     print("Atom Ri",i,"Atom Pj",j,flush=True)
                     gammacoeff = (gammacoeff_R[i,j], gammacoeff_phi[i], gammacoeff_theta[i])
 
+                    #term1 = (
+                    #    gammacoeff_R[i,j] * gammaetfx 
+                    #     + gammacoeff_phi[i] * gammaerfya
+                    #)
                     term1 = (
                         gammacoeff_R[i,j] * gammaetfx 
-                         + gammacoeff_phi[i] * gammaerfya
                     )
                     if evecs_prev == True and j==NR//2:
                         guess_ps = evecs
@@ -508,6 +538,7 @@ if __name__ == '__main__':
                             Hx_ps,
                             guess_ps,
                             lambda dx, e, x0: dx/(diag-e-(1e-5-1e-5j)),
+                            #lambda dx, e, x0: dx/(diag-e+1e-7),
                             nroots=args.k,
                             max_cycle=args.iterations,
                             verbose=args.verbosity,
@@ -516,14 +547,30 @@ if __name__ == '__main__':
                             #tol=1e-12, #FIXME:DEBUG
                             tol=1e-12,
                         )
-    
+
+                    print("evecs_save",evecs_save[xp.where((xp.abs(xp.imag(evecs_save))>1e-6))])
                     print("Davidson:", e_ps_approx)
 
                     pe_r = xp.sum(evecs_save[0].conj()*apply_pr(H,evecs_save[0])) # < 0 | p_e | 0 > for PS
                     psi0 = evecs_save[0].reshape(H.boshape)
                     pe_x = xp.einsum('xyz, xa, ayz ->', psi0.conj(), (0-1j)*H.ddx1, psi0)
-                    pe_y = xp.einsum('xyz, yb, ayz ->', psi0.conj(), (0-1j)*H.ddy1, psi0)
+                    pe_y = xp.einsum('xyz, yb, xbz ->', psi0.conj(), (0-1j)*H.ddy1, psi0)
                     pe_z = xp.einsum('xyz, zc, xyc ->', psi0.conj(), (0-1j)*H.ddz1, psi0)
+
+                    Gamma_x = xp.einsum('xyz,xayz,ayz->',psi0.conj(), 1j*gammaetfx, psi0)
+                    Gamma_y = xp.einsum('xyz,xybz,xbz->',psi0.conj(), 1j*gammaetfy, psi0)
+                    Gamma_z = xp.einsum('xyz,xyzc,xyc->',psi0.conj(), 1j*gammaetfz, psi0)
+
+                    print("pe_x",pe_x)
+                    print("pe_y",pe_y)
+                    print("pe_z",pe_z)
+                    print("Gamma_x",Gamma_x)
+                    print("Gamma_y",Gamma_y)
+                    print("Gamma_z",Gamma_z)
+
+                    print("Gamma_x_check",Gamma_x+pe_x)
+                    print("Gamma_y_check",Gamma_y+pe_y)
+                    print("Gamma_z_check",Gamma_z+pe_z)
 
                     print("<pe> on g.s.", pe_x.real, pe_y.real, pe_z.real, pe_r.real)
                     print("<x>,", xp.einsum('xyz, x, xyz-> ', psi0.conj(), H.x, psi0 ))
@@ -531,7 +578,9 @@ if __name__ == '__main__':
 
                     EPS[i, j] = e_ps_approx[0]
                     pPS[:,i,j] = xp.asarray([pe_x,pe_y,pe_z,pe_r])
-                    
+
+                    print("check_orthogonal",evecs_save[0].conj()@evecs_save[1])
+                    exit()
 
                     
     #EPS = xp.loadtxt("rij_matrix.txt")

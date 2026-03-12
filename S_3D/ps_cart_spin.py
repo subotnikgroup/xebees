@@ -586,6 +586,32 @@ if __name__ == '__main__':
     #evecs_bo = xp.zeros([NR,Nelec],dtype=complex)
     #print("evecs",evecs_bo.shape)
 
+    def generalized_sequence(NR, num_splits,split_idx):
+        nodes = xp.linspace(0, NR, num_splits + 1, dtype=xp.int32).tolist()
+    
+        parts = []
+        midpoint_idx = num_splits // 2
+    
+        for i in range(num_splits):
+          start = nodes[i]
+          end = nodes[i+1]
+          
+          if i < midpoint_idx:
+            if i == 0:
+                chunk = np.arange(end, start - 1, -1)
+            else:
+                chunk = np.arange(end, start, -1)
+
+          else:
+            if i == num_splits - 1:
+                chunk = np.arange(start+1, end)
+            else:
+              chunk = (np.arange(start + 1, end + 1))
+
+          parts.append(chunk)
+
+        return parts[split_idx-1]
+
     ## Start the loops from the middle of the bond, for optimal guesses
     iR = NR//2
     sequence = list(chain(
