@@ -36,28 +36,29 @@ def get_jls_expectations(evecs, H):
     dr = H.r[1]-H.r[0]
     ## l^2 = kappa(kappa+1)
     ll1 = kappa*(kappa+1)
-    el2 = xp.einsum('BRrjsO, js, BRrjsO -> B', evecs, ll1, evecs, optimize=True)*dR*dr
+    el2 = xp.einsum('BRrjsO, js, BRrjsO -> B', evecs, ll1, evecs, optimize=True)
     
     ## j2 = (kappa^2 - 1/4)
     jj1 = (kappa**2-0.25)
-    ej2 = xp.einsum('BRrjsO, js, BRrjsO -> B', evecs, jj1, evecs, optimize=True)*dR*dr
+    ej2 = xp.einsum('BRrjsO, js, BRrjsO -> B', evecs, jj1, evecs, optimize=True)
 
     ## l_z built in recursion relation
     vlz = H.apply_Lz(evecs)
-    elz = xp.einsum('BRrjsO, BRrjso -> B', evecs, vlz, optimize=True)*dR*dr
+    elz = xp.einsum('BRrjsO, BRrjso -> B', evecs, vlz, optimize=True)
 
     ## s_z built in recusion relation
     vsz = H.apply_Sz(evecs)
-    esz = xp.einsum('BRrjsO, BRrjso -> B', evecs, vsz, optimize=True)*dR*dr
+    esz = xp.einsum('BRrjsO, BRrjso -> B', evecs, vsz, optimize=True)
 
     ## j_z = Om
-    ejz = xp.einsum('BRrjsO, O, BRrjsO -> B', evecs, H.Om, evecs)*dR*dr
+    ejz = xp.einsum('BRrjsO, O, BRrjsO -> B', evecs, H.Om, evecs)
 
     return el2, ej2, elz, ejz, esz
 
 def get_p01_radial(evecs,H):
     dR = H.R[1]-H.R[0]
-    dr = H.r[1]-H.r[0]
+    dr = H.r_lab[1]-H.r_lab[0]
+    # dr = H.r[1]-H.r[0]
     ddr1 = KE_ColbertMiller_zero_inf(H.r.size, dr, order=1, bare=True)
     wfc0 = evecs[0].reshape(H.shape)
     wfc1 = evecs[1].reshape(H.shape)

@@ -431,7 +431,6 @@ def inverse_weyl_transform_old(E, NR, R, P):
                                     * E[(q1 + q2) // 2, j] / NR)
                 else:
                     idx = (q1 + q2 + 1) // 2
-                    idx2 = (q1 + q2 -1)//2
                     HPS[q1, q2] += (xp.exp(-1j * (R[q1] - R[q2]) * P[j])
                                     * EPS_half[idx, j] / NR)
 
