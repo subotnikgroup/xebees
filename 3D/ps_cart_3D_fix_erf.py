@@ -248,6 +248,7 @@ def apply_pr(H, xdav):
 
     r = xp.sqrt(
             H.x[:,None,None]**2 + H.y[None,:,None]**2 + H.z[None,None,:]**2) #shape xyz
+    r[r<1e-10] = 1e-10 
     
     dxdr = H.x[:,None,None]/r ## sin(gamma)cos(psi)
     dydr = H.y[None,:,None]/r ## sin(gamma)sin(psi)
@@ -369,6 +370,7 @@ if __name__ == '__main__':
                     chunk = np.arange(start + 1, end + 1)
             parts.append(chunk)
         return parts[split_idx - 1]
+    folder = os.getcwd()
 
     H = Hamiltonian(args)
 
@@ -386,10 +388,17 @@ if __name__ == '__main__':
 
     EPS = xp.zeros((H.shape[0], H.shape[0]))
     pPS = xp.zeros((4, H.shape[0], H.shape[0]), dtype=xp.complex128) # <pe>(R,P)
+    psi0p = xp.zeros((Nelec), dtype=xp.complex128)
+    psi0m = xp.zeros((Nelec), dtype=xp.complex128)
 
-    gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
+    # gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
+    # gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
+    # gammacoeff_theta = +1j*(H.Ptheta/H.R-1/H.R)/H.mu12
+
+    gammacoeff_R = -1j*(Pval)/H.mu12 #-1/Rval)/H.mu12 
     gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
-    gammacoeff_theta = +1j*(H.Ptheta/H.R-1/H.R)/H.mu12
+    gammacoeff_theta = +1j*(H.Ptheta/H.R)/H.mu12#-1/H.R)/H.mu12
+
     if args.splits > 0:
         sequence = generalized_sequence(NR, args.splits, args.split_idx)
         print("sequence",sequence)
@@ -473,7 +482,7 @@ if __name__ == '__main__':
                     ddx_terms = (gammacoeff_R[i,j] * gammaetfx - gammacoeff_phi[i] * Jyb +
                                  gammacoeff_theta[i]* (Jza))
 
-                    if evecs_prev == True and j==NR//2:
+                    if evecs_prev == True or j==NR//2:
                         guess_ps = evecs
                         evecs_prev = False
                     else:
@@ -494,8 +503,18 @@ if __name__ == '__main__':
                             tol=1e-12,
                         )
 
-                    print("evecs_save",evecs_save[xp.where((xp.abs(xp.imag(evecs_save))>1e-6))])
+                    # print("evecs_save",evecs_save[xp.where((xp.abs(xp.imag(evecs_save))>1e-6))])
                     print("Davidson:", e_ps_approx)
+                    print(conv)#
+
+                    if j== NR//2:
+                        print(" check P = ", H.P_R[j],"psi0 imag part = ", xp.sum(xp.abs(evecs_save[0].imag)))
+                    if j==0:
+                        print("check save m P =", H.R[i],H.P_R[j])
+                        psi0m = evecs_save[0]
+                    elif j== NR-1:
+                        print("check save p P =", H.R[i], H.P_R[j])
+                        psi0p = evecs_save[0]
 
                     pe_r = xp.sum(evecs_save[0].conj()*apply_pr(H,evecs_save[0])) # < 0 | p_e | 0 > for PS
                     psi0 = evecs_save[0].reshape(H.boshape)
@@ -505,22 +524,26 @@ if __name__ == '__main__':
 
                     print("<pe> on g.s.", pe_x.real, pe_y.real, pe_z.real, pe_r.real)
                     print("<x>,", xp.einsum('xyz, x, xyz-> ', psi0.conj(), H.x, psi0 ))
-                    print(conv)#
+
 
                     EPS[i, j] = e_ps_approx[0]
                     pPS[:,i,j] = xp.asarray([pe_x,pe_y,pe_z,pe_r])
+            test_conj = xp.sum(xp.abs(psi0m - psi0p.conj()))
+            test_conj2 = xp.sum(xp.abs(psi0m + psi0p.conj()))
+            print("test psi symmetry:", test_conj, test_conj2)
+            
                     
 
     if args.splits > 0:
 
-        np.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_Ad_n_split_{args.split_idx}.npy'), Ad_n)
-        np.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_EPS_split_{args.split_idx}.npy'), EPS)
+        numpy.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_Ad_n_split_{args.split_idx}.npy'), Ad_n)
+        numpy.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_EPS_split_{args.split_idx}.npy'), EPS)
 
 
     else:
         
-        np.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_Ad_n.npy'), Ad_n)
-        np.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_EPS_split_{args.split_idx}.npy'), EPS)
+        numpy.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_Ad_n.npy'), Ad_n)
+        numpy.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_EPS_split_{args.split_idx}.npy'), EPS)
         
         Hbo_new = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_n)
         Ad_vn_new, Unv_bo = xp.linalg.eigh(Hbo_new)
@@ -554,10 +577,10 @@ if __name__ == '__main__':
         with xp.printoptions(precision=3):
             print(HPS[:4,:4])
 
-        Hpe_x = inverse_weyl_transform_old(pPS[0], H.shape[0], H.R, H.P_R)
-        Hpe_y = inverse_weyl_transform_old(pPS[1], H.shape[0], H.R, H.P_R)
-        Hpe_z = inverse_weyl_transform_old(pPS[2], H.shape[0], H.R, H.P_R)
-        Hpe_r = inverse_weyl_transform_old(pPS[3], H.shape[0], H.R, H.P_R)
+        Hpe_x = inverse_weyl_transform(pPS[0], H.shape[0], H.R, H.P_R)
+        Hpe_y = inverse_weyl_transform(pPS[1], H.shape[0], H.R, H.P_R)
+        Hpe_z = inverse_weyl_transform(pPS[2], H.shape[0], H.R, H.P_R)
+        Hpe_r = inverse_weyl_transform(pPS[3], H.shape[0], H.R, H.P_R)
         print("check Hpe_x Weyl hermitian", xp.sum(xp.abs(Hpe_x.conj().T-Hpe_x)))
         with xp.printoptions(precision=3):
             print(Hpe_x[:4,:4])
@@ -568,6 +591,13 @@ if __name__ == '__main__':
         pe_chiz = xp.sum(UPSv[:,1].conj()*Hpe_z@UPSv[:,0])
         pe_chir = xp.sum(UPSv[:,1].conj()*Hpe_r@UPSv[:,0])
         print("<chi_1|pe| chi0>:", pe_chix, pe_chiy, pe_chiz, pe_chir)
+
+        pe_chix = UPSv[:,0].conj().T@Hpe_x@UPSv[:,0]
+        pe_chiy = UPSv[:,0].conj().T@Hpe_y@UPSv[:,0]
+        pe_chiz = UPSv[:,0].conj().T@Hpe_z@UPSv[:,0]
+        pe_chir = UPSv[:,0].conj().T@Hpe_r@UPSv[:,0]
+        print("<chi_0|pe| chi0>:", pe_chix, pe_chiy, pe_chiz, pe_chir)
+
 
         R_ps = xp.sum(UPSv[:,0].conj()*H.R*UPSv[:,0]).real
         print("PS bond length: <chi_0| R| chi_0 >:", R_ps)
