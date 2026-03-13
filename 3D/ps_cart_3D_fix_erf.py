@@ -40,7 +40,7 @@ else:  # mock this out for use in Jupyter Notebooks etc
 class Hamiltonian:
     __slots__ = ( # any new members must be added here
         'm_e', 'M_1', 'M_2', 'mu', 'g_1', 'g_2', 'J','mur',
-        'R', 'P_R', 'R_grid', 'RP_grid',
+        'R', 'P_R', 'R_grid', 'RP_grid','r',
         'x', 'y', 'z','x_grid','y_grid','z_grid', 'xb_grid','yb_grid','zb_grid',
         'ddR2', 'ddx2','ddx1','ddy2','ddy1','ddz2','ddz1', 'ddr1'
         'axes','Vgrid', '_preconditioner_data','Pg','Pphi','Ptheta',
@@ -102,6 +102,8 @@ class Hamiltonian:
         self.x = xp.linspace(x_min, x_max, args.Nx)
         self.y = xp.linspace(y_min, y_max, args.Ny)
         self.z = xp.linspace(z_min, z_max, args.Nz)
+        self.r = xp.sqrt(self.x[:,None,None]**2+self.y[None,:,None]**2 + self.z[None,None,:]**2)
+
 
         self.axes = (self.R, self.x, self.y, self.z)
 
@@ -232,8 +234,8 @@ def ps_ham(H,ddx_terms,ddy_terms,ddz_terms,Ri):
         Hpsdav = (
             H.Vgrid[Ri]*x + Tx(H,x) 
             +xp.einsum('xayz,Bayz->Bxyz', ddx_terms, x, optimize=True) 
-            #+xp.einsum('xybz,Bxbz->Bxyz', ddy_terms, x, optimize=True) 
-            #+xp.einsum('xyzc,Bxyc->Bxyz', ddz_terms, x, optimize=True)
+            +xp.einsum('xybz,Bxbz->Bxyz', ddy_terms, x, optimize=True) 
+            +xp.einsum('xyzc,Bxyc->Bxyz', ddz_terms, x, optimize=True)
         )
         return Hpsdav.reshape(xdav.shape)
         
@@ -316,6 +318,7 @@ def parse_args():
     parser.add_argument('--backend', default='cupy')
     parser.add_argument('-splits', default=0, type=int)
     parser.add_argument('-split_idx', default=1, type=int)
+    parser.add_argument('--no_ERF', action='store_true')
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -390,16 +393,17 @@ if __name__ == '__main__':
 
     EPS = xp.zeros((H.shape[0], H.shape[0]))
     pPS = xp.zeros((4, H.shape[0], H.shape[0]), dtype=xp.complex128) # <pe>(R,P)
-    psi0p = xp.zeros((Nelec), dtype=xp.complex128)
-    psi0m = xp.zeros((Nelec), dtype=xp.complex128)
+    rPS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
+    GammaPS = xp.zeros((3, H.shape[0], H.shape[0]), dtype=xp.complex128)
+    rBO = xp.zeros((H.shape[0]), dtype=xp.complex128)
 
-    gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
+    # gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
+    # gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
+    # gammacoeff_theta = +1j*(H.Ptheta/H.R-1/H.R)/H.mu12
+
+    gammacoeff_R = -1j*(Pval)/H.mu12 #-1/Rval)/H.mu12 
     gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
-    gammacoeff_theta = +1j*(H.Ptheta/H.R-1/H.R)/H.mu12
-
-    #gammacoeff_R = -1j*(Pval)/H.mu12 #-1/Rval)/H.mu12 
-    #gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
-    #gammacoeff_theta = +1j*(H.Ptheta/H.R)/H.mu12#-1/H.R)/H.mu12
+    gammacoeff_theta = +1j*(H.Ptheta/H.R)/H.mu12#-1/H.R)/H.mu12
 
     if args.splits > 0:
         sequence = generalized_sequence(NR, args.splits, args.split_idx)
@@ -446,6 +450,8 @@ if __name__ == '__main__':
             print(conv)
             Ad_n[i] = e_approx[0]
             ival[i,0] = e_approx[0]
+            psi0_bo = evecs[0].reshape(H.boshape)
+            rBO[i] = xp.einsum('xyz,xyz,xyz->', psi0_bo.conj(), H.r, psi0_bo)
     
             r1e2, r2e2 = H.V(H.R[i], H.x_grid, H.y_grid, H.z_grid, spitvals=True)
             theta1 = xp.exp(-r1e2)
@@ -467,38 +473,34 @@ if __name__ == '__main__':
             gammaetfy = (H.M_2*gammaetf1y-H.M_1*gammaetf2y)/(H.M_1+H.M_2)
             gammaetfz = (H.M_2*gammaetf1z-H.M_1*gammaetf2z)/(H.M_1+H.M_2)
 
-            #ddy_terms = (                    
-            #        gammacoeff_phi[i] * (Jya- Jyc- Jyd+gammaetfy)
-            #    )
-            #
-            #ddz_terms = (
-            #        gammacoeff_theta[i]*(-Jzb+Jzc+Jzd+gammaetfz)                   
-            #    )
 
             ddy_terms = (                    
-                    gammacoeff_phi[i] * (gammaetfy)
-                )
+                   gammacoeff_phi[i] * (Jya- Jyc- Jyd+gammaetfy)
+               )
             
             ddz_terms = (
-                    gammacoeff_theta[i]*(gammaetfz)                   
-                )
+                   gammacoeff_theta[i]*(-Jzb+Jzc+Jzd+gammaetfz)                   
+               )
+            if args.no_ERF:
+                ddy_terms = (                    
+                        gammacoeff_phi[i] * (gammaetfy)
+                    )
+                
+                ddz_terms = (
+                        gammacoeff_theta[i]*(gammaetfz)                   
+                    )
 
-
-            
             
             with timer_ctx(f"P for loop"):
                 for j in ps_sequence:
                 
                     print("Atom Ri",i,"Atom Pj",j,flush=True)
-                    print("P",H.P_R[j])
-                    #gammacoeff = (gammacoeff_R[i,j], gammacoeff_phi[i], gammacoeff_theta[i])
-
                     
-                    #ddx_terms = (gammacoeff_R[i,j] * gammaetfx - gammacoeff_phi[i] * Jyb +
-                    #             gammacoeff_theta[i]* (Jza))
+                    ddx_terms = (gammacoeff_R[i,j] * gammaetfx - gammacoeff_phi[i] * Jyb +
+                                gammacoeff_theta[i]* (Jza))
+                    if args.no_ERF:
+                        ddx_terms = (gammacoeff_R[i,j] * gammaetfx)
 
-                    ddx_terms = (gammacoeff_R[i,j] * gammaetfx)
-                    print("ddx_terms",gammacoeff_R[i,j])
 
                     if evecs_prev == True and j==NR//2:
                         guess_ps = evecs
@@ -522,36 +524,29 @@ if __name__ == '__main__':
                             tol=1e-12,
                         )
 
-                    # print("evecs_save",evecs_save[xp.where((xp.abs(xp.imag(evecs_save))>1e-6))])
                     print("Davidson:", e_ps_approx)
                     print(conv)#
+                    EPS[i, j] = e_ps_approx[0]
 
-                    print("evecs_save",evecs_save[0:10])
-
-                    #if j== NR//2:
-                    #    print(" check P = ", H.P_R[j],"psi0 imag part = ", xp.sum(xp.abs(evecs_save[0].imag)))
-                    #if j==0:
-                    #    print("check save m P =", H.R[i],H.P_R[j])
-                    #    psi0m = evecs_save[0]
-                    #elif j== NR-1:
-                    #    print("check save p P =", H.R[i], H.P_R[j])
-                    #    psi0p = evecs_save[0]
-
+                    ### electronic observables for PS
                     pe_r = xp.sum(evecs_save[0].conj()*apply_pr(H,evecs_save[0])) # < 0 | p_e | 0 > for PS
                     psi0 = evecs_save[0].reshape(H.boshape)
                     pe_x = xp.einsum('xyz, xa, ayz ->', psi0.conj(), (-1j)*H.ddx1, psi0, optimize=True)
                     pe_y = xp.einsum('xyz, yb, xbz ->', psi0.conj(), (-1j)*H.ddy1, psi0, optimize=True)
                     pe_z = xp.einsum('xyz, zc, xyc ->', psi0.conj(), (-1j)*H.ddz1, psi0, optimize=True)
-
                     print("<pe> on g.s.", pe_x.real, pe_y.real, pe_z.real, pe_r.real)
-                    print("<x>,", xp.einsum('xyz, x, xyz-> ', psi0.conj(), H.x, psi0 ))
-
-
-                    EPS[i, j] = e_ps_approx[0]
                     pPS[:,i,j] = xp.asarray([pe_x,pe_y,pe_z,pe_r])
-            #test_conj = xp.sum(xp.abs(psi0m - psi0p.conj()))
-            #test_conj2 = xp.sum(xp.abs(psi0m + psi0p.conj()))
-            #print("test psi symmetry:", test_conj, test_conj2)
+                    
+                    Gamma_x = xp.einsum('xyz,xayz,ayz->',psi0.conj(), 1j*gammaetfx, psi0)
+                    Gamma_y = xp.einsum('xyz,xybz,xbz->',psi0.conj(), 1j*gammaetfy, psi0)
+                    Gamma_z = xp.einsum('xyz,xyzc,xyc->',psi0.conj(), 1j*gammaetfz, psi0)
+                    print("<Gamma> on gs:", Gamma_x.real, Gamma_y.real, Gamma_z.real)
+                    GammaPS[:,i,j] = xp.asarray([Gamma_x, Gamma_y, Gamma_z])
+
+                    
+                    rPS[i,j] = xp.einsum('xyz,xyz,xyz->', psi0.conj(), H.r, psi0, optimize=True)
+                    print("<r> on gs:", rPS[i,j].real)
+                    print() # add a new line between each RP point
             
                     
 
@@ -566,6 +561,7 @@ if __name__ == '__main__':
         numpy.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_Ad_n.npy'), Ad_n)
         numpy.save(os.path.join(folder, f'matrix_{args.potential}_Pth_{args.Ptheta}_Pph_{args.Pphi}_m_{args.M_1}_m_{args.M_2}_EPS_split_{args.split_idx}.npy'), EPS)
         
+        # BO energies and observables
         Hbo_new = +1/(2*H.mu12)*(-H.ddR2 + xp.diag(H.Pphi**2/H.R**2)+ xp.diag(H.Ptheta**2/H.R**2)+xp.diag(1/(2*H.R)**2)) +xp.diag(Ad_n)
         Ad_vn_new, Unv_bo = xp.linalg.eigh(Hbo_new)
         e_bo_new = xp.sort(Ad_vn_new.flatten())
@@ -574,7 +570,18 @@ if __name__ == '__main__':
         print("BO new vib gap",bo_new,flush=True)
 
         R_bo = xp.sum(Unv_bo[:,0].conj()*H.R*Unv_bo[:,0]).real
-        print("BO bond length: <chi_0| R| chi_0 >:", R_bo)
+        print("R00 BO: <chi_0| R| chi_0 >:", R_bo)
+
+        rBO_RP = xp.zeros(rPS.shape, dtype=xp.complex128)
+        rBO_RP = rBO[:,None]
+        HrBO = inverse_weyl_transform(rBO_RP, H.shape[0], H.R, H.P_R)
+        rBO_chi00 = xp.sum(Unv_bo[:,0].conj()*(HrBO@Unv_bo[:,0]))
+        rBO_chi01 = xp.sum(Unv_bo[:,1].conj()*(HrBO@Unv_bo[:,0]))
+        print("r00 BO: <chi0|r|chi0>:", rBO_chi00, rBO_chi01)
+
+        HP_R = inverse_weyl_transform(Pval, H.shape[0], H.R, H.P_R)
+        PBO_chi = xp.sum(Unv_bo[:,1].conj()*(HP_R@Unv_bo[:,0]))
+        print("P01 BO <chi1|P|chi0>:", PBO_chi)
 
         EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
         Helmat = xp.repeat(ival,H.shape[0],axis=1)
@@ -585,6 +592,7 @@ if __name__ == '__main__':
         print("e_bo_new Weyl",EPSv_bo[0:10])
         print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
 
+        # PS energies and observables
         EPS += 1/(2*H.mu12)*(Pval**2+H.Pphi**2/Rval**2+H.Ptheta**2/Rval**2+1/(2*Rval)**2)
         HPS = inverse_weyl_transform_old(EPS, H.shape[0], H.R, H.P_R)
         EPSv = batch_eigvalsh(HPS)
@@ -592,38 +600,45 @@ if __name__ == '__main__':
         print("e_bo_new Weyl",EPSv[0:10])
         print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
 
-        print("Real pPS check", [xp.sum(xp.abs(pPS[i].imag)) for i in range(4)])
-
-        print("Weyl check HPS Hermitian", xp.sum(xp.abs(HPS.conj().T - HPS)))
-        with xp.printoptions(precision=3):
-            print(HPS[:4,:4])
 
         Hpe_x = inverse_weyl_transform(pPS[0], H.shape[0], H.R, H.P_R)
         Hpe_y = inverse_weyl_transform(pPS[1], H.shape[0], H.R, H.P_R)
         Hpe_z = inverse_weyl_transform(pPS[2], H.shape[0], H.R, H.P_R)
         Hpe_r = inverse_weyl_transform(pPS[3], H.shape[0], H.R, H.P_R)
-        print("check Hpe_x Weyl hermitian", xp.sum(xp.abs(Hpe_x.conj().T-Hpe_x)))
-        with xp.printoptions(precision=3):
-            print(Hpe_x[:4,:4])
 
-        dR = H.R[1]-H.R[0]
-        pe_chix = xp.sum(UPSv[:,1].conj()*Hpe_x@UPSv[:,0])
-        pe_chiy = xp.sum(UPSv[:,1].conj()*Hpe_y@UPSv[:,0])
-        pe_chiz = xp.sum(UPSv[:,1].conj()*Hpe_z@UPSv[:,0])
-        pe_chir = xp.sum(UPSv[:,1].conj()*Hpe_r@UPSv[:,0])
-        print("<chi_1|pe| chi0>:", pe_chix, pe_chiy, pe_chiz, pe_chir)
+        pe_chix = xp.sum(UPSv[:,1].conj()*(Hpe_x@UPSv[:,0]))
+        pe_chiy = xp.sum(UPSv[:,1].conj()*(Hpe_y@UPSv[:,0]))
+        pe_chiz = xp.sum(UPSv[:,1].conj()*(Hpe_z@UPSv[:,0]))
+        pe_chir = xp.sum(UPSv[:,1].conj()*(Hpe_r@UPSv[:,0]))
+        print("pe01 <chi_1|pe|chi0>:", pe_chix, pe_chiy, pe_chiz, pe_chir)
 
         pe_chix = UPSv[:,0].conj().T@Hpe_x@UPSv[:,0]
         pe_chiy = UPSv[:,0].conj().T@Hpe_y@UPSv[:,0]
         pe_chiz = UPSv[:,0].conj().T@Hpe_z@UPSv[:,0]
         pe_chir = UPSv[:,0].conj().T@Hpe_r@UPSv[:,0]
-        print("<chi_0|pe| chi0>:", pe_chix, pe_chiy, pe_chiz, pe_chir)
-
+        print("pe00 <chi_0|pe|chi0>:", pe_chix, pe_chiy, pe_chiz, pe_chir)
 
         R_ps = xp.sum(UPSv[:,0].conj()*H.R*UPSv[:,0]).real
-        print("PS bond length: <chi_0| R| chi_0 >:", R_ps)
+        print("R00 PS: <chi_0| R |chi_0 >:", R_ps)
 
-        xp.savez("test_PS_3D.npz", R=H.R, P=H.P_R, EPS=EPS, HPS=HPS,EPSv=EPSv, UPSv=UPSv, pPS=pPS)
+        Hrps = inverse_weyl_transform(rPS, H.shape[0], H.R, H.P_R)
+        r00_ps = xp.sum(UPSv[:,0].conj()*(Hpe_x@UPSv[:,0]))
+        r01_ps = xp.sum(UPSv[:,1].conj()*(Hpe_x@UPSv[:,0]))
+        print("r00 PS <chi0|r|chi0>:", r00_ps)
+        print("r01 PS <chi1|r|chi0>:", r01_ps)
+
+        HGamma_x = inverse_weyl_transform(GammaPS[0], H.shape[0], H.R, H.P_R)
+        Gamma_x_ps_01 = xp.sum(UPSv[:,1].conj()*(HGamma_x@UPSv[:,0]))
+        print("G01 PS: <chi_1| Gamma_x |chi0>:", Gamma_x_ps_01)
+        
+        PPS_chi = xp.sum(UPSv[:,1].conj()*(HP_R@UPSv[:,0]))
+        print("P01 PS <chi1|P_R|chi0>:", PPS_chi)
+        PG_chi = xp.sum(UPSv[:,1].conj()*((HP_R-HGamma_x)@UPSv[:,0]))
+        print("PG01 PS <chi1|P_R - Gamma_x|chi0>:", PG_chi)
+
+
+        if args.evecs:
+            numpy.savez(args.evecs, R=H.R, P=H.P_R, EPS=EPS, HPS=HPS,EPSv=EPSv, UPSv=UPSv, pPS=pPS, rPS=rPS)
         
         
         
