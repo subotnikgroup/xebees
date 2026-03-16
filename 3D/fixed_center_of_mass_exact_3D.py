@@ -40,7 +40,7 @@ class Hamiltonian:
         'axes', 'dtype', 'args',
         'max_threads',
         'preconditioner', 'make_guess', '_Vfunc',
-        'Vgrid', 'Vint', 'Pjk', 'VOm', 'ddR2', 'ddr2',
+        'Vgrid', 'Vint', 'Pjk', 'VOm','Vlx', 'ddR2', 'ddr2',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2'
@@ -142,7 +142,7 @@ class Hamiltonian:
             self.Vint, self.Pjk  = self.buildVsph()
 
         # Clebsch-Gordon Coefficients between adjacent Ω
-        self.VOm = self.buildVOm()
+        self.VOm, self.Vlx = self.buildVOm()
 
         self.size = int(xp.prod(xp.asarray(self.shape)))
 
@@ -372,6 +372,7 @@ class Hamiltonian:
             shape: Ng x NΩ x NΩ '''
         NR, Nr, Nj, NOm = self.shape
         VOm = xp.zeros((Nj, NOm, NOm))
+        Vlx = xp.zeros((Nj, NOm, NOm))
 
         # NB: recall self.Om = [-J, -J+1 ...0...J-1,J]
         # will not appear tridiagonal with this matrix element ordering!
@@ -382,8 +383,9 @@ class Hamiltonian:
                 if abs(s) != 1 : continue
                 VOm[:,i,k] = xp.sqrt(
                                  (J*(J+1) - Oi*Ok) *
-                    xp.maximum(0, j*(j+1) - Oi*Ok)
-                )
+                    xp.maximum(0, j*(j+1) - Oi*Ok))
+                # lx = 1/2(l_+ + l_-)
+                Vlx[:,i,k] = xp.sqrt(xp.maximum(0, j*(j+1) - Oi*Ok))/2
 
 
         # Overkill, vectorized version for reference
@@ -393,9 +395,13 @@ class Hamiltonian:
         # Oi = self.Om[i]
         # VOm[:, i, k] = xp.sqrt(              (J*(J+1)           - Oi*(Oi+s)) *
         #                        xp.maximum(0, (j*(j+1))[:, None] - Oi*(Oi+s)))
+        print("VLX:")
+        with xp.printoptions(precision=4, suppress=True):
+            Vlx[:5,:5,:5]
 
         assert (not xp.any(xp.isnan(VOm)))
-        return VOm
+        assert (not xp.any(xp.isnan(Vlx)))
+        return VOm, Vlx
 
     # allows H @ x
     def __matmul__(self, other):
@@ -499,6 +505,15 @@ class Hamiltonian:
         # mass portion of KE
         ke *= -1/(2*self.mu)
         return ke.reshape(x.shape)
+    
+    def apply_lx(self,x):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        return (xp.einsum('BRrjO,jOP-> BRrjP', xa, self.Vlx, **kwargs)).reshape(x.shape)
 
 
     # N.B. This section *must* be kept in sync with Hx above
@@ -853,8 +868,7 @@ if __name__ == '__main__':
             verbose=args.verbosity,
             max_space=args.subspace,
             max_memory=get_davidson_mem(0.75),
-            #tol=1e-12, #FIXME:DEBUG
-            tol=1e-10,
+            tol=1e-12
         )
 
     #guess quality
@@ -865,7 +879,7 @@ if __name__ == '__main__':
     print(conv)
     char,proj = get_wfc_proj(evecs,H)
 
-    p01_z, p01_r = get_p01_radial(evecs,H)
+    p01_z, p01_r, P01_r = get_p01_radial(evecs,H)
     print("<0|pe|1>, momentum z and r direction:", p01_z, p01_r)
     wfc0 = (evecs[0]).reshape(H.shape)
     wfc1 = (evecs[1].reshape(H.shape))
@@ -874,6 +888,16 @@ if __name__ == '__main__':
     r00 = xp.einsum('RrjO, r, RrjO ->', wfc0, H.r_lab, wfc0)
     r01 = xp.einsum('RrjO, r, RrjO ->', wfc1, H.r_lab, wfc0)
     print("r00, r01", r00, r01)
+    print("P01", P01_r)
+
+    wlx = H.apply_lx(evecs[0])
+    lx00 = xp.sum(evecs[0].conj()*wlx)
+    lx01 = xp.sum(evecs[1].conj()*wlx)
+    l200 = xp.einsum('RrjO, j, RrjO->', wfc0.conj(), H.j*(H.j+1), wfc0)
+    l201 = xp.einsum('RrjO, j, RrjO->', wfc1.conj(), H.j*(H.j+1), wfc0)
+    print("lx00, lx01:", lx00, lx01)
+    print("l200, l201", l200, l201)
+
     
     print("e_approx, char, proj:")
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):

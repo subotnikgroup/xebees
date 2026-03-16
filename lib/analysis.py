@@ -56,10 +56,11 @@ def get_jls_expectations(evecs, H):
     return el2, ej2, elz, ejz, esz
 
 def get_p01_radial(evecs,H):
-    dR = H.R[1]-H.R[0]
+    dR = H.R_lab[1]-H.R_lab[0]
     dr = H.r_lab[1]-H.r_lab[0]
     # dr = H.r[1]-H.r[0]
     ddr1 = KE_ColbertMiller_zero_inf(H.r.size, dr, order=1, bare=True)
+    ddR1 = KE_ColbertMiller_zero_inf(H.R.size, dR, order=1, bare=True)
     wfc0 = evecs[0].reshape(H.shape)
     wfc1 = evecs[1].reshape(H.shape)
     wfc2 = evecs[2].reshape(H.shape)
@@ -74,11 +75,12 @@ def get_p01_radial(evecs,H):
         p01_r = -1j*xp.einsum('RrjO, rv, RvjO ->', wfc0, ddr1- xp.diag(1/H.r), wfc1)
         p01_z = -1j*xp.einsum('RrjO, g, Ojkg, rv, RvkO->', 
                           wfc0, xp.sin(H.g)*xp.cos(H.g), H.Pjk, ddr1-xp.diag(1/H.r), wfc1, optimize=True)*dg
+        P01_R = -1j*xp.einsum('RrjO, RV, VrjO ->', wfc0, ddR1- xp.diag(1/H.R), wfc1)
         
     elif len(H.shape)==5: #identify a 3D wfc with spin
         # note the 2nd excited state is the first vibration we want to check against
         p01_r = -1j*xp.einsum('RrjsO, rv, RvjsO ->', wfc0, ddr1-xp.diag(1/H.r), wfc2)
         p01_z = 0 ### not implemented yet
 
-    return p01_z, p01_r
+    return p01_z, p01_r, P01_R
 

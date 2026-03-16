@@ -266,6 +266,24 @@ def apply_pr(H, xdav):
 
     return ddr1.reshape(xdav.shape)
 
+def apply_l(H, xdav):
+    x = xdav.reshape((-1,)+H.boshape).astype(complex) 
+
+    lx_a = xp.einsum('y,zc,Bxyc -> Bxyz', H.y,H.ddz1, x, optimize=True)
+    lx_b = xp.einsum('z,yb,Bxbz -> Bxyz', H.z,H.ddy1, x, optimize=True)
+    lx = -1j*(lx_a - lx_b)
+
+    ly_a = xp.einsum('z,xa,Bayz -> Bxyz', H.z, H.ddx1, x, optimize=True)
+    ly_b = xp.einsum('x,zc,Bxyc -> Bxyz', H.x, H.ddz1, x, optimize=True)
+    ly = -1j*(ly_a-ly_b)
+
+    lz_a = xp.einsum('x,yb,Bxbz -> Bxyz', H.x,H.ddy1, x, optimize=True)
+    lz_b = xp.einsum('y,xa,Bayz -> Bxyz', H.y,H.ddx1, x, optimize=True)
+    lz = -1j*(lz_a -lz_b)
+
+    return (lx,ly,lz)
+    # return (lx.reshape(xdav.shape),ly.reshape(xdav.shape),lz.reshape(xdav.shape))
+
 def Hbo_dav(H,i):
     def Hxbo(xdav):
         x = xdav.reshape((-1,)+H.boshape)        
@@ -389,13 +407,16 @@ if __name__ == '__main__':
 
     Rval, Pval = H.RP_grid
 
-    ###
-
+    ### E(R,P)
     EPS = xp.zeros((H.shape[0], H.shape[0]))
+
+    ### other electronic observables
     pPS = xp.zeros((4, H.shape[0], H.shape[0]), dtype=xp.complex128) # <pe>(R,P)
     rPS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
     GammaPS = xp.zeros((3, H.shape[0], H.shape[0]), dtype=xp.complex128)
     rBO = xp.zeros((H.shape[0]), dtype=xp.complex128)
+    lPS = xp.zeros((3, H.shape[0], H.shape[0]), dtype=xp.complex128)
+    l2PS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
 
     # gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
     # gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
@@ -543,6 +564,21 @@ if __name__ == '__main__':
                     print("<Gamma> on gs:", Gamma_x.real, Gamma_y.real, Gamma_z.real)
                     GammaPS[:,i,j] = xp.asarray([Gamma_x, Gamma_y, Gamma_z])
 
+                    psi0_lx, psi0_ly, psi0_lz = apply_l(H,evecs_save[0])
+                    psi1_lx, psi1_ly, psi1_lz = apply_l(H,evecs_save[1])
+                    
+                    l00x = xp.sum(psi0.conj()*psi0_lx)
+                    l00y = xp.sum(psi0.conj()*psi0_ly)
+                    l00z = xp.sum(psi0.conj()*psi0_lz)
+                    l200_x = xp.sum(psi0_lx.conj()*psi0_lx)
+                    l200_y = xp.sum(psi0_ly.conj()*psi0_ly)
+                    l200_z = xp.sum(psi0_lz.conj()*psi0_lz)
+                    l200 = l200_x+l200_y+l200_z
+
+                    print("<l> on gs:", l00x, l00y, l00z)
+                    print("<l^2> on gs", l200)
+                    lPS[:,i,j] = xp.stack((l00x,l00y,l00z))
+                    l2PS[i,j] = l200
                     
                     rPS[i,j] = xp.einsum('xyz,xyz,xyz->', psi0.conj(), H.r, psi0, optimize=True)
                     print("<r> on gs:", rPS[i,j].real)
@@ -622,8 +658,8 @@ if __name__ == '__main__':
         print("R00 PS: <chi_0| R |chi_0 >:", R_ps)
 
         Hrps = inverse_weyl_transform(rPS, H.shape[0], H.R, H.P_R)
-        r00_ps = xp.sum(UPSv[:,0].conj()*(Hpe_x@UPSv[:,0]))
-        r01_ps = xp.sum(UPSv[:,1].conj()*(Hpe_x@UPSv[:,0]))
+        r00_ps = xp.sum(UPSv[:,0].conj()*(Hrps@UPSv[:,0]))
+        r01_ps = xp.sum(UPSv[:,1].conj()*(Hrps@UPSv[:,0]))
         print("r00 PS <chi0|r|chi0>:", r00_ps)
         print("r01 PS <chi1|r|chi0>:", r01_ps)
 
@@ -635,6 +671,30 @@ if __name__ == '__main__':
         print("P01 PS <chi1|P_R|chi0>:", PPS_chi)
         PG_chi = xp.sum(UPSv[:,1].conj()*((HP_R-HGamma_x)@UPSv[:,0]))
         print("PG01 PS <chi1|P_R - Gamma_x|chi0>:", PG_chi)
+
+        
+        Hlxps = inverse_weyl_transform(lPS[0], H.shape[0], H.R, H.P_R)
+        Hlyps = inverse_weyl_transform(lPS[1], H.shape[0], H.R, H.P_R)
+        Hlzps = inverse_weyl_transform(lPS[2], H.shape[0], H.R, H.P_R)
+        Hl2ps = inverse_weyl_transform(l2PS, H.shape[0], H.R, H.P_R)
+
+        l00x = xp.sum(UPSv[:,0].conj()*(Hlxps@UPSv[:,0]))
+        l00y = xp.sum(UPSv[:,0].conj()*(Hlyps@UPSv[:,0]))
+        l00z = xp.sum(UPSv[:,0].conj()*(Hlzps@UPSv[:,0]))
+
+        l01x = xp.sum(UPSv[:,1].conj()*(Hlxps@UPSv[:,0]))
+        l01y = xp.sum(UPSv[:,1].conj()*(Hlyps@UPSv[:,0]))
+        l01z = xp.sum(UPSv[:,1].conj()*(Hlzps@UPSv[:,0]))
+
+        l002 = xp.sum(UPSv[:,0].conj()*(Hl2ps@UPSv[:,0]))
+        l012 = xp.sum(UPSv[:,1].conj()*(Hl2ps@UPSv[:,0]))
+
+        print("l00 <chi_0 | l_xyz|chi_0>:", l00x, l00y, l00z)
+        print("l01 < chi1| l_xyz|chi_0>", l01x, l01y, l01z)
+        print("l200  <chi_0 | l^2 |chi_0>:", l002)
+        print("l200  <chi_1 | l^2 |chi_0>:", l012)
+
+
 
 
         if args.evecs:
