@@ -81,6 +81,7 @@ def get_p01_radial(evecs,H):
         # note the 2nd excited state is the first vibration we want to check against
         p01_r = -1j*xp.einsum('RrjsO, rv, RvjsO ->', wfc0, ddr1-xp.diag(1/H.r), wfc2)
         p01_z = 0 ### not implemented yet
+        P01_R = -1j*xp.einsum('RrjsO, RV, VrjsO ->', wfc0, ddR1- xp.diag(1/H.R), wfc1)
 
     return p01_z, p01_r, P01_R
 

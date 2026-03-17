@@ -1481,8 +1481,8 @@ class Hamiltonian:
                 verbose=self.args.verbosity,
                 max_space=self.args.subspace,
                 max_memory=get_davidson_mem(0.75),
-                #tol=1e-12, #FIXME:DEBUG
-                tol=1e-10,
+                tol=1e-12, #FIXME:DEBUG
+                # tol=1e-10,
             )
         sR = (self.R[-1]-self.R[0])/4
         nuc_wfc = xp.exp(-(self.R-self.R[iR])**2/sR**2)
@@ -1634,8 +1634,9 @@ if __name__ == '__main__':
     print(conv)
     char,proj = get_wfc_Om_proj_wS(evecs,H)
     el2, ej2, elz, ejz, esz = get_jls_expectations(evecs, H)
-    p01 = get_p01_radial(evecs,H)
-    print("P01, radial momentum between state 0 and 1:", p01)
+    p01_z, p01_r, P01_R = get_p01_radial(evecs,H)
+    print("p01, radial momentum between state 0 and 1:", p01_r)
+    print("P01 nuclear:", P01_R)
     print("e_approx, char, proj:")
 
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
