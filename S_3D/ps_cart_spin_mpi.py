@@ -733,15 +733,16 @@ if __name__ == '__main__':
         exit()
 
     
-
+    
     with timer_ctx(f"R for loop"):
         for i in sequence:
             print("Atom Ri idx",i, "Atom Ri",H.R[i],flush=True)
-            diag = H.buildDiag(i)               
+            diag = H.buildDiag(i) 
+
             if evecs_prev == True:
                 guess_bo = guess_spin
             else:
-                guess_bo = evecs
+                guess_bo = evecs_save
             E1, E2 = H.Efield(H.R[i], H.x_grid, H.y_grid, H.z_grid)
             c1 = 0.5 * (1/137)**2 * E1 * H.alpha / (H.m_e**2)
             c2 = 0.5 * (1/137)**2 * E2 * H.alpha / (H.m_e**2)
@@ -810,8 +811,6 @@ if __name__ == '__main__':
             coeffgammaerfsz = gammacoeff_theta[i]*gammaerfsz
 
             with timer_ctx(f"P for loop"):
-                #Pseq = [NR//2 -i for i in range(NR//2+1)] + [NR//2+i+1 for i in range(NR//2-1)]
-                #print("Pseq", Pseq)
                 for j in ps_sequence:
                     print("Atom Ri",i,"Atom Pj",j,flush=True)
 
@@ -836,7 +835,7 @@ if __name__ == '__main__':
                             max_space=args.subspace,
                             max_memory=get_davidson_mem(0.75),
                             #tol=1e-12, #FIXME:DEBUG
-                            tol=1e-12,
+                            tol=1e-10,
                         )
     
                     print("Davidson:", e_ps_approx)
