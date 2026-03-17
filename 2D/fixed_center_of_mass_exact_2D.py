@@ -882,11 +882,22 @@ if __name__ == '__main__':
     print("Davidson:", e_approx)
     print(conv)
 
-    p01_z, p01_r = get_p01_radial(evecs,H)
+    p01_z, p01_r, P01_R = get_p01_radial(evecs,H)
     print("<0|pe|1>, momentum z and r direction:", p01_z, p01_r)
+    print("<0|P|1>:", P01_R)
     wfc0 = (evecs[0]).reshape(H.shape)
+    wfc1 = (evecs[1]).reshape(H.shape)
     R_ex = xp.einsum('Rrg, R, Rrg ->', wfc0.conj(), H.R_lab, wfc0)
     print("<0|R|0>, bond length:", R_ex.real)
+    wfc0_lz = xp.einsum('Rrh,gh -> Rrg', wfc0, -1j*H.ddg1)
+    wfc0_l2 = xp.einsum('Rrh,gh -> Rrg', wfc0, -H.ddg2)
+    lz00 = xp.sum(wfc0.conj()*wfc0_lz)
+    lz01 = xp.sum(wfc1.conj()*wfc0_lz)
+    l200 = xp.sum(wfc0.conj()*wfc0_l2)
+    l201 = xp.sum(wfc1.conj()*wfc0_l2)
+    print("lz00, lz01:", lz00, lz01)
+    print("l200, l201:", l200, l201)
+    
 
     if args.evecs:
         numpy.savez_compressed(args.evecs, guess=evecs, H=H)

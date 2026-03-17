@@ -69,6 +69,7 @@ def get_p01_radial(evecs,H):
         dg = H.g[1]-H.g[0]
         p01_r = -1j*xp.einsum('Rrg, rv, Rvg -> ', xp.conj(wfc0), ddr1-xp.diag(1/H.r/2), wfc1)
         p01_z = -1j*xp.einsum('Rrg, rv,g, Rvg -> ', xp.conj(wfc0), ddr1-xp.diag(1/H.r/2), xp.cos(H.g), wfc1)*dg
+        P01_R = -1j*xp.einsum('Rrg, RV, Vrg ->', xp.conj(wfc0), ddR1, wfc1)
 
     elif len(H.shape)==4: #identify a 3D wfc without spin
         dg =  H.g[1]-H.g[0]
