@@ -19,7 +19,7 @@ import numpy  # only use this for reading and writing objects
 import linalg_helper as lib
 import potentials
 from constants import *
-from hamiltonian import  KE, KE_Borisov_3D
+from hamiltonian import  KE, KE_FFT_R, KE_ColbertMiller_zero_inf
 from davidson import phase_match, get_davidson_guess_3D, get_davidson_mem, solve_exact_gen
 from analysis import get_wfc_Om_proj_wS, get_jls_expectations, get_p01_radial
 
@@ -219,14 +219,19 @@ class Hamiltonian:
         stencil_g = min(11,args.Ng)
         if stencil_g%2==0: stencil_g -= 1
 
-        self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R)
-        # self.ddr2, _ = KE_Borisov_3D(self.r, bare=True)
-        self.ddr2 = KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False)
-        self.ddr1 = (KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False, order=1)
-                        )#-xp.diag(1/self.r)) # dr - 1/r due to wfc rescaling
+        # self.ddR2    = KE(args.NR, dR, bare=True, cyclic=False, stencil_size = stencil_R)
+        P_R = xp.fft.fftfreq(args.NR, dR) * 2 * xp.pi
+        self.ddR2 = KE_FFT_R(args.NR, P_R, self.R)
+
         
-        self.ddr_lab2, _ = KE_Borisov_3D(self.r_lab, bare=True)
-        self.ddR_lab2    = KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
+        # self.ddr2 = KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False)
+        # self.ddr1 = (KE(args.Nr, self.r[1]-self.r[0], bare=True, cyclic=False, order=1)
+        #                 )#-xp.diag(1/self.r)) # dr - 1/r due to wfc rescaling
+        self.ddr2 = KE_ColbertMiller_zero_inf(args.Nr, dr, bare=True, order=2)
+        self.ddr1 = KE_ColbertMiller_zero_inf(args.Nr, dr, bare=True, order=1)
+        
+        self.ddr_lab2  =  KE_ColbertMiller_zero_inf(args.Nr, self.r_lab[1]-self.r_lab[0], bare=True, order=2)
+        self.ddR_lab2  =  KE(args.NR, self.R_lab[1]-self.R_lab[0], bare=True, cyclic=False, stencil_size=stencil_R)
         self.ddg1 = KE(self.g.size, dg, bare=True, order=1, cyclic=False)
                             
 
@@ -1622,7 +1627,7 @@ if __name__ == '__main__':
             verbose=args.verbosity,
             max_space=args.subspace,
             max_memory=get_davidson_mem(0.75),
-            #tol=1e-12, #FIXME:DEBUG
+            # tol=1e-12, #FIXME:DEBUG
             tol=1e-10,
         )
 
@@ -1634,9 +1639,9 @@ if __name__ == '__main__':
     print(conv)
     char,proj = get_wfc_Om_proj_wS(evecs,H)
     el2, ej2, elz, ejz, esz = get_jls_expectations(evecs, H)
-    p01_z, p01_r, P01_R = get_p01_radial(evecs,H)
-    print("p01, radial momentum between state 0 and 1:", p01_r)
-    print("P01 nuclear:", P01_R)
+    p02_z, p02_r, P02_R = get_p01_radial(evecs,H)
+    print("p02, radial momentum between state 0 and 1:", p02_r)
+    print("P02 nuclear:", P02_R)
     print("e_approx, char, proj:")
 
     with numpy.printoptions(precision=3, linewidth=numpy.inf, suppress=True):
