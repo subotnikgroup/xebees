@@ -243,8 +243,8 @@ def Gamma_etf_erf_cart(R,rx,ry,ddx,ddy,M_1,M_2,mu12,r1e2,r2e2):
     theta2 = xp.exp(-r2e2)
     partition = theta1 + theta2
 
-    t1 = xp.diag(1/(1+xp.exp(r1e2-r2e2)).ravel())
-    t2 = xp.diag(1/(1+xp.exp(r2e2-r1e2)).ravel())
+    t1 = xp.diag(1/(1+xp.exp((r1e2-r2e2)/4)).ravel())
+    t2 = xp.diag(1/(1+xp.exp((r2e2-r1e2)/4)).ravel())
 
     #t1 = xp.diag((theta1/partition).ravel())
     #t2 = xp.diag((theta2/partition).ravel())
@@ -487,6 +487,7 @@ if __name__ == '__main__':
     rBO = xp.zeros((H.shape[0]), dtype=xp.complex128)
     lPS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
     l2PS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
+    l2BO = xp.zeros((H.shape[0]), dtype=xp.complex128)
     
 
     evecs_prev = True
@@ -519,6 +520,13 @@ if __name__ == '__main__':
 
         psi0_bo = evecs[0].reshape(H.boshape)
         rBO[i] = xp.einsum('xy,xy,xy->', psi0_bo.conj(), H.r, psi0_bo)
+        psi0_lz = apply_l(H,evecs[0])
+        lzBO_i = xp.sum(psi0_bo.conj()*psi0_lz)
+        l2BO_i = xp.sum(psi0_lz.conj()*psi0_lz)
+        l2BO[i] = l2BO_i
+        print("lzBO:", lzBO_i)
+        print("l2BO:", l2BO_i)
+        print()
 
 
         Ad_n[i] = e_approx[0]
@@ -544,7 +552,7 @@ if __name__ == '__main__':
         
         ddy_terms = gammacoeff_theta[i]*(Jya-Jyc-Jyd+gammaetfy)
         if args.no_ERF:
-            ddy_terms = gamma_coeff_theta[i]*gammaetfy
+            ddy_terms = gammacoeff_theta[i]*gammaetfy
 
         #ddy_terms = gammacoeff_theta[i]*(gammaetfy)
         #ddy_terms = gammacoeff_theta[i]*(Jya-Jyc-Jyd)
@@ -605,7 +613,6 @@ if __name__ == '__main__':
             print("<Gamma> on gs:", Gamma_x.real, Gamma_y.real)
             GammaPS[:,i,j] = xp.asarray([Gamma_x, Gamma_y])
             psi0_lz = apply_l(H,evecs_save[0])
-            psi1_lz = apply_l(H,evecs_save[1])
             l00z = xp.sum(psi0.conj()*psi0_lz)
             l200_z = xp.sum(psi0_lz.conj()*psi0_lz)
             print("<l> on gs:", l00z)
@@ -638,6 +645,14 @@ if __name__ == '__main__':
     HP_R = inverse_weyl_transform(Pval, H.shape[0], H.R, H.P_R)
     PBO_chi = xp.sum(Unv_bo[:,1].conj()*(HP_R@Unv_bo[:,0]))
     print("P01 BO <chi1|P|chi0>:", PBO_chi)
+
+    l2BO_RP = xp.zeros(rPS.shape, dtype=xp.complex128)
+    l2BO_RP = l2BO[:,None]
+    Hl2BO = inverse_weyl_transform(l2BO_RP, H.shape[0], H.R, H.P_R)
+    l2BO_chi00 = xp.sum(Unv_bo[:,0].conj()*(Hl2BO@Unv_bo[:,0]))
+    l2BO_chi01 = xp.sum(Unv_bo[:,1].conj()*(Hl2BO@Unv_bo[:,0]))
+    print("l200 BO: <chi0|r|chi0>:", l2BO_chi00)
+    print("l201 BO: <chi1|r|chi0>:", l2BO_chi01)
 
     EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
     Helmat = xp.repeat(ival,H.shape[0],axis=1)

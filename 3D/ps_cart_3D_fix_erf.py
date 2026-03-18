@@ -417,6 +417,7 @@ if __name__ == '__main__':
     rBO = xp.zeros((H.shape[0]), dtype=xp.complex128)
     lPS = xp.zeros((3, H.shape[0], H.shape[0]), dtype=xp.complex128)
     l2PS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
+    l2BO = xp.zeros((H.shape[0]), dtype=xp.complex128)
 
     # gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
     # gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
@@ -473,6 +474,17 @@ if __name__ == '__main__':
             ival[i,0] = e_approx[0]
             psi0_bo = evecs[0].reshape(H.boshape)
             rBO[i] = xp.einsum('xyz,xyz,xyz->', psi0_bo.conj(), H.r, psi0_bo)
+            psi0_lx, psi0_ly, psi0_lz = apply_l(H,evecs[0])
+            l00x = xp.sum(psi0_bo.conj()*psi0_lx)
+            l00y = xp.sum(psi0_bo.conj()*psi0_ly)
+            l00z = xp.sum(psi0_bo.conj()*psi0_lz)
+            l200_x = xp.sum(psi0_lx.conj()*psi0_lx)
+            l200_y = xp.sum(psi0_ly.conj()*psi0_ly)
+            l200_z = xp.sum(psi0_lz.conj()*psi0_lz)
+            l200 = l200_x+l200_y+l200_z
+            l2BO[i] = l200
+            print("lxyz on gs:", l00x, l00y, l00z)
+            print("l2 on gs:", l200)
     
             r1e2, r2e2 = H.V(H.R[i], H.x_grid, H.y_grid, H.z_grid, spitvals=True)
             theta1 = xp.exp(-r1e2)
@@ -618,6 +630,15 @@ if __name__ == '__main__':
         HP_R = inverse_weyl_transform(Pval, H.shape[0], H.R, H.P_R)
         PBO_chi = xp.sum(Unv_bo[:,1].conj()*(HP_R@Unv_bo[:,0]))
         print("P01 BO <chi1|P|chi0>:", PBO_chi)
+
+        l2BO_RP = xp.zeros(rPS.shape, dtype=xp.complex128)
+        l2BO_RP = l2BO[:,None]
+        Hl2BO = inverse_weyl_transform(l2BO_RP, H.shape[0], H.R, H.P_R)
+        l2BO_chi00 = xp.sum(Unv_bo[:,0].conj()*(Hl2BO@Unv_bo[:,0]))
+        l2BO_chi01 = xp.sum(Unv_bo[:,1].conj()*(Hl2BO@Unv_bo[:,0]))
+        print("l200 BO: <chi0|r|chi0>:", l2BO_chi00)
+        print("l201 BO: <chi1|r|chi0>:", l2BO_chi01)
+
 
         EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
         Helmat = xp.repeat(ival,H.shape[0],axis=1)
