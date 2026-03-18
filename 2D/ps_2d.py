@@ -424,6 +424,7 @@ def parse_args():
     parser.add_argument('--guess', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--save', metavar="filename")
+    parser.add_argument('--no_ERF', action='store_true')
 
     return parser.parse_args()
 
@@ -542,6 +543,9 @@ if __name__ == '__main__':
         #gammaetfy_old = (H.M_2*gammaetf1y_old-H.M_1*gammaetf2y_old)/(H.M_1+H.M_2)
         
         ddy_terms = gammacoeff_theta[i]*(Jya-Jyc-Jyd+gammaetfy)
+        if args.no_ERF:
+            ddy_terms = gamma_coeff_theta[i]*gammaetfy
+
         #ddy_terms = gammacoeff_theta[i]*(gammaetfy)
         #ddy_terms = gammacoeff_theta[i]*(Jya-Jyc-Jyd)
         #ddy_terms = xp.zeros(gammaetfy.shape)
@@ -560,8 +564,9 @@ if __name__ == '__main__':
             print("Atom Ri",i,"Atom Pj",j,flush=True)
             print("P",H.P_R[j])
             ddx_terms = gammacoeff_R[i,j]*gammaetfx - gammacoeff_theta[i]*Jyb
-            #ddx_terms = gammacoeff_R[i,j]*gammaetfx
-            #ddx_terms = - gammacoeff_theta[i]*Jyb
+            if args.no_ERF:
+                ddx_terms = gammacoeff_R[i,j]*gammaetfx
+            
 
             if evecs_prev == True:
                 guess_ps = evecs
@@ -592,10 +597,13 @@ if __name__ == '__main__':
             psi0 = evecs_save[0].reshape(H.boshape)
             pe_x = xp.einsum('xy, xa, ay ->', psi0.conj(), (-1j)*H.ddx, psi0, optimize=True)
             pe_y = xp.einsum('xy, yb, xb ->', psi0.conj(), (-1j)*H.ddy, psi0, optimize=True)
+            pPS[:,i,j] = xp.asarray([pe_x,pe_y,pe_r])
+
             print("<pe> on gs:", pe_x.real, pe_y.real)
             Gamma_x = xp.einsum('xy,xay,ay->',psi0.conj(), 1j*gammaetfx, psi0)
             Gamma_y = xp.einsum('xy,xyb,xb->',psi0.conj(), 1j*gammaetfy, psi0)
             print("<Gamma> on gs:", Gamma_x.real, Gamma_y.real)
+            GammaPS[:,i,j] = xp.asarray([Gamma_x, Gamma_y])
             psi0_lz = apply_l(H,evecs_save[0])
             psi1_lz = apply_l(H,evecs_save[1])
             l00z = xp.sum(psi0.conj()*psi0_lz)
