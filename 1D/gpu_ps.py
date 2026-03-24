@@ -147,18 +147,25 @@ def Gamma2(r, R_val, pe, pe2, M1, M2, sigma=1, w=1):
     gamma22 = get_gamma2(t2, t2, pe, pe2)
     return (M2**2*gamma11 - M1*M2*gamma12 - M1*M2*gamma21 + M2**2*gamma22) / (M1 + M2)**2
 
-#def Gammasq(r, R_val, pe, pe2, M1, M2, sigma=1, w=1):
-#    """
-#    Second-order Gamma operator
-#    """
-#    theta1 = w * xp.exp(-((r + R_val/2)**2) / sigma**2)
-#    theta2 = xp.exp(-((r - R_val/2)**2) / sigma**2)
-#    partition = theta1 + theta2
-#    t1 = theta1 / partition
-#    t2 = theta2 / partition
-#    gammma11 = theta1 * xp.exp(-((r + R_val/2)**2) / sigma**2)
-#    gammma22 = 
-#    return (M2**2*gamma11 + M2**2*gamma22) / (M1 + M2)**2
+def Gammasq(r, R_val, M1, M2, pe2, sigma=1, w=1):
+    """
+    Second-order Gamma operator
+    """
+    mu12 = M1*M2/(M1+M2)
+    #r1e2, r2e2 = H.V(H.R[i], H.x_grid, H.y_grid, H.z_grid, spitvals=True)
+    kappa2 = r*R_val
+    r1e2 = r**2 + (R_val)**2*(mu12/M1)**2 - 2*kappa2*mu12/M1
+    r2e2 = r**2 + (R_val)**2*(mu12/M2)**2 + 2*kappa2*mu12/M2
+    theta1 = xp.exp(-r1e2)
+    theta2 = xp.exp(-r2e2)
+    partition = theta1 + theta2
+    t1 = xp.diag(theta1 / partition)
+    t2 = xp.diag(theta2 / partition)
+
+    gamma1 = (t1 @ pe2 + pe2 @ t1) / (2j)
+    gamma2 = (t2 @ pe2 + pe2 @ t2) / (2j)
+
+    return (M2*gamma1**2 - M1*gamma2**2) / (M1 + M2)**2
 
 def solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges):
     """
@@ -178,6 +185,9 @@ def solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges):
     EBO = xp.zeros([NR,1])
     pBO = xp.zeros([NR,1],dtype=complex)
     p2BO = xp.zeros([NR,1],dtype=complex)
+    EPSsquare_new = xp.zeros((NR, NR))
+    pPS_square_new = xp.zeros((NR, NR), dtype=complex)
+    p2PS_square_new = xp.zeros((NR, NR), dtype=complex)
     sigma = 1
     g = 1
     w = 1
@@ -193,6 +203,7 @@ def solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges):
         if i % 10 == 0: print("i",i,flush=True)
         gamma = Gamma(r, R[i], pe, M1, M2, sigma, w)
         gamma2 = Gamma2(r, R[i], pe, pe2, M1, M2, sigma, w)
+        gammasq = Gammasq(r, R[i], M1, M2, pe2, sigma, w)
         
         kappa2 = r*R[i]
 
@@ -217,30 +228,37 @@ def solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges):
             #print("i,j",i,j,flush=True)
             Hel_square = ke + v_diag - 1j * gamma * P[j] / mu12 - gamma2 / (2 * mu12)
             Hel = ke + v_diag - 1j * gamma * P[j] / mu12
+            Hel_square_new = ke + v_diag - 1j * gamma * P[j] / mu12 - gammasq / (2 * mu12)
 
             val_square, vec_square = xp.linalg.eigh(Hel_square)
             val, vec = xp.linalg.eigh(Hel)
+            val_square_new, vec_square_new = xp.linalg.eigh(Hel_square_new)
 
             EPSsquare[i, j] = val_square[0] + 0.5 * P[j]**2 / mu12
             EPS[i,j] = val[0] + 0.5 * P[j]**2 / mu12
+            EPSsquare_new[i, j] = val_square_new[0] + 0.5 * P[j]**2 / mu12
 
             # Expectation values for ground state
             gs_square = vec_square[:, 0]
             gs = vec[:, 0]
+            gs_square_new = vec_square_new[:, 0]
             #rPS_square[i, j] = gs_square.conj().T @ xp.diag(r) @ gs_square
             #r2PS_square[i, j] = gs_square.conj().T @ xp.diag(r**2) @ gs_square
             #rPS[i, j] = gs.conj().T @ xp.diag(r) @ gs
             #r2PS[i, j] = gs.conj().T @ xp.diag(r**2) @ gs
 
-            psip_square = xp.fft.fftshift(xp.fft.fft(gs_square)) / xp.sqrt(Nr)
             psip = xp.fft.fftshift(xp.fft.fft(gs)) / xp.sqrt(Nr)
-
             p_vals = xp.fft.fftshift(xp.fft.fftfreq(Nr, dr)) * 2.0 * xp.pi
-            pPS_square[i, j] = psip_square.conj().T @ xp.diag(p_vals) @ psip_square
             pPS[i, j] = psip.conj().T @ xp.diag(p_vals) @ psip
-
-            p2PS_square[i, j] = psip_square.conj().T @ xp.diag(p_vals**2) @ psip_square
             p2PS[i, j] = psip.conj().T @ xp.diag(p_vals**2) @ psip
+
+            psip_square = xp.fft.fftshift(xp.fft.fft(gs_square)) / xp.sqrt(Nr)           
+            pPS_square[i, j] = psip_square.conj().T @ xp.diag(p_vals) @ psip_square
+            p2PS_square[i, j] = psip_square.conj().T @ xp.diag(p_vals**2) @ psip_square
+
+            psip_square_new = xp.fft.fftshift(xp.fft.fft(gs_square_new)) / xp.sqrt(Nr)
+            pPS_square_new[i, j] = psip_square_new.conj().T @ xp.diag(p_vals) @ psip_square_new
+            p2PS_square_new[i, j] = psip_square_new.conj().T @ xp.diag(p_vals**2) @ psip_square_new
 
             #piPS[i, j] = P[j] - 1j * (gs.conj().T @ gamma @ gs)
             #pi2PS[i, j] = (P[j]**2 
@@ -252,7 +270,7 @@ def solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges):
     KE_BO = KE(NR, dR, mu12, stencil_size=7)
 
     #return EPS, EPSsquare, pPS, p2PS, pPS_square, p2PS_square
-    return EBO, EPS, EPSsquare, pPS, p2PS, pPS_square, p2PS_square, pBO, p2BO, KE_BO
+    return EBO, EPS, EPSsquare, EPSsquare_new, pPS, p2PS, pPS_square, p2PS_square, pPS_square_new, p2PS_square_new, pBO, p2BO, KE_BO
 
 
 
@@ -310,36 +328,52 @@ if __name__ == "__main__":
     charges = (Q1, Q2)
 
     #EPS, EPSsquare, pPS, p2PS, pPS_square, p2PS_square= solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges)
-    EBO, EPS, EPSsquare, pPS, p2PS, pPS_square, p2PS_square, pBO, p2BO, KE_BO= solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges)
-
-    HPS = inverse_weyl_transform(EPS, NR, R, P)
-    HPSsquare = inverse_weyl_transform(EPSsquare, NR, R, P)
-    EPSv, psiPSv = xp.linalg.eigh(HPS)
-    EPSvsquare, psiPSvsquare = xp.linalg.eigh(HPSsquare)
-    print("EPSv",EPSv[0:10])
-    print("EPSvsquare",EPSvsquare[0:10])
-
-    Hp2PS = inverse_weyl_transform(p2PS, NR, R, P)
-    Hp2PSsquare = inverse_weyl_transform(p2PS_square, NR, R, P)
-    v_p200 = xp.conj(psiPSv[:,0]).T @ (Hp2PS @ psiPSv[:,0])
-    v_p201 = xp.conj(psiPSv[:,1]).T @ (Hp2PS @ psiPSv[:,0])
-    v_p200_square = xp.conj(psiPSvsquare[:,0]).T @ (Hp2PSsquare @ psiPSvsquare[:,0])
-    v_p201_square = xp.conj(psiPSvsquare[:,1]).T @ (Hp2PSsquare @ psiPSvsquare[:,0])
-    print("v_p200",v_p200)   
-    print("v_p200_square",v_p200_square)
-    print("v_p201",v_p201)
-    print("v_p201_square",v_p201_square)
+    EBO, EPS, EPSsquare, EPSsquare_new, pPS, p2PS, pPS_square, p2PS_square, pPS_square_new, p2PS_square_new, pBO, p2BO, KE_BO = solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges)
     
+    HPS = inverse_weyl_transform(EPS, NR, R, P)
     HpPS = inverse_weyl_transform(pPS, NR, R, P)
-    HpPSsquare = inverse_weyl_transform(pPS_square, NR, R, P)
+    Hp2PS = inverse_weyl_transform(p2PS, NR, R, P)
+    EPSv, psiPSv = xp.linalg.eigh(HPS)
     v_p00 = xp.conj(psiPSv[:,0]).T @ (HpPS @ psiPSv[:,0])
     v_p01 = xp.conj(psiPSv[:,1]).T @ (HpPS @ psiPSv[:,0])
-    v_p00_square = xp.conj(psiPSvsquare[:,0]).T @ (HpPSsquare @ psiPSvsquare[:,0])
-    v_p01_square = xp.conj(psiPSvsquare[:,1]).T @ (HpPSsquare @ psiPSvsquare[:,0])
+    v_p200 = xp.conj(psiPSv[:,0]).T @ (Hp2PS @ psiPSv[:,0])
+    v_p201 = xp.conj(psiPSv[:,1]).T @ (Hp2PS @ psiPSv[:,0])
+
+
+    HPS_square = inverse_weyl_transform(EPSsquare, NR, R, P)
+    HpPS_square = inverse_weyl_transform(pPS_square, NR, R, P)
+    Hp2PS_square = inverse_weyl_transform(p2PS_square, NR, R, P)
+    EPSv_square, psiPSv_square = xp.linalg.eigh(HPS_square)
+    v_p00_square = xp.conj(psiPSv_square[:,0]).T @ (HpPS_square @ psiPSv_square[:,0])
+    v_p01_square = xp.conj(psiPSv_square[:,1]).T @ (HpPS_square @ psiPSv_square[:,0])
+    v_p200_square = xp.conj(psiPSv_square[:,0]).T @ (Hp2PS_square @ psiPSv_square[:,0])
+    v_p201_square = xp.conj(psiPSv_square[:,1]).T @ (Hp2PS_square @ psiPSv_square[:,0])
+
+    HPS_square_new = inverse_weyl_transform(EPSsquare_new, NR, R, P)
+    HpPS_square_new = inverse_weyl_transform(pPS_square_new, NR, R, P)
+    Hp2PS_square_new = inverse_weyl_transform(p2PS_square_new, NR, R, P)
+    EPSv_square_new, psiPSv_square_new = xp.linalg.eigh(HPS_square_new)
+    v_p00_square_new = xp.conj(psiPSv_square_new[:,0]).T @ (HpPS_square_new @ psiPSv_square_new[:,0])
+    v_p01_square_new = xp.conj(psiPSv_square_new[:,1]).T @ (HpPS_square_new @ psiPSv_square_new[:,0])
+    v_p200_square_new = xp.conj(psiPSv_square_new[:,0]).T @ (Hp2PS_square_new @ psiPSv_square_new[:,0])
+    v_p201_square_new = xp.conj(psiPSv_square_new[:,1]).T @ (Hp2PS_square_new @ psiPSv_square_new[:,0])
+    
+    print("EPSv",EPSv[0:10])
+    print("EPSv_square",EPSv_square[0:10])
+    print("EPSv_square_new",EPSv_square_new[0:10])
     print("v_p00",v_p00)
-    print("v_p_square",v_p00_square)
+    print("v_p00_square",v_p00_square)
+    print("v_p00_square_new",v_p00_square_new)
     print("v_p01",v_p01)
     print("v_p01_square",v_p01_square)
+    print("v_p01_square_new",v_p01_square_new)
+    print("v_p200",v_p200)
+    print("v_p200_square",v_p200_square)
+    print("v_p200_square_new",v_p200_square_new)
+    print("v_p201",v_p201)
+    print("v_p201_square",v_p201_square)
+    print("v_p201_square_new",v_p201_square_new)
+    
 
     Rval, Pval = xp.meshgrid(R, P, indexing='ij')
     EBO_check = xp.zeros((NR, NR))
