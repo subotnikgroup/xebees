@@ -684,7 +684,7 @@ if __name__ == '__main__':
     pe_chix = UPSv[:,0].conj().T@Hpe_x@UPSv[:,0]
     pe_chiy = UPSv[:,0].conj().T@Hpe_y@UPSv[:,0]
     pe_chir = UPSv[:,0].conj().T@Hpe_r@UPSv[:,0]
-    print("pe00 <chi_0|pe|chi0>:", pe_chix, pe_chiy, pe_chir)
+    print("pe00 <chi_0|pe|chi0>:",   pe_chiy, pe_chir)
 
     R_ps = xp.sum(UPSv[:,0].conj()*H.R*UPSv[:,0]).real
     print("R00 PS: <chi_0| R |chi_0 >:", R_ps)

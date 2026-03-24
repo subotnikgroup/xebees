@@ -275,6 +275,18 @@ class Hamiltonian:
         # mass portion of KE
         ke *= -1 / (2*self.mu)
         return ke.reshape(x.shape)
+    
+    def p2x(self, x):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+        ke = xp.zeros_like(xa)
+        ke += xp.einsum('BRrg,rs->BRsg', xa, self.ddr2)  # ∂²/∂r²
+        keg = xp.einsum('BRrg,gh->BRrh', xa, self.ddg2)  # ∂²/∂γ²
+        ke += (self.rinv2)*keg              # (1/R² + 1/r²) (∂²/∂γ²)
+        return -ke.reshape(x.shape)
+
 
 
     # N.B. This section *must* be kept in sync with Hx above
@@ -889,6 +901,13 @@ if __name__ == '__main__':
     wfc1 = (evecs[1]).reshape(H.shape)
     R_ex = xp.einsum('Rrg, R, Rrg ->', wfc0.conj(), H.R_lab, wfc0)
     print("<0|R|0>, bond length:", R_ex.real)
+    r00 = xp.einsum('Rrg, r, Rrg ->', wfc0, H.r_lab, wfc0)
+    r01 = xp.einsum('Rrg, r, Rrg ->', wfc1, H.r_lab, wfc0)
+    print("r00, r01", r00, r01)
+    p2 = xp.sum(evecs[0].conj()*H.p2x(evecs[0]))
+    print("<p^2> 00:", p2)
+
+
     wfc0_lz = xp.einsum('Rrh,gh -> Rrg', wfc0, -1j*H.ddg1)
     wfc0_l2 = xp.einsum('Rrh,gh -> Rrg', wfc0, -H.ddg2)
     lz00 = xp.sum(wfc0.conj()*wfc0_lz)

@@ -55,12 +55,12 @@ class Hamiltonian:
         self.m_e = 1
         self.M_1 = args.M_1
         self.M_2 = args.M_2
-        self.mu  = xp.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
-        self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
         self.g_1 = args.g_1
         self.g_2 = args.g_2
         self.Pphi = args.Pphi
         self.Ptheta = args.Ptheta
+
+
 
         if not hasattr(args, "potential"):
             args.extent = 'soft_coulomb'
@@ -74,6 +74,7 @@ class Hamiltonian:
         self.mu   = xp.sqrt(self.M_1*self.M_2*self.m_e/(self.M_1+self.M_2+self.m_e))
         self.mur  = (self.M_1+self.M_2)*self.m_e/(self.M_1+self.M_2+self.m_e)
         self.mu12 = self.M_1*self.M_2/(self.M_1+self.M_2)
+
         self._Vfunc, extent_func = {
             'erf_coulomb':(potentials.erf_coulomb, potentials.extents_erf_coulomb),
             'borgis': (potentials.borgis, potentials.extents_borgis)
@@ -418,6 +419,8 @@ if __name__ == '__main__':
     lPS = xp.zeros((3, H.shape[0], H.shape[0]), dtype=xp.complex128)
     l2PS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
     l2BO = xp.zeros((H.shape[0]), dtype=xp.complex128)
+    TePS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
+    TeBO = xp.zeros((H.shape[0]), dtype=xp.complex128)
 
     # gammacoeff_R = -1j*(Pval-1/Rval)/H.mu12 
     # gammacoeff_phi = +1j*(H.Pphi/H.R)/H.mu12
@@ -485,6 +488,8 @@ if __name__ == '__main__':
             l2BO[i] = l200
             print("lxyz on gs:", l00x, l00y, l00z)
             print("l2 on gs:", l200)
+            psi0_Te = Tx(H,psi0_bo)
+            TeBO[i] = xp.sum(psi0_bo.conj()*psi0_Te)
     
             r1e2, r2e2 = H.V(H.R[i], H.x_grid, H.y_grid, H.z_grid, spitvals=True)
             theta1 = xp.exp(-r1e2)
@@ -591,6 +596,9 @@ if __name__ == '__main__':
                     print("<l^2> on gs", l200)
                     lPS[:,i,j] = xp.stack((l00x,l00y,l00z))
                     l2PS[i,j] = l200
+
+                    psi0_Te = Tx(H,psi0)
+                    TePS[i,j] = xp.sum(psi0.conj()*psi0_Te)
                     
                     rPS[i,j] = xp.einsum('xyz,xyz,xyz->', psi0.conj(), H.r, psi0, optimize=True)
                     print("<r> on gs:", rPS[i,j].real)
@@ -638,6 +646,13 @@ if __name__ == '__main__':
         l2BO_chi01 = xp.sum(Unv_bo[:,1].conj()*(Hl2BO@Unv_bo[:,0]))
         print("l200 BO: <chi0|r|chi0>:", l2BO_chi00)
         print("l201 BO: <chi1|r|chi0>:", l2BO_chi01)
+
+        TeBO_RP = xp.zeros(rPS.shape, dtype=xp.complex128)
+        TeBO_RP = TeBO[:,None]
+        HTeBO = inverse_weyl_transform(TeBO_RP, H.shape[0], H.R, H.P_R)
+        TeBO_chi00 = xp.sum(Unv_bo[:,0].conj()*(HTeBO@Unv_bo[:,0]))
+        TeBO_chi01 = xp.sum(Unv_bo[:,1].conj()*(HTeBO@Unv_bo[:,0]))
+        print("Te BO, 00, 01:", TeBO_chi00, TeBO_chi01 )
 
 
         EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
@@ -697,7 +712,12 @@ if __name__ == '__main__':
         Hlxps = inverse_weyl_transform(lPS[0], H.shape[0], H.R, H.P_R)
         Hlyps = inverse_weyl_transform(lPS[1], H.shape[0], H.R, H.P_R)
         Hlzps = inverse_weyl_transform(lPS[2], H.shape[0], H.R, H.P_R)
-        Hl2ps = inverse_weyl_transform(l2PS, H.shape[0], H.R, H.P_R)
+        Hl2ps = inverse_weyl_transform(l2PS-1/H.mu12/Rval, H.shape[0], H.R, H.P_R)
+        #  -1/H.mu12/Rval**2/4
+        with xp.printoptions(suppress=True, precision=4):
+            print(l2PS[NR//2-2:NR//2+1, NR//2-2:NR//2+1])
+            print(Hl2ps[:6,:6])
+            # print(Rval**2[:6])
 
         l00x = xp.sum(UPSv[:,0].conj()*(Hlxps@UPSv[:,0]))
         l00y = xp.sum(UPSv[:,0].conj()*(Hlyps@UPSv[:,0]))
@@ -715,11 +735,16 @@ if __name__ == '__main__':
         print("l200  <chi_0 | l^2 |chi_0>:", l002)
         print("l200  <chi_1 | l^2 |chi_0>:", l012)
 
+        HTePS = inverse_weyl_transform(TePS, H.shape[0], H.R, H.P_R)
+        TePS_chi00 = xp.sum(Unv_bo[:,0].conj()*(HTePS@Unv_bo[:,0]))
+        TePS_chi01 = xp.sum(Unv_bo[:,1].conj()*(HTePS@Unv_bo[:,0]))
+        print("Te PS, 00, 01:", TePS_chi00, TePS_chi01 )
+
 
 
 
         if args.evecs:
-            numpy.savez(args.evecs, R=H.R, P=H.P_R, EPS=EPS, HPS=HPS,EPSv=EPSv, UPSv=UPSv, pPS=pPS, rPS=rPS)
+            numpy.savez(args.evecs, R=H.R, P=H.P_R, EPS=EPS, HPS=HPS,EPSv=EPSv, UPSv=UPSv, pPS=pPS, rPS=rPS, l2PS=l2PS)
         
         
         

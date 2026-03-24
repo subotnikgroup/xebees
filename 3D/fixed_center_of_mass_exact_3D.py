@@ -473,6 +473,22 @@ class Hamiltonian:
         # mass portion of KE
         ke *= -1/(2*self.mu)
         return ke.reshape(x.shape)
+    
+    def Tx_elec(self, x):
+        if xp.backend == 'torch':
+            xa = x.reshape((-1,) + self.shape).type(self.dtype)
+            kwargs = {}
+        else:
+            xa = x.reshape((-1,) + self.shape).astype(self.dtype)
+            kwargs = dict(optimize=True)
+        ke = xp.zeros_like(xa)
+        ke += xp.einsum('BRrjO,rs->BRsjO', xa, self.ddr2, **kwargs)  # ∂²/∂r²
+        kej = xp.einsum('BRrjO, j-> BRrjO', xa, self.j*(self.j+1), **kwargs)  # j(j+1)
+        ke -= (self.rinv2)*kej  # -j(j+1)(1/r² + 1/R²)
+        ke *= -1/(2*self.mu)
+        return ke.reshape(x.shape)
+
+
 
     def Tx_BO(self, x, iR=None):
         if xp.backend == 'torch':
@@ -897,6 +913,16 @@ if __name__ == '__main__':
     l201 = xp.einsum('RrjO, j, RrjO->', wfc1.conj(), H.j*(H.j+1), wfc0)
     print("lx00, lx01:", lx00, lx01)
     print("l200, l201", l200, l201)
+
+    wfc0_Te = H.Tx_elec(wfc0)
+    te00 = xp.sum(wfc0*wfc0_Te)
+    te01 = xp.sum(wfc1*wfc0_Te)
+    print("electronic Te:", te00, te01)
+
+
+    # ridx = xp.argmin(xp.abs(H.r_lab-r00))
+    # Ridx = xp.argmin(xp.abs(H.R_lab-R_ex))
+    # print("Omega sign test:", wfc0[Ridx,ridx,0:5,args.J-3:args.J+2])
 
     
     print("e_approx, char, proj:")

@@ -58,7 +58,7 @@ class Hamiltonian:
         'axes', 'dtype', 'args',
         'max_threads','xp_grid','yp_grid',
         'preconditioner', 'make_guess', '_Vfunc',
-        'Vgrid', 'ddR2', 'ddx2', 'ddy2', 'ddx', 'ddy', 'ddr'
+        'Vgrid', 'ddR2', 'ddx2', 'ddy2', 'ddx', 'ddy', 'ddr',
         'Rinv2', 'rinv2', 'diag', '_preconditioner_data','theta',
         'shape', 'size',
         '_locked', '_hash', 'r_lab', 'R_lab', 'ddr_lab2', 'ddR_lab2','RP_grid'
@@ -146,12 +146,12 @@ class Hamiltonian:
         ### cosgamma = x/(x^2+y^2)^(0.5)
         ### singamma =  y/(x^2 + y^2)^(0.5)
         cosgamma = self.x[:,None]/xp.sqrt(self.x[:,None]**2 + self.y[None,:]**2) #shape xy
-        singamma = self.y[None,:]/xp.sqrt(self.x[:,None]**2 + self.y**2[None,:]) # shape xy
+        singamma = self.y[None,:]/xp.sqrt(self.x[:,None]**2 + self.y[None,:]**2) # shape xy
         ### Symmetrized product
-        self.ddr = 0.5*(xp.einsum('xy, xa, yb -> xyab', cosgamma, self.ddx1, xp.eye(args.Ny), optimize=True)
-                     + xp.einsum('ay, xa, yb -> xyab', cosgamma, self.ddx1, xp.eye(args.Ny), optimize=True)
-                     + xp.einsum('xy, yb, xa -> xyab', singamma, self.ddy1, xp.eye(args.Nx), optimize=True)
-                     + xp.einsum('xb, yb, xa -> xyab', singamma, self.ddy1, xp.eye(args.Ny), optimize=True))
+        self.ddr = 0.5*(xp.einsum('xy, xa, yb -> xyab', cosgamma, self.ddx, xp.eye(args.Ny), optimize=True)
+                     + xp.einsum('ay, xa, yb -> xyab', cosgamma, self.ddx, xp.eye(args.Ny), optimize=True)
+                     + xp.einsum('xy, yb, xa -> xyab', singamma, self.ddy, xp.eye(args.Nx), optimize=True)
+                     + xp.einsum('xb, yb, xa -> xyab', singamma, self.ddy, xp.eye(args.Ny), optimize=True))
 
         # since we need these in Hx; maybe fine to compute on the fly?
 
@@ -286,15 +286,41 @@ def Gamma_etf_erf_cart(R,rx,ry,ddx,ddy,M_1,M_2,mu12,r1e2,r2e2):
 
 def compute_EPS(info):
     
-    Rval, Pval, Htot_bo, gammacoeff_R, gammacoeff_theta, gammatotx, gammatoty, gammasqtotx, gammasqtoty, mu12 = info
-    #print("i,j",Rval,Pval,flush=True)           
+    Rval, Pval, H, Htot_bo, gammacoeff_R, gammacoeff_theta, gammatotx, gammatoty, gammasqtotx, gammasqtoty, mu12 = info
+    #print("i,j",Rval,Pval,flush=True)  
+    Nx = H.x.size
+    Ny = H.y.size         
     
     Htot = Htot_bo[Rval]+(gammacoeff_R[Rval,Pval]*gammatotx)+(gammacoeff_theta[Rval]*gammatoty)
     Htot_sq = Htot - (gammasqtotx + gammasqtoty)/(2*mu12) 
-    e_approx = xp.linalg.eigvalsh(Htot)
-    e_approx_sq = xp.linalg.eigvalsh(Htot_sq)   
+    e_approx, v_approx = xp.linalg.eigh(Htot)
+    e_approx_sq, v_approx_sq = xp.linalg.eigh(Htot_sq) 
+    wfc0 = v_approx[:,0].reshape((Nx,Ny))
+    wfc0_sq = v_approx_sq[:,0].reshape((Nx,Ny))  
+    
+    pe_x = xp.einsum('xy, xa, ay ->', wfc0.conj(), -1j*H.ddx, wfc0)
+    pe_y = xp.einsum('xy, yb, xb ->', wfc0.conj(), -1j*H.ddy, wfc0)
+    pe_r = xp.einsum('xy, xyab, ay ->', wfc0.conj(), -1j*H.ddr, wfc0)
+    px2 = xp.einsum('xy, xa, ay ->', wfc0.conj(), -H.ddx2, wfc0)
+    py2 = xp.einsum('xy, yb, xb ->', wfc0.conj(),-H.ddy2, wfc0)
+    wfc_lz = xp.einsum('x, yb, xb -> xy', H.x, -1j*H.ddy, wfc0)
+    wfc_lz -= xp.einsum('y, xa, ay -> xy', H.y, -1j*H.ddx, wfc0)
+    lz = xp.sum(wfc0.conj()*wfc_lz)
+    l2 = xp.sum(wfc_lz.conj()*wfc_lz)
 
-    return Rval,Pval,e_approx[0],e_approx_sq[0]
+    pe_x_sq = xp.einsum('xy, xa, ay ->', wfc0_sq.conj(), -1j*H.ddx, wfc0_sq)
+    pe_y_sq = xp.einsum('xy, yb, xb ->', wfc0_sq.conj(), -1j*H.ddy, wfc0_sq)
+    pe_r_sq = xp.einsum('xy, xyab, ay ->', wfc0_sq.conj(), -1j*H.ddr, wfc0_sq)
+    px2_sq = xp.einsum('xy, xa, ay ->', wfc0_sq.conj(), -H.ddx2, wfc0_sq)
+    py2_sq = xp.einsum('xy, yb, xb ->', wfc0_sq.conj(), -H.ddy2, wfc0_sq)
+    wfc_lz_sq = xp.einsum('x, yb, xb -> xy', H.x, -1j*H.ddy, wfc0_sq)
+    wfc_lz_sq -= xp.einsum('y, xa, ay -> xy', H.y, -1j*H.ddx, wfc0_sq)
+    lz_sq = xp.sum(wfc0.conj()*wfc_lz_sq)
+    l2_sq = xp.sum(wfc_lz_sq.conj()*wfc_lz_sq)
+
+    return (Rval,Pval,e_approx[0],e_approx_sq[0], 
+            xp.stack((pe_x,pe_y,pe_r)), xp.stack((pe_x_sq, pe_y_sq, pe_r_sq)),
+            px2+py2, px2_sq+py2_sq, xp.stack((lz,l2)), xp.stack((lz_sq, l2_sq)) )
 
 
 def parse_args():
@@ -396,11 +422,18 @@ if __name__ == '__main__':
     #ival_check = e_approx_bo[:,0][None].T
     #Ad_n_check = e_approx_bo[:,0]
 
+
     EPS = xp.zeros((H.shape[0], H.shape[0]))
     EPSsq = xp.zeros((H.shape[0], H.shape[0]))
+    pPS = xp.zeros((3,H.shape[0], H.shape[0]), dtype=xp.complex128)
+    pPS_sq = xp.zeros((3,H.shape[0], H.shape[0]), dtype=xp.complex128)
+    p2PS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
+    p2PS_sq = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
+    lPS = xp.zeros((2,H.shape[0], H.shape[0]), dtype=xp.complex128)
+    lPS_sq = xp.zeros((2,H.shape[0], H.shape[0]), dtype=xp.complex128)
     
     Rval, Pval = H.RP_grid
-    gammacoeff_R = -1j*(Pval-1/(2*Rval))/H.mu12
+    gammacoeff_R = -1j*(Pval)/H.mu12 #-1/(2*Rval))/H.mu12
     gammacoeff_theta = -1j*(H.J/H.R)/H.mu12
     
     Gammasqtotx = xp.zeros([NR,Nelec,Nelec],dtype=complex)
@@ -436,7 +469,7 @@ if __name__ == '__main__':
         Gammasqtotx = ((H.M_2**2*gammasq1x)+(H.M_1**2*gammasq2x)-(H.M_1*H.M_2*gamma1x2x)-(H.M_1*H.M_2*gamma2x1x))/(H.M_1+H.M_2)**2
         Gammasqtoty = ((H.M_2**2*gammasq1y)+(H.M_1**2*gammasq2y)-(H.M_1*H.M_2*gamma1y2y)-(H.M_1*H.M_2*gamma2y1y))/(H.M_1+H.M_2)**2 
 
-        index_pairs = [(i, k, Htot_bo_test, gammacoeff_R, gammacoeff_theta, Gammatotx, Gammatoty, Gammasqtotx, Gammasqtoty, H.mu12) for k in range(NR)]
+        index_pairs = [(i, k, H, Htot_bo_test, gammacoeff_R, gammacoeff_theta, Gammatotx, Gammatoty, Gammasqtotx, Gammasqtoty, H.mu12) for k in range(NR)]
                 
         threadctl = ThreadpoolController()
         h_workers = min(args.t, H.shape[0])
@@ -447,9 +480,19 @@ if __name__ == '__main__':
             results = list(tqdm(
                 ex.map(compute_EPS, index_pairs),
                 total=H.shape[0], desc="Building EPS"))
-        for i,k,val,valsq in results:
+        for i,k,val,valsq, pe, pe_sq, p2ps, p2ps_sq, lps, lps_sq in results:
             EPS[i, k] = val
             EPSsq[i, k] = valsq
+            pPS[:,i,k] = pe
+            pPS_sq[:,i,k] = pe_sq
+            p2PS[i,k] = p2ps
+            p2PS_sq[i,k] = p2ps_sq
+            lPS[:,i,k] = lps
+            lPS_sq[:,i,k] = lps_sq
+
+            #  return (Rval,Pval,e_approx[0],e_approx_sq[0], 
+            # xp.stack((pe_x,pe_y,pe_r)), xp.stack((pe_x_sq, pe_y_sq, pe_r_sq)),
+            # px2+py2, px2_sq+py2sq, xp.stack((lz,l2)), xp.stack((lz_sq, l2_sq)) )
 
     Hbo_new = -1/(2*H.mu12)*(H.ddR2 - xp.diag(H.J**2/H.R**2)) +xp.diag(Ad_n)
     Ad_vn_new = batch_eigvalsh(Hbo_new)
@@ -461,11 +504,13 @@ if __name__ == '__main__':
         EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
         HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
         EPSv,EPSvwfn = xp.linalg.eigh(HPS)
+        print("PS eigs:", EPSv[:5])
         print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
 
         EPSsq += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
         HPSsq = inverse_weyl_transform(EPSsq, H.shape[0], H.R, H.P)
         EPSvsq,EPSvsqwfn = xp.linalg.eigh(HPSsq)
+        print("PS_sq eigs:", EPSvsq[:5])
         print("PS vib gap sq",EPSvsq[1]-EPSvsq[0],flush=True)
 
         #EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
@@ -484,13 +529,57 @@ if __name__ == '__main__':
     else:
         EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
         HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P)
-        EPSv = batch_eigvalsh(HPS)
+        # EPSv = batch_eigvalsh(HPS)
+        EPSv,EPSvwfn = xp.linalg.eigh(HPS.real)
+        print("PS eigs:", EPSv[:5])
         print("PS vib gap",EPSv[1]-EPSv[0],flush=True)
+
+        Hpex = inverse_weyl_transform(pPS[0], H.shape[0], H.R, H.P)
+        Hpey = inverse_weyl_transform(pPS[1], H.shape[0], H.R, H.P)
+        Hper = inverse_weyl_transform(pPS[2], H.shape[0], H.R, H.P)
+        pex = EPSvwfn[:,1].conj().T@(Hpex)@EPSvwfn[:,0]
+        pey = EPSvwfn[:,1].conj().T@(Hpey)@EPSvwfn[:,0]
+        per = EPSvwfn[:,1].conj().T@(Hper)@EPSvwfn[:,0]
+        print("pe_xyr", pex, pey, per)
+        Rps = xp.sum(EPSvwfn[:,0].conj()*(H.R)*EPSvwfn[:,0]).real
+        print("<R> PS:", Rps)
+
+        Hp2ps = inverse_weyl_transform(p2PS, H.shape[0], H.R, H.P)
+        p2 = EPSvwfn[:,0].conj().T@(Hp2ps)@EPSvwfn[:,0]
+        print("<p^2> PS:", p2)
+
+        Hlzps = inverse_weyl_transform(lPS[0], H.shape[0], H.R, H.P)
+        Hl2ps = inverse_weyl_transform(lPS[1], H.shape[0], H.R, H.P)
+        lz = EPSvwfn[:,0].conj().T@(Hlzps)@EPSvwfn[:,0]
+        l2 = EPSvwfn[:,0].conj().T@(Hl2ps)@EPSvwfn[:,0]
+        print("<lz>, <l^2> PS:", lz,l2)
 
         EPSsq += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
         HPSsq = inverse_weyl_transform(EPSsq, H.shape[0], H.R, H.P)
-        EPSvsq = batch_eigvalsh(HPSsq)
-        print("PS vib gap sq",EPSvsq[1]-EPSvsq[0],flush=True)
+        # EPSvsq = batch_eigvalsh(HPSsq)
+        EPSvsq,EPSvsqwfn = xp.linalg.eigh(HPSsq)
+        print("PS sq eigs:", EPSvsq[:5])
+        print("PS sq vib gap ",EPSvsq[1]-EPSvsq[0],flush=True)
+
+        Hpex_sq = inverse_weyl_transform(pPS_sq[0], H.shape[0], H.R, H.P)
+        Hpey_sq = inverse_weyl_transform(pPS_sq[1], H.shape[0], H.R, H.P)
+        Hper_sq = inverse_weyl_transform(pPS_sq[2], H.shape[0], H.R, H.P)
+        pex_sq = EPSvsqwfn[:,1].conj().T@(Hpex_sq)@EPSvsqwfn[:,0]
+        pey_sq = EPSvsqwfn[:,1].conj().T@(Hpey_sq)@EPSvsqwfn[:,0]
+        per_sq = EPSvsqwfn[:,1].conj().T@(Hper_sq)@EPSvsqwfn[:,0]
+        print("pe_xyr sq", pex_sq, pey_sq, per_sq)
+        Rps_sq = xp.sum(EPSvsqwfn[:,0].conj()*(H.R)*EPSvsqwfn[:,0]).real
+        print("<R> PSsq:", Rps_sq)
+
+        Hp2ps_sq = inverse_weyl_transform(p2PS_sq, H.shape[0], H.R, H.P)
+        p2_sq = EPSvsqwfn[:,0].conj().T@(Hp2ps_sq)@EPSvsqwfn[:,0]
+        print("<p^2> PS sq:", p2_sq)
+
+        Hlzps_sq = inverse_weyl_transform(lPS_sq[0], H.shape[0], H.R, H.P)
+        Hl2ps_sq = inverse_weyl_transform(lPS_sq[1], H.shape[0], H.R, H.P)
+        lz_sq = EPSvsqwfn[:,0].conj().T@(Hlzps_sq)@EPSvsqwfn[:,0]
+        l2_sq = EPSvsqwfn[:,0].conj().T@(Hl2ps_sq)@EPSvsqwfn[:,0]
+        print("<lz>, <l^2> PS:", lz_sq,l2_sq)
 
         EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
         Helmat = xp.repeat(ival,H.shape[0],axis=1)
