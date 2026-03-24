@@ -146,6 +146,8 @@ def Gamma2(r, R_val, pe, pe2, M1, M2, sigma=1, w=1):
     gamma21 = get_gamma2(t2, t1, pe, pe2)
     gamma22 = get_gamma2(t2, t2, pe, pe2)
     return (M2**2*gamma11 - M1*M2*gamma12 - M1*M2*gamma21 + M2**2*gamma22) / (M1 + M2)**2
+    # return (- M1*M2*gamma12 - M1*M2*gamma21 ) / (M1 + M2)**2
+    # return (M2**2*gamma11 + M2**2*gamma22) / (M1 + M2)**2
 
 def Gammasq(r, R_val, M1, M2, pe2, sigma=1, w=1):
     """
@@ -162,10 +164,10 @@ def Gammasq(r, R_val, M1, M2, pe2, sigma=1, w=1):
     t1 = xp.diag(theta1 / partition)
     t2 = xp.diag(theta2 / partition)
 
-    gamma1 = (t1 @ pe2 + pe2 @ t1) / (2j)
-    gamma2 = (t2 @ pe2 + pe2 @ t2) / (2j)
+    gamma1 = (t1 @ pe2 + pe2 @ t1) / (2)
+    gamma2 = (t2 @ pe2 + pe2 @ t2) / (2)
 
-    return (M2*gamma1**2 - M1*gamma2**2) / (M1 + M2)**2
+    return (M2**2*gamma1 - M1**2*gamma2) / (M1 + M2)**2
 
 def solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges):
     """
@@ -202,8 +204,9 @@ def solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges):
     for i in range(NR):
         if i % 10 == 0: print("i",i,flush=True)
         gamma = Gamma(r, R[i], pe, M1, M2, sigma, w)
-        gamma2 = Gamma2(r, R[i], pe, pe2, M1, M2, sigma, w)
+        # gamma2 = Gamma2(r, R[i], pe, pe2, M1, M2, sigma, w)
         gammasq = Gammasq(r, R[i], M1, M2, pe2, sigma, w)
+            
         
         kappa2 = r*R[i]
 
@@ -226,7 +229,7 @@ def solve_EPS(NR, Nr, R, r, Mtotal,mu12, mur, M1, M2, P, charges):
         
         for j in range(NR):
             #print("i,j",i,j,flush=True)
-            Hel_square = ke + v_diag - 1j * gamma * P[j] / mu12 - gamma2 / (2 * mu12)
+            Hel_square = ke + v_diag - 1j * gamma * P[j] / mu12 - gamma@gamma / (2 * mu12)
             Hel = ke + v_diag - 1j * gamma * P[j] / mu12
             Hel_square_new = ke + v_diag - 1j * gamma * P[j] / mu12 - gammasq / (2 * mu12)
 
