@@ -137,6 +137,7 @@ class Hamiltonian:
         dy = self.y[1] - self.y[0]
 
         self.P_R  = xp.fft.fftshift(xp.fft.fftfreq(args.NR, dR)) * 2 * xp.pi
+        # self.P_R  = xp.fft.fftfreq(args.NR, dR) * 2 * xp.pi
         self.RP_grid = xp.meshgrid(self.R, self.P_R, indexing='ij')
 
 
@@ -314,6 +315,52 @@ def Tx(H,xdav):
         )
     return Hel_dav.reshape(xdav.shape)
 
+def Gamma_sq_etf(H,t1):
+    t1px = xp.einsum('xy,xa->xay', t1, H.ddx2, optimize=True)
+    pxt1 = xp.einsum('xa,ay->xay', H.ddx2, t1, optimize=True)
+    t1py = xp.einsum('xy,yb->xyb', t1, H.ddy2, optimize=True)
+    pyt1 = xp.einsum('yb,xb->xyb', H.ddy2, t1, optimize=True)
+    gammaetf1x_sq = -0.5*(t1px + pxt1)
+    gammaetf1y_sq = -0.5*(t1py + pyt1)
+    
+    diag = (t1*xp.diag(H.ddx2)[:,None]+ t1*xp.diag(H.ddy2)[None,:]).reshape(H.x.size*H.y.size)
+    return gammaetf1x_sq, gammaetf1y_sq, diag
+
+def Gamma_sq_erf(H, t1,t2, Ridx):
+    ## Gsq = { t1/4M1 + t2/4M2 , K-1*(l1^2 + l2^2)}
+    wt = t1/(4*H.M_1) + t2/(4*H.M_2) # mass weighted theta
+    wt /= H.mu12*H.R[Ridx]**2 # Include K-1 in wt
+    wR = (H.M_2-H.M_1)/(H.M_1+H.M_2)*H.R[Ridx] # mass weighted R = (mu12/M1 - mu12/M2)R
+    wR2 = (H.M_1**2 +H.M_2**2)/(H.M_1+H.M_2)**2*H.R[Ridx]**2 # mass weighted R^2
+
+    ## 5 unique derivative terms
+    ## Gsq ~ C1*ddy2 + C2*ddx2 + C3*ddx1*ddy1 +C4*ddy1 + C5*ddx1
+    ## return objects all of the same shape for minimal terms
+    ## (C1+C4), (C2+C5), C3
+
+    C1  = 0.5*xp.einsum('xy, x, yb -> xyb', wt, H.x**2 - 2*H.x*wR + wR2, H.ddy2)    
+    C1 += 0.5*xp.einsum('xb, x, yb -> xyb', wt, H.x**2 - 2*H.x*wR + wR2, H.ddy2)
+
+    C2 =  0.5*xp.einsum('xy, y, xa -> xya', wt, H.y**2, H.ddx2)
+    C2 += 0.5*xp.einsum('ay, y, xa -> xya', wt, H.y**2, H.ddx2)
+
+    C3 =  0.5*xp.einsum('xy,x,y,xa,yb -> xyab', wt, -2*(H.x-wR), H.y, H.ddx, H.ddy)
+    C3 += 0.5*xp.einsum('ab,x,y,xa,yb -> xyab', wt, -2*(H.x-wR), H.y, H.ddx, H.ddy)
+
+    C4 =  0.5*xp.einsum('xy,y,yb -> xyb', wt, -H.y, H.ddy)
+    C4 += 0.5*xp.einsum('xb,b,yb -> xyb', wt, -H.y, H.ddy)
+
+    C5 =  0.5*xp.einsum('xy,x,xa -> xya', wt, -H.x, H.ddx)
+    C5 += 0.5*xp.einsum('ay,a,xa -> xya', wt, -H.x, H.ddx)
+
+    ## diagonal elements of Gamma 
+    diag =  wt*(H.x**2 - 2*H.x*wR + wR2)[:,None]*xp.diag(H.ddy2)[None,:]
+    diag += wt*H.y[None,:]*xp.diag(H.ddx2)[:,None]
+
+    return (C1+C4), (C2+C5), C3, (diag).reshape(H.x.size*H.y.size)
+
+
+
 def Hbo_dav(H,i):
     def Hxbo(xdav):
         x = xdav.reshape((-1,)+H.boshape)        
@@ -336,10 +383,10 @@ def buildDiag(H,Ri):
     ke += xp.diag(H.ddx2)[:,None]
     ke += xp.diag(H.ddy2)[None,:]
     ke *= -1 / (2*H.mur)
-    diag = H.Vgrid[Ri] + ke #XXXXXFix Vgrid
+    diag = H.Vgrid[Ri] + ke
     return diag.ravel()
 
-def ps_ham(H,ddx_terms,ddy_terms,Ri):
+def ps_ham(H,ddx_terms,ddy_terms,Ri, dxdy_term=None):
         
     def Hx_ps(xdav):
         x = xdav.reshape((-1,)+H.boshape).astype(complex) 
@@ -349,9 +396,14 @@ def ps_ham(H,ddx_terms,ddy_terms,Ri):
             H.Vgrid[Ri]*x + Tx(H,x) 
             +xp.einsum('xay,Bay->Bxy', ddx_terms, x, optimize=True) 
             +xp.einsum('xyb,Bxb->Bxy', ddy_terms, x, optimize=True) )
+        if dxdy_term is not None:
+            Hpsdav += xp.einsum('xyab,Bab->Bxy', dxdy_term, x, optimize=True) 
+
         return Hpsdav.reshape(xdav.shape)
     
     return Hx_ps
+
+
 
 def apply_pr(H, xdav):
     x = xdav.reshape((-1,)+H.boshape).astype(complex) 
@@ -397,26 +449,26 @@ def parse_args():
         def __call__(self, parser, namespace, values, option_string=None):
             setattr(namespace, self.dest, xp.array(values, dtype=float))
 
-    parser.add_argument('-k', metavar='num_eigenvalues', default=5, type=int)
-    parser.add_argument('-t', metavar="num_threads", default=16, type=int)
+    parser.add_argument('-k', metavar='num_eigenvalues', default=2, type=int)
+    parser.add_argument('-t', metavar="num_threads", default=4, type=int)
     parser.add_argument('-g_1', metavar='g_1', required=True, type=float)
     parser.add_argument('-g_2', metavar='g_2', required=True, type=float)
     parser.add_argument('-M_1', required=True, type=float)
     parser.add_argument('-M_2', required=True, type=float)
     parser.add_argument('-J', default=0, type=float)
-    parser.add_argument('-R', dest="NR", metavar="NR", default=101, type=odd_int)
-    parser.add_argument('-x', dest="Nx", metavar="Nx", default=400, type=int)
-    parser.add_argument('-y', dest="Ny", metavar="Ny", default=158, type=int)
+    parser.add_argument('-R', dest="NR", metavar="NR", default=51, type=odd_int)
+    parser.add_argument('-x', dest="Nx", metavar="Nx", default=51, type=int)
+    parser.add_argument('-y', dest="Ny", metavar="Ny", default=51, type=int)
     parser.add_argument('-theta', dest="theta", metavar="theta", default=0, type=float)
     parser.add_argument('--potential', choices=['soft_coulomb', 'borgis'],
-                        default='soft_coulomb')
+                        default='borgis')
     parser.add_argument('--extent', metavar="X", action=ArrayAction,
                         nargs=6, help="Rmin Rmax xmin xmax ymin ymax, in Bohr "
                         "(typically set automatically)")
     parser.add_argument('--exact_diagonalization', action='store_true')
     parser.add_argument('--bo_spectrum', metavar='spec.npz', type=Path, default=None)
-    parser.add_argument('--preconditioner', choices=['naive', 'V1', 'BO', 'BO-int', 'jfull'],
-                        default="naive", type=str)
+    # parser.add_argument('--preconditioner', choices=['naive', 'V1', 'BO', 'BO-int', 'jfull'],
+    #                     default="naive", type=str)
     parser.add_argument('--verbosity', default=2, type=int)
     parser.add_argument('--backend', default='numpy')
     parser.add_argument('--iterations', metavar='max_iterations', default=10000, type=int)
@@ -425,6 +477,7 @@ def parse_args():
     parser.add_argument('--evecs', metavar="guess.npz", type=Path, default=None)
     parser.add_argument('--save', metavar="filename")
     parser.add_argument('--no_ERF', action='store_true')
+    parser.add_argument('--Gammasq', action='store_true')
 
     return parser.parse_args()
 
@@ -488,6 +541,8 @@ if __name__ == '__main__':
     lPS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
     l2PS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
     l2BO = xp.zeros((H.shape[0]), dtype=xp.complex128)
+    p2PS = xp.zeros((H.shape[0], H.shape[0]), dtype=xp.complex128)
+    p2BO = xp.zeros((H.shape[0]), dtype=xp.complex128)
     
 
     evecs_prev = True
@@ -526,7 +581,9 @@ if __name__ == '__main__':
         l2BO[i] = l2BO_i
         print("lzBO:", lzBO_i)
         print("l2BO:", l2BO_i)
-        print()
+        psi0_p2 = (-2*H.mur)*Tx(H,psi0_bo)
+        p2BO[i] = xp.sum(psi0_bo.conj()*psi0_p2)
+        print("p2BO:", p2BO[i])
 
 
         Ad_n[i] = e_approx[0]
@@ -540,7 +597,21 @@ if __name__ == '__main__':
         gammaetfx = (H.M_2*gammaetf1x-H.M_1*gammaetf2x)/(H.M_1+H.M_2)
         gammaetfy = (H.M_2*gammaetf1y-H.M_1*gammaetf2y)/(H.M_1+H.M_2)
 
+        # gammaetf1x_sq,gammaetf1y_sq= Gamma_sq_etf(H, t1)
+        # gammaetf2x_sq,gammaetf2y_sq= Gamma_sq_etf(H, t2)
+        # gammaetfx_sq = (H.M_2*gammaetf1x_sq-H.M_1*gammaetf2x_sq)/(H.M_1+H.M_2)
+        # gammaetfy_sq = (H.M_2*gammaetf1y_sq-H.M_1*gammaetf2y_sq)/(H.M_1+H.M_2)
+        
         Jya, Jyb, Jyc, Jyd = Gamma_erf(H,i, t1, t2)
+
+        if args.Gammasq:
+            wt = (t1/(4*H.M_1) + t2/(4*H.M_2))
+            Gsq_etf_ddx, Gsq_etf_ddy, Gsq_etf_diag = Gamma_sq_etf(H,wt)
+            Gsq_erf_ddx, Gsq_erf_ddy, Gsq_erf_dxdy, Gsq_erf_diag = Gamma_sq_erf(H, t1,t2,i)
+            # print(Gsq_etf_diag[:10])
+            # print(Gsq_erf_diag[:10])
+            # exit()
+
 
         xdav = xp.random.rand(Nx,Ny)
         xdot = xdav.flatten()
@@ -551,8 +622,18 @@ if __name__ == '__main__':
         #gammaetfy_old = (H.M_2*gammaetf1y_old-H.M_1*gammaetf2y_old)/(H.M_1+H.M_2)
         
         ddy_terms = gammacoeff_theta[i]*(Jya-Jyc-Jyd+gammaetfy)
+        if args.Gammasq:
+            ddy_terms += Gsq_etf_ddy + Gsq_erf_ddy
+            if args.no_ERF:
+                diag += Gsq_etf_diag
+            else: diag += Gsq_etf_diag + Gsq_erf_diag
+            
+
         if args.no_ERF:
             ddy_terms = gammacoeff_theta[i]*gammaetfy
+            if args.Gammasq:
+                ddy_terms += Gsq_etf_ddy
+        
 
         #ddy_terms = gammacoeff_theta[i]*(gammaetfy)
         #ddy_terms = gammacoeff_theta[i]*(Jya-Jyc-Jyd)
@@ -572,9 +653,19 @@ if __name__ == '__main__':
             print("Atom Ri",i,"Atom Pj",j,flush=True)
             print("P",H.P_R[j])
             ddx_terms = gammacoeff_R[i,j]*gammaetfx - gammacoeff_theta[i]*Jyb
+
+            Hps = ps_ham(H,ddx_terms,ddy_terms,i)
+
+            if args.Gammasq:
+                ddx_terms += Gsq_etf_ddx + Gsq_erf_ddx
+                Hps = ps_ham(H,ddx_terms,ddy_terms,i, dxdy_term=Gsq_erf_dxdy)
+
             if args.no_ERF:
                 ddx_terms = gammacoeff_R[i,j]*gammaetfx
-            
+                if args.Gammasq:
+                    ddx_terms += Gsq_etf_ddx
+                ps_ham(H,ddx_terms,ddy_terms,i)
+
 
             if evecs_prev == True:
                 guess_ps = evecs
@@ -585,7 +676,7 @@ if __name__ == '__main__':
             
             with timer_ctx(f"Davidson of size {H.size}"):
                 conv, e_ps_approx, evecs_save = lib.davidson1(
-                    ps_ham(H,ddx_terms,ddy_terms,i),
+                    Hps,
                     guess_ps,
                     lambda dx, e, x0: dx/(diag-e+(1e-5)),
                     nroots=args.k,
@@ -619,9 +710,17 @@ if __name__ == '__main__':
             print("<l^2> on gs", l200_z)
             lPS[i,j] = l00z
             l2PS[i,j] = l200_z
+            psi0_p2 = (-2*H.mur)*Tx(H,psi0)
+            px2 = xp.einsum('xy, xa, ay ->', psi0.conj(), H.ddx2, psi0)
+            py2 = xp.einsum('xy, yb, xb ->', psi0.conj(),H.ddy2, psi0)
+            p2PS[i,j] = px2 + py2 
+            check = xp.sum(psi0.conj()*psi0_p2)
+            print("check diff:", check-px2-py2)
+            print("p2PS:", px2.real, py2.real, p2PS[i,j])
                     
             rPS[i,j] = xp.einsum('xy,xy,xy->', psi0.conj(), H.r, psi0, optimize=True)
             print("<r> on gs:", rPS[i,j].real)
+
             print() # add a new line between each RP point
 
 
@@ -651,8 +750,16 @@ if __name__ == '__main__':
     Hl2BO = inverse_weyl_transform(l2BO_RP, H.shape[0], H.R, H.P_R)
     l2BO_chi00 = xp.sum(Unv_bo[:,0].conj()*(Hl2BO@Unv_bo[:,0]))
     l2BO_chi01 = xp.sum(Unv_bo[:,1].conj()*(Hl2BO@Unv_bo[:,0]))
-    print("l200 BO: <chi0|r|chi0>:", l2BO_chi00)
-    print("l201 BO: <chi1|r|chi0>:", l2BO_chi01)
+    print("l200 BO: <chi0|l^2|chi0>:", l2BO_chi00)
+    print("l201 BO: <chi1|l^2|chi0>:", l2BO_chi01)
+
+    p2BO_RP = xp.zeros(rPS.shape, dtype=xp.complex128)
+    p2BO_RP = p2BO[:,None]
+    Hp2BO = inverse_weyl_transform(p2BO_RP, H.shape[0], H.R, H.P_R)
+    p2BO_chi00 = xp.sum(Unv_bo[:,0].conj()*(Hp2BO@Unv_bo[:,0]))
+    p2BO_chi01 = xp.sum(Unv_bo[:,1].conj()*(Hp2BO@Unv_bo[:,0]))
+    print("p200 BO: <chi0|p^2|chi0>:", p2BO_chi00)
+    print("p201 BO: <chi1|p^2|chi0>:", p2BO_chi01)
 
     EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
     Helmat = xp.repeat(ival,H.shape[0],axis=1)
@@ -717,6 +824,12 @@ if __name__ == '__main__':
     print("l01 < chi1| l_z|chi_0>", l01z)
     print("l200  <chi_0 | l^2 |chi_0>:", l002)
     print("l200  <chi_1 | l^2 |chi_0>:", l012)
+
+    Hp2PS = inverse_weyl_transform(p2PS, H.shape[0], H.R, H.P_R)
+    p2PS_chi00 = xp.sum(UPSv[:,0].conj()*(Hp2PS@UPSv[:,0]))
+    p2PS_chi01 = xp.sum(UPSv[:,1].conj()*(Hp2PS@UPSv[:,0]))
+    print("p200 PS: <chi0|p^2|chi0>:", p2PS_chi00)
+    print("p201 PS: <chi1|p^2|chi0>:", p2PS_chi01)
 
 
 

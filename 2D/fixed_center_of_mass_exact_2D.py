@@ -282,9 +282,8 @@ class Hamiltonian:
         else:
             xa = x.reshape((-1,) + self.shape).astype(self.dtype)
         ke = xp.zeros_like(xa)
-        ke += xp.einsum('BRrg,rs->BRsg', xa, self.ddr2)  # ∂²/∂r²
-        keg = xp.einsum('BRrg,gh->BRrh', xa, self.ddg2)  # ∂²/∂γ²
-        ke += (self.rinv2)*keg              # (1/R² + 1/r²) (∂²/∂γ²)
+        ke += xp.einsum('BRrg,rs->BRsg', xa, self.ddr_lab2)  # ∂²/∂r²
+        ke += xp.einsum('BRrg,r,gh->BRrh', xa, 1/self.r_lab**2, self.ddg2)  # 1/r² ∂²/∂γ²
         return -ke.reshape(x.shape)
 
 
@@ -905,7 +904,7 @@ if __name__ == '__main__':
     r01 = xp.einsum('Rrg, r, Rrg ->', wfc1, H.r_lab, wfc0)
     print("r00, r01", r00, r01)
     p2 = xp.sum(evecs[0].conj()*H.p2x(evecs[0]))
-    print("<p^2> 00:", p2)
+    print("<p^2> 00, 01:", p2, xp.sum(evecs[1].conj()*H.p2x(evecs[0])))
 
 
     wfc0_lz = xp.einsum('Rrh,gh -> Rrg', wfc0, -1j*H.ddg1)

@@ -303,6 +303,7 @@ def compute_EPS(info):
     pe_r = xp.einsum('xy, xyab, ay ->', wfc0.conj(), -1j*H.ddr, wfc0)
     px2 = xp.einsum('xy, xa, ay ->', wfc0.conj(), -H.ddx2, wfc0)
     py2 = xp.einsum('xy, yb, xb ->', wfc0.conj(),-H.ddy2, wfc0)
+    print("Rval, Pval, px2, py2",Rval, Pval, px2, py2)
     wfc_lz = xp.einsum('x, yb, xb -> xy', H.x, -1j*H.ddy, wfc0)
     wfc_lz -= xp.einsum('y, xa, ay -> xy', H.y, -1j*H.ddx, wfc0)
     lz = xp.sum(wfc0.conj()*wfc_lz)
@@ -545,8 +546,9 @@ if __name__ == '__main__':
         print("<R> PS:", Rps)
 
         Hp2ps = inverse_weyl_transform(p2PS, H.shape[0], H.R, H.P)
-        p2 = EPSvwfn[:,0].conj().T@(Hp2ps)@EPSvwfn[:,0]
-        print("<p^2> PS:", p2)
+        p200 = EPSvwfn[:,0].conj().T@(Hp2ps)@EPSvwfn[:,0]
+        p201 = EPSvwfn[:,0].conj().T@(Hp2ps)@EPSvwfn[:,0]
+        print("<p^2> PS:", p200, p201)
 
         Hlzps = inverse_weyl_transform(lPS[0], H.shape[0], H.R, H.P)
         Hl2ps = inverse_weyl_transform(lPS[1], H.shape[0], H.R, H.P)
