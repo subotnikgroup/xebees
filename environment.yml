@@ -20,3 +20,4 @@ dependencies:
   - pytorch
   - torchvision
   - pytest
+  - pandas=2.3.3

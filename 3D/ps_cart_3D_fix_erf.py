@@ -215,7 +215,64 @@ def Gamma_erf_orb(H,Ridx, t1, t2):
 
     return Jya, Jyb, Jyc, Jyd, Jza, Jzb, Jzc, Jzd
 
+def Gamma_sq_etf(H,t1):
+    t1px =  -0.5*xp.einsum('xyz,xa->xayz', t1, H.ddx2, optimize=True)
+    t1px += -0.5*xp.einsum('xa,ayz->xayz', H.ddx2, t1, optimize=True)
+    t1py =  -0.5*xp.einsum('xyz,yb->xybz', t1, H.ddy2, optimize=True)
+    t1py += -0.5*xp.einsum('yb,xbz->xybz', H.ddy2, t1, optimize=True)
+    t1pz  = -0.5*xp.einsum('xyz,zc->xyzc', t1, H.ddz2, optimize=True)
+    t1pz += -0.5*xp.einsum('zc,xyc->xyzc', H.ddz2, t1, optimize=True)
 
+    diag = (t1*xp.diag(H.ddx2)[:,None,None]+ t1*xp.diag(H.ddy2)[None,:,None]+t1*xp.diag(H.ddz2)[None,None,:]
+            ).reshape(H.x.size*H.y.size*H.z.size)
+    return t1px, t1py, t1pz, diag
+
+def Gamma_sq_erf(H, t1,t2, Ridx):
+    ## Gsq = { t1/4M1 + t2/4M2 , K-1*(l1^2 + l2^2)}
+    ##l^2 = l_y^2 + l_z^2, K matrix removes l_x^2
+    wt = t1/(4*H.M_1) + t2/(4*H.M_2) # mass weighted theta
+    wt /= H.mu12*H.R[Ridx]**2 # Include K-1 in wt
+    wR = (H.M_2-H.M_1)/(H.M_1+H.M_2)*H.R[Ridx] # mass weighted R = (mu12/M1 - mu12/M2)R
+    wR2 = (H.M_1**2 +H.M_2**2)/(H.M_1+H.M_2)**2*H.R[Ridx]**2 # mass weighted R^2
+
+    ## 5 unique derivative terms
+    ## Gsq_z ~ C1*ddy2 + C2*ddx2 + C3*ddx1*ddy1 +C4*ddy1 + C5*ddx1
+    ## return objects all of the same shape for minimal terms
+    ## (C1+C4), (C2+C5), C3
+
+    Cz1  = 0.5*xp.einsum('xyz, x, yb -> xybz', wt, H.x**2 - 2*H.x*wR + wR2, H.ddy2)    
+    Cz1 += 0.5*xp.einsum('xbz, x, yb -> xybz', wt, H.x**2 - 2*H.x*wR + wR2, H.ddy2)
+    Cz2 =  0.5*xp.einsum('xyz, y, xa -> xayz', wt, H.y**2, H.ddx2)
+    Cz2 += 0.5*xp.einsum('ayz, y, xa -> xayz', wt, H.y**2, H.ddx2)
+    Cz3 =  0.5*xp.einsum('xyz,x,y,xa,yb -> xaybz', wt, -2*(H.x-wR), H.y, H.ddx1, H.ddy1)
+    Cz3 += 0.5*xp.einsum('abz,x,y,xa,yb -> xaybz', wt, -2*(H.x-wR), H.y, H.ddx1, H.ddy1)
+    Cz4 =  0.5*xp.einsum('xyz,y,yb -> xybz', wt, -H.y, H.ddy1)
+    Cz4 += 0.5*xp.einsum('xbz,b,yb -> xybz', wt, -H.y, H.ddy1)
+    Cz5 =  0.5*xp.einsum('xyz,x,xa -> xayz', wt, -H.x, H.ddx1)
+    Cz5 += 0.5*xp.einsum('ayz,a,xa -> xayz', wt, -H.x, H.ddx1)
+
+    Cy1 =  0.5*xp.einsum('xyz, z, xa -> xayz', wt, H.z**2, H.ddx2)
+    Cy1 += 0.5*xp.einsum('ayz, z, xa -> xayz', wt, H.z**2, H.ddx2)
+    Cy2  = 0.5*xp.einsum('xyz, x, zc -> xyzc', wt, H.x**2 - 2*H.x*wR + wR2, H.ddz2)    
+    Cy2 += 0.5*xp.einsum('xyc, x, zc -> xyzc', wt, H.x**2 - 2*H.x*wR + wR2, H.ddz2)
+    Cy3 =  0.5*xp.einsum('xyz,x,z,xa,zc -> xayzc', wt, -2*(H.x-wR), H.z, H.ddx1, H.ddz1)
+    Cy3 += 0.5*xp.einsum('ayc,x,z,xa,zc -> xayzc', wt, -2*(H.x-wR), H.z, H.ddx1, H.ddz1)
+    Cy4 =  0.5*xp.einsum('xyz,z,zc -> xyzc', wt, -H.z, H.ddz1)
+    Cy4 += 0.5*xp.einsum('xyc,c,zc -> xyzc', wt, -H.z, H.ddz1)
+    Cy5 =  0.5*xp.einsum('xyz,x,xa -> xayz', wt, -H.x, H.ddx1)
+    Cy5 += 0.5*xp.einsum('ayz,a,xa -> xayz', wt, -H.x, H.ddx1)
+
+    ## diagonal elements of Gamma 
+    diag =  wt*(H.x**2 - 2*H.x*wR + wR2)[:,None,None]*(xp.diag(H.ddy2)[None,:,None] +xp.diag(H.ddz2)[None,None,:])
+    diag += wt*(H.y[None,:,None]+H.z[None,None,:])*xp.diag(H.ddx2)[:,None,None]
+ 
+    ddx_terms  = Cz2+Cz5+Cy1+Cy5 # xayz
+    ddy_terms  = Cz1+Cz4         # xybz
+    ddz_terms  = Cy2+Cy4         # xyzc
+    dxdy_terms = Cz3             # xaybz
+    dxdz_terms = Cy3             # xayzc
+
+    return ddx_terms, ddy_terms, ddz_terms, dxdy_terms, dxdz_terms, (diag).reshape(H.x.size*H.y.size*H.z.size)
 
 def Tx(H,xdav):
     xdav = xdav.reshape((-1,) + H.boshape)
@@ -226,7 +283,7 @@ def Tx(H,xdav):
         )
     return Hel_dav.reshape(xdav.shape)
 
-def ps_ham(H,ddx_terms,ddy_terms,ddz_terms,Ri):
+def ps_ham(H,ddx_terms,ddy_terms,ddz_terms,Ri, dxdy_terms=None):
         
     def Hx_ps(xdav):
         x = xdav.reshape((-1,)+H.boshape).astype(complex) 
@@ -238,6 +295,11 @@ def ps_ham(H,ddx_terms,ddy_terms,ddz_terms,Ri):
             +xp.einsum('xybz,Bxbz->Bxyz', ddy_terms, x, optimize=True) 
             +xp.einsum('xyzc,Bxyc->Bxyz', ddz_terms, x, optimize=True)
         )
+        if dxdy_terms is not None:
+            Hdxdy = dxdy_terms[0]
+            Hdxdz = dxdy_terms[1]
+            Hpsdav += xp.einsum('xaybz, Babz->Bxyz', Hdxdy, x, optimize=True)
+            Hpsdav += xp.einsum('xayzc, Bayc->Bxyz', Hdxdz, x, optimize=True)
         return Hpsdav.reshape(xdav.shape)
         
 
@@ -338,6 +400,8 @@ def parse_args():
     parser.add_argument('-splits', default=0, type=int)
     parser.add_argument('-split_idx', default=1, type=int)
     parser.add_argument('--no_ERF', action='store_true')
+    parser.add_argument('--Gammasq', action='store_true')
+
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -488,7 +552,7 @@ if __name__ == '__main__':
             l2BO[i] = l200
             print("lxyz on gs:", l00x, l00y, l00z)
             print("l2 on gs:", l200)
-            psi0_Te = Tx(H,psi0_bo)
+            psi0_Te = Tx(H,psi0_bo)#*2*H.mur
             TeBO[i] = xp.sum(psi0_bo.conj()*psi0_Te)
     
             r1e2, r2e2 = H.V(H.R[i], H.x_grid, H.y_grid, H.z_grid, spitvals=True)
@@ -519,6 +583,7 @@ if __name__ == '__main__':
             ddz_terms = (
                    gammacoeff_theta[i]*(-Jzb+Jzc+Jzd+gammaetfz)                   
                )
+            
             if args.no_ERF:
                 ddy_terms = (                    
                         gammacoeff_phi[i] * (gammaetfy)
@@ -528,7 +593,18 @@ if __name__ == '__main__':
                         gammacoeff_theta[i]*(gammaetfz)                   
                     )
 
-            
+            if args.Gammasq:
+                wt = (t1/(4*H.M_1) + t2/(4*H.M_2))
+                Gsq_etf_ddx, Gsq_etf_ddy, Gsq_etf_ddz, Gsq_etf_diag = Gamma_sq_etf(H,wt)
+
+                ddy_terms += Gsq_etf_ddy
+                ddz_terms += Gsq_etf_ddz
+                diag += Gsq_etf_diag
+                if not args.no_ERF:
+                    Gsq_erf_ddx, Gsq_erf_ddy, Gsq_erf_ddz, Gsq_erf_dxdy, Gsq_erf_dxdz, Gsq_erf_diag = Gamma_sq_erf(H,t1,t2,i)
+                    ddy_terms += Gsq_erf_ddy
+                    ddz_terms += Gsq_erf_ddz
+
             with timer_ctx(f"P for loop"):
                 for j in ps_sequence:
                 
@@ -538,6 +614,14 @@ if __name__ == '__main__':
                                 gammacoeff_theta[i]* (Jza))
                     if args.no_ERF:
                         ddx_terms = (gammacoeff_R[i,j] * gammaetfx)
+                    
+                    Hx_ps = ps_ham(H,ddx_terms,ddy_terms,ddz_terms,i)
+
+                    if args.Gammasq:
+                        ddx_terms += Gsq_etf_ddx
+                        if not args.no_ERF:
+                            ddx_terms += Gsq_erf_ddx
+                            Hx_ps = ps_ham(H,ddx_terms,ddy_terms,ddz_terms,i, dxdy_terms=(Gsq_erf_dxdy, Gsq_erf_dxdz))
 
 
                     if evecs_prev == True and j==NR//2:
@@ -546,10 +630,10 @@ if __name__ == '__main__':
                     else:
                         guess_ps = evecs_save
                     
-                    Hx_ps = ps_ham(H,ddx_terms,ddy_terms,ddz_terms,i)
+                    
                     with timer_ctx(f"Davidson of size {H.size}"):
                         conv, e_ps_approx, evecs_save = lib.davidson1(
-                            ps_ham(H,ddx_terms,ddy_terms,ddz_terms,i),
+                            Hx_ps,
                             guess_ps,
                             #lambda dx, e, x0: dx/(diag-e-(1e-5-1e-5j)),
                             lambda dx, e, x0: dx/(diag-e+(1e-5)),
@@ -597,7 +681,7 @@ if __name__ == '__main__':
                     lPS[:,i,j] = xp.stack((l00x,l00y,l00z))
                     l2PS[i,j] = l200
 
-                    psi0_Te = Tx(H,psi0)
+                    psi0_Te = Tx(H,psi0)#*2*H.mur
                     TePS[i,j] = xp.sum(psi0.conj()*psi0_Te)
                     
                     rPS[i,j] = xp.einsum('xyz,xyz,xyz->', psi0.conj(), H.r, psi0, optimize=True)
@@ -683,6 +767,7 @@ if __name__ == '__main__':
         pe_chiz = xp.sum(UPSv[:,1].conj()*(Hpe_z@UPSv[:,0]))
         pe_chir = xp.sum(UPSv[:,1].conj()*(Hpe_r@UPSv[:,0]))
         print("pe01 <chi_1|pe|chi0>:", pe_chix, pe_chiy, pe_chiz, pe_chir)
+        
 
         pe_chix = UPSv[:,0].conj().T@Hpe_x@UPSv[:,0]
         pe_chiy = UPSv[:,0].conj().T@Hpe_y@UPSv[:,0]
@@ -714,9 +799,9 @@ if __name__ == '__main__':
         Hlzps = inverse_weyl_transform(lPS[2], H.shape[0], H.R, H.P_R)
         Hl2ps = inverse_weyl_transform(l2PS-1/H.mu12/Rval, H.shape[0], H.R, H.P_R)
         #  -1/H.mu12/Rval**2/4
-        with xp.printoptions(suppress=True, precision=4):
-            print(l2PS[NR//2-2:NR//2+1, NR//2-2:NR//2+1])
-            print(Hl2ps[:6,:6])
+        # with xp.printoptions(suppress=True, precision=4):
+        #     print(l2PS[NR//2-2:NR//2+1, NR//2-2:NR//2+1])
+        #     print(Hl2ps[:6,:6])
             # print(Rval**2[:6])
 
         l00x = xp.sum(UPSv[:,0].conj()*(Hlxps@UPSv[:,0]))
