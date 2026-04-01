@@ -244,8 +244,7 @@ def Gamma_sq_erf(H, t1,t2, Ridx):
     Cz1 += 0.5*xp.einsum('xbz, x, yb -> xybz', wt, H.x**2 - 2*H.x*wR + wR2, H.ddy2)
     Cz2 =  0.5*xp.einsum('xyz, y, xa -> xayz', wt, H.y**2, H.ddx2)
     Cz2 += 0.5*xp.einsum('ayz, y, xa -> xayz', wt, H.y**2, H.ddx2)
-    Cz3 =  0.5*xp.einsum('xyz,x,y,xa,yb -> xaybz', wt, -2*(H.x-wR), H.y, H.ddx1, H.ddy1)
-    Cz3 += 0.5*xp.einsum('abz,x,y,xa,yb -> xaybz', wt, -2*(H.x-wR), H.y, H.ddx1, H.ddy1)
+    Cz3 =  0.5*xp.einsum('xyz,x,y -> xyz', wt, -2*(H.x-wR), H.y) # multiply by derivatives later to save memory , H.ddx1, H.ddy1)  
     Cz4 =  0.5*xp.einsum('xyz,y,yb -> xybz', wt, -H.y, H.ddy1)
     Cz4 += 0.5*xp.einsum('xbz,b,yb -> xybz', wt, -H.y, H.ddy1)
     Cz5 =  0.5*xp.einsum('xyz,x,xa -> xayz', wt, -H.x, H.ddx1)
@@ -255,8 +254,7 @@ def Gamma_sq_erf(H, t1,t2, Ridx):
     Cy1 += 0.5*xp.einsum('ayz, z, xa -> xayz', wt, H.z**2, H.ddx2)
     Cy2  = 0.5*xp.einsum('xyz, x, zc -> xyzc', wt, H.x**2 - 2*H.x*wR + wR2, H.ddz2)    
     Cy2 += 0.5*xp.einsum('xyc, x, zc -> xyzc', wt, H.x**2 - 2*H.x*wR + wR2, H.ddz2)
-    Cy3 =  0.5*xp.einsum('xyz,x,z,xa,zc -> xayzc', wt, -2*(H.x-wR), H.z, H.ddx1, H.ddz1)
-    Cy3 += 0.5*xp.einsum('ayc,x,z,xa,zc -> xayzc', wt, -2*(H.x-wR), H.z, H.ddx1, H.ddz1)
+    Cy3 =  0.5*xp.einsum('xyz,x,z -> xyz', wt, -2*(H.x-wR), H.z) # multiply by derivatives later to save memory, H.ddx1, H.ddz1)
     Cy4 =  0.5*xp.einsum('xyz,z,zc -> xyzc', wt, -H.z, H.ddz1)
     Cy4 += 0.5*xp.einsum('xyc,c,zc -> xyzc', wt, -H.z, H.ddz1)
     Cy5 =  0.5*xp.einsum('xyz,x,xa -> xayz', wt, -H.x, H.ddx1)
@@ -298,8 +296,11 @@ def ps_ham(H,ddx_terms,ddy_terms,ddz_terms,Ri, dxdy_terms=None):
         if dxdy_terms is not None:
             Hdxdy = dxdy_terms[0]
             Hdxdz = dxdy_terms[1]
-            Hpsdav += xp.einsum('xaybz, Babz->Bxyz', Hdxdy, x, optimize=True)
-            Hpsdav += xp.einsum('xayzc, Bayc->Bxyz', Hdxdz, x, optimize=True)
+            Hpsdav += xp.einsum('xyz, xa, yb, Babz->Bxyz', Hdxdy, H.ddx1, H.ddy1, x, optimize=True)
+            Hpsdav += xp.einsum('abz, xa, yb, Babz->Bxyz', Hdxdy, H.ddx1, H.ddy1, x, optimize=True)
+            Hpsdav += xp.einsum('xyz, xa, zc, Bayc->Bxyz', Hdxdz, H.ddx1, H.ddz1, x, optimize=True)
+            Hpsdav += xp.einsum('ayc, xa, zc, Bayc->Bxyz', Hdxdz, H.ddx1, H.ddz1, x, optimize=True)
+            
         return Hpsdav.reshape(xdav.shape)
         
 
