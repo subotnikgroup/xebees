@@ -184,97 +184,8 @@ class Hamiltonian:
         else:
             return self._Vfunc(R, r1e, r2e, (self.g_1, self.g_2))
     
-    def build_Hel(self, Ridx=None):
-        NR, Nx, Ny = self.shape
-        Nelec = Nx*Ny
-        Hel = xp.empty((NR, Nelec, Nelec), dtype=self.dtype)
-        Hel[:] = -1/(2*self.mur)*(xp.kron(self.ddx2,xp.eye(Ny)) + xp.kron(xp.eye(Nx), self.ddy2))
-
-        if Ridx is None:
-            Ridx = xp.arange(NR)
-        else:
-            Ridx = xp.atleast_1d(Ridx)
-            NR,  = Ridx.shape
-
-        Hel[:, xp.arange(Nelec), xp.arange(Nelec)] +=(  # extract diagonal at every R
-            xp.reshape(self.Vgrid[Ridx], (NR, Nelec))   # + V
-        )
-
-        return xp.squeeze(Hel)
-
-    def _output_info(self):
-
-        NR,Nx,Ny = self.shape
-        Nelec = Nx*Ny
-        Ad_n  = xp.zeros((NR, Nelec))
-        He = -1/(2*self.mur)*(xp.kron(self.ddx2,xp.eye(Ny)) + xp.kron(xp.eye(Nx), self.ddy2))
-    
-        for i in range(self.shape[0]):
-            print(i,"i")
-            v_diag = xp.diag(self.Vgrid[i,:,:].ravel())
-            Hel = He+v_diag
-            e_approx_bo = xp.linalg.eigvalsh(Hel)
-            Ad_n[i] = e_approx_bo[:Nelec]
-        
-        Ad_vn = xp.zeros((NR, Nelec))
-        U_v = xp.zeros((Nelec,NR,NR))
-        for i in range(5):
-            print(i,"j")
-            Hbo = -1/(2*self.mu12)*self.ddR2 + xp.diag(Ad_n[:,i])
-            Ad_vn[:,i], U_v[i] = xp.linalg.eigh(Hbo)
-
-        #Hbo = xp.empty((Nelec, NR, NR))                # Hbo = -1/2/μ(∂²/∂R² + 1/4/R²) + V_n
-        #Hbo[:] = -1/(2*self.mu12)*self.ddR2         #       -1/2/μ(∂²/∂R² + 1/4/R²)
-        #Hbo[:, xp.arange(NR), xp.arange(NR)] += Ad_n.T
-        #Ad_vn, U_v = batch_eigh(Hbo)
-        pc = (Ad_vn,U_v,Ad_n)
-        #print("Ad_n",Ad_n)
-
-        return pc
-
-def Gamma_etf_erf_cart(R,rx,ry,ddx,ddy,M_1,M_2,mu12,r1e2,r2e2):
-
-    Nx = len(ddx)
-    Ny = len(ddy)
-    Nelec = Nx*Ny
-    px = xp.kron(ddx,xp.eye(Ny))
-    py = xp.kron(xp.eye(Nx),ddy)
-    
-    theta1 = xp.exp(-r1e2)
-    theta2 = xp.exp(-r2e2)
-    partition = theta1 + theta2
-
-    t1 = xp.diag(1/(1+xp.exp((r1e2-r2e2)/4)).ravel())
-    t2 = xp.diag(1/(1+xp.exp((r2e2-r1e2)/4)).ravel())
-
-    #t1 = xp.diag((theta1/partition).ravel())
-    #t2 = xp.diag((theta2/partition).ravel())
-       
-    t1px = xp.dot(t1,px)
-    pxt1 = xp.dot(px,t1)
-    t2px = xp.dot(t2,px)
-    pxt2 = xp.dot(px,t2)
-    t1py = xp.dot(t1,py)
-    pyt1 = xp.dot(py,t1)
-    t2py = xp.dot(t2,py)
-    pyt2 = xp.dot(py,t2)
-
-    gammaetf1x = -0.5*(t1px + pxt1)
-    gammaetf1y = -0.5*(t1py + pyt1)
-   
-    gammaetf2x = -0.5*(t2px + pxt2)
-    gammaetf2y = -0.5*(t2py + pyt2)
-
-    J1 = -0.5*(xp.dot((xp.kron(xp.diag(rx[:,0]),xp.eye(Ny))-(xp.eye(Nelec)*R*mu12/M_1)),(t1py+pyt1))-xp.dot(xp.kron(xp.eye(Nx),xp.diag(ry[0,:])),(t1px+pxt1)))
-    J2 = -0.5*(xp.dot((xp.kron(xp.diag(rx[:,0]),xp.eye(Ny))+(xp.eye(Nelec)*R*mu12/M_2)),(t2py+pyt2))-xp.dot(xp.kron(xp.eye(Nx),xp.diag(ry[0,:])),(t2px+pxt2)))
-    
-    gammaerf1y = 1/R*(J1+J2)
-    gammaerf2y = -1/R*(J1+J2)
-
-    return gammaetf1x, gammaetf1y, gammaetf2x, gammaetf2y,gammaerf1y,gammaerf1y   
-
 def Gamma_etf(H,t1):
-
+    # Building ETF terms
     ddx, ddy = H.ddx, H.ddy
     
     t1px = xp.einsum('xy,xa->xay', t1, ddx, optimize=True)
@@ -287,7 +198,7 @@ def Gamma_etf(H,t1):
     return gammaetf1x, gammaetf1y
 
 def Gamma_erf(H,t1,t2,Ridx):
-
+    # Building ERF terms
     rx, ry = H.x,H.y
     Nx, Ny = H.boshape
 
@@ -301,13 +212,14 @@ def Gamma_erf(H,t1,t2,Ridx):
     coeff = H.R[Ridx]/2*((H.M_2*t1-H.M_1*t2)/(H.M_1+H.M_2))
     
     Jya = -1/H.R[Ridx]*xp.einsum('x,xyb->xyb', rx, ddy1, optimize=True)
-    Jyb = -1/H.R[Ridx]*xp.einsum('y,xay->xay', ry, ddx1, optimize=True)
-    Jyc = -1/H.R[Ridx]*xp.einsum('xy,xyb->xyb', coeff, ddy1, optimize=True)
-    Jyd = -1/H.R[Ridx]*xp.einsum('xyb,xy->xyb', ddy1, coeff,optimize=True)
+    Jyb = -1/H.R[Ridx]*xp.einsum('xy,xyb->xyb', coeff, ddy1, optimize=True)
+    Jyc = -1/H.R[Ridx]*xp.einsum('y,xay->xay', ry, ddx1, optimize=True)
+    Jyd = -1/H.R[Ridx]*xp.einsum('xyb,xb->xyb', ddy1, coeff,optimize=True)
 
     return Jya, Jyb, Jyc, Jyd
 
 def Tx(H,xdav):
+    # Kinetic energy terms
     xdav = xdav.reshape((-1,) + H.boshape)
     Hel_dav = -1/(2*H.mur)*(
         xp.einsum('xa,Bay->Bxy',H.ddx2,xdav,optimize=True)
@@ -315,19 +227,9 @@ def Tx(H,xdav):
         )
     return Hel_dav.reshape(xdav.shape)
 
-def Gamma_sq_etf(H,t1):
-    t1px = xp.einsum('xy,xa->xay', t1, H.ddx2, optimize=True)
-    pxt1 = xp.einsum('xa,ay->xay', H.ddx2, t1, optimize=True)
-    t1py = xp.einsum('xy,yb->xyb', t1, H.ddy2, optimize=True)
-    pyt1 = xp.einsum('yb,xb->xyb', H.ddy2, t1, optimize=True)
-    gammaetf1x_sq = -0.5*(t1px + pxt1)
-    gammaetf1y_sq = -0.5*(t1py + pyt1)
-    
-    diag = (t1*xp.diag(H.ddx2)[:,None]+ t1*xp.diag(H.ddy2)[None,:]).reshape(H.x.size*H.y.size)
-    return gammaetf1x_sq, gammaetf1y_sq, diag
 
 def Gamma_sq_erf(H, t1,t2,Ridx):
-
+    # Building ERF squared terms
     rx, ry = H.x,H.y
     Nx, Ny = H.boshape
 
@@ -354,29 +256,52 @@ def Gamma_sq_erf(H, t1,t2,Ridx):
     dxdy = (J2+J4+J6+J8)/R**2
     dxdx = J5/R**2
     
-    diagsq = rxe**2*xp.diag(H.ddy2)[None,:]+ry**2*xp.diag(H.ddx2)[:,None]+coeff**2*xp.diag(H.ddy2)[None,:]
+    diagsq = (rxe**2*xp.diag(H.ddy2)[None,:]+ry**2*xp.diag(H.ddx2)[:,None]+coeff**2*xp.diag(H.ddy2)[None,:])/R**2
 
     return dydy, dxdy, dxdx, diagsq.flatten()
 
+def Gamma_etf_erf(H,gammaetfy,t1,t2,Ridx):
+    # Building ETF-ERF terms they are only in the y direction
+    rx, ry = H.x,H.y
+    ddx1 = H.ddx[:, :, None]
+    ddy1 = H.ddy[None, :, :]
+    R = H.R[Ridx]
+    coeff = R/2*((H.M_2*t1-H.M_1*t2)/(H.M_1+H.M_2))
+    rxe = rx[:,None]-coeff
+    etfy = gammaetfy
+    #etferf1 = +xp.einsum('xyb,xb,xbY->xyY',etfy,rxe,ddy1,optimize=True)
+    #etferf2 = -xp.einsum('xyb,b,xab->xayb',etfy,ry,ddx1,optimize=True)
+    #etferf3 = -xp.einsum('xyb,xbY,xY->xyY',etfy,ddy1,coeff,optimize=True)
+#
+    #erfetf1 = +xp.einsum('xy,xyb,xbY->xyY',rxe,ddy1,etfy,optimize=True)
+    #erfetf2 = -xp.einsum('y,xay,ayb->xayb',ry,ddx1,etfy,optimize=True)
+    #erfetf3 = -xp.einsum('xyb,xb,xbY->xyY',ddy1,coeff,etfy,optimize=True)
+
+    etferf1 = -xp.einsum('xyb,xb,xbY->xyY',etfy,rxe,ddy1,optimize=True)
+    etferf2 = +xp.einsum('xyb,b,xab->xayb',etfy,ry,ddx1,optimize=True)
+    etferf3 = +xp.einsum('xyb,xbY,xY->xyY',etfy,ddy1,coeff,optimize=True)
+
+    erfetf1 = -xp.einsum('xy,xyb,xbY->xyY',rxe,ddy1,etfy,optimize=True)
+    erfetf2 = +xp.einsum('y,xay,ayb->xayb',ry,ddx1,etfy,optimize=True)
+    erfetf3 = +xp.einsum('xyb,xb,xbY->xyY',ddy1,coeff,etfy,optimize=True)
+
+    dydy = (etferf1+etferf3+erfetf1+erfetf3)/R
+    dxdy = (etferf2+erfetf2)/R
+
+    return dydy,dxdy
 
 
 def Hbo_dav(H,i):
+    # Building the BO Hamiltonian
     def Hxbo(xdav):
         x = xdav.reshape((-1,)+H.boshape)        
         Hbodav = H.Vgrid[i]*x + Tx(H,x)## xxxcheck with xdav shape
         return Hbodav.reshape(xdav.shape)
     return Hxbo
 
-def compute_EPS(info):
-    
-    Rval, Pval, Htot_bo, gammacoeff_R, gammacoeff_theta, gammatotx, gammatoty, gammasqtotx, gammasqtoty, mu12 = info
-             
-    Htot = Htot_bo[Rval]+(gammacoeff_R[Rval,Pval]*gammatotx)+(gammacoeff_theta[Rval]*gammatoty)
-    e_approx = xp.linalg.eigvalsh(Htot)
-
-    return Rval,Pval,e_approx[0],None
-
 def buildDiag(H,Ri):
+    # Building the diagonal of the KE and PE of Hamiltonian
+    # Useful for the preconditioner
     Nx, Ny = H.boshape
     ke  = xp.zeros([Nx,Ny])
     ke += xp.diag(H.ddx2)[:,None]
@@ -386,7 +311,7 @@ def buildDiag(H,Ri):
     return diag.ravel()
 
 def ps_ham(H,ddx_terms,ddy_terms,Ri, dxdy_term=None):
-        
+    # Building the PS Hamiltonian
     def Hx_ps(xdav):
         x = xdav.reshape((-1,)+H.boshape).astype(complex) 
                
@@ -404,6 +329,7 @@ def ps_ham(H,ddx_terms,ddy_terms,Ri, dxdy_term=None):
 
 
 def apply_pr(H, xdav):
+    # Applying the linar momentum operator in radial direction
     x = xdav.reshape((-1,)+H.boshape).astype(complex) 
     r = xp.sqrt(
             H.x[:,None]**2 + H.y[None,:]**2) #shape xy
@@ -422,6 +348,7 @@ def apply_pr(H, xdav):
     return ddr1.reshape(xdav.shape)
 
 def apply_l(H, xdav):
+    # Angular momentum operator
     x = xdav.reshape((-1,)+H.boshape).astype(complex) 
 
     lz_a = xp.einsum('x,yb,Bxb -> Bxy', H.x,H.ddy, x, optimize=True)
@@ -590,44 +517,36 @@ if __name__ == '__main__':
         t1 = 1/(1+xp.exp(r1e2-r2e2))
         t2 = 1/(1+xp.exp(r2e2-r1e2))
 
+        # Building Gamma ETF terms
         gammaetf1x,gammaetf1y= Gamma_etf(H, t1)
         gammaetf2x,gammaetf2y= Gamma_etf(H, t2)
         gammaetfx = (H.M_2*gammaetf1x-H.M_1*gammaetf2x)/(H.M_1+H.M_2)
         gammaetfy = (H.M_2*gammaetf1y-H.M_1*gammaetf2y)/(H.M_1+H.M_2)
 
-        # gammaetf1x_sq,gammaetf1y_sq= Gamma_sq_etf(H, t1)
-        # gammaetf2x_sq,gammaetf2y_sq= Gamma_sq_etf(H, t2)
-        # gammaetfx_sq = (H.M_2*gammaetf1x_sq-H.M_1*gammaetf2x_sq)/(H.M_1+H.M_2)
-        # gammaetfy_sq = (H.M_2*gammaetf1y_sq-H.M_1*gammaetf2y_sq)/(H.M_1+H.M_2)
-
-        coeff = H.R[i]/2*((H.M_2*t1-H.M_1*t2)/(H.M_1+H.M_2))
-        
+        # Building Gamma ERF terms
         Jya, Jyb, Jyc, Jyd = Gamma_erf(H, t1, t2,i)
 
-
-        #xdav = xp.random.rand(Nx,Ny)
-        #xdot = xdav.flatten()
-        #xdavnew = xdav.reshape(1,Nx,Ny)
-
-        #gammaetf1x_old, gammaetf1y_old, gammaetf2x_old, gammaetf2y_old, gammaerf1y_old, gammaerf2y_old = Gamma_etf_erf_cart(H.R[i],H.x_grid,H.y_grid,H.ddx,H.ddy,H.M_1,H.M_2,H.mu12,r1e2,r2e2)
-        ##gammaetfy_old = (H.M_2*gammaetf1y_old-H.M_1*gammaetf2y_old)/(H.M_1+H.M_2)
-        #gammaetfy_old = (H.M_2*gammaetf1y_old-H.M_1*gammaetf2y_old)/(H.M_1+H.M_2)
-        
-        ddy_terms = gammacoeff_theta[i]*(Jya-Jyc-Jyd+gammaetfy)
+        # Building Gamma in y direction 
+        ddy_terms = gammacoeff_theta[i]*(Jya-Jyb-Jyd+gammaetfy)
         if args.Gammasq:
+            # Building Gamma ETF squared terms
             etfx_sq = xp.einsum('xay,aXy->xXy', gammaetfx, gammaetfx)
             etfy_sq = xp.einsum('xyb,xbY->xyY', gammaetfy, gammaetfy)
-
-            diag_etf_sq = (coeff**2*xp.diag(H.ddx2)[:,None]
-                          + coeff**2*xp.diag(H.ddy2)[None,:]).flatten()
-
+            # Building diagonal of Gamma ETF squared terms
+            t_etfsq = (H.M_2*t1-H.M_1*t2)/((H.M_1+H.M_2))
+            diag_etf_sq = (t_etfsq**2*xp.diag(H.ddx2)[:,None]
+                          + t_etfsq**2*xp.diag(H.ddy2)[None,:]).flatten()
+            # Building Gamma ERF squared terms
             (dydy_erf, dxdy_erf, dxdx_erf, diagsq_erf) = Gamma_sq_erf(H, t1, t2, i)
+            # Building Gamma ETF-ERF terms
+            dydy_etf_erf, dxdy_etf_erf = Gamma_etf_erf(H, gammaetfy, t1,t2, i)
 
-            ddy_terms += (  -dydy_erf- etfy_sq)/(2*H.mu12)
+            # Building Gamma squared terms in y direction
+            ddy_terms += ( -dydy_erf- etfy_sq- dydy_etf_erf)/(2*H.mu12)
+            # Building diagonal of Gamma squared terms
             gammasqdiag = -(diagsq_erf + diag_etf_sq)/(2*H.mu12)
-
             if args.no_ERF:
-
+                # Building ONLY Gamma ETF in y direction
                 ddy_terms = gammacoeff_theta[i]*(gammaetfy) - (etfy_sq)/(2*H.mu12)
                 gammasqdiag = -(diag_etf_sq)/(2*H.mu12)
             
@@ -639,17 +558,21 @@ if __name__ == '__main__':
 
             print("Atom Ri",i,"Atom Pj",j,flush=True)
             print("P",H.P_R[j])
-            ddx_terms = gammacoeff_R[i,j]*gammaetfx - gammacoeff_theta[i]*Jyb            
+            # Building Gamma in x direction
+            ddx_terms = gammacoeff_R[i,j]*gammaetfx - gammacoeff_theta[i]*Jyc            
             if args.no_ERF:
                 ddx_terms = gammacoeff_R[i,j]*gammaetfx
         
             Hps = ps_ham(H,ddx_terms,ddy_terms,i)
 
             if args.Gammasq:
+                # Building Gamma ETF squared terms in x direction
                 ddx_terms += - etfx_sq/(2*H.mu12) - dxdx_erf/(2*H.mu12)
-                dxdy_terms = - dxdy_erf/(2*H.mu12)
+                # Building Gamma ETF-ERF terms in x direction
+                dxdy_terms = - (dxdy_erf+dxdy_etf_erf)/(2*H.mu12)
                 Hps = ps_ham(H,ddx_terms,ddy_terms,i, dxdy_terms)
                 if args.no_ERF:
+                    # Building ONLY Gamma ETF in x direction
                     ddx_terms = gammacoeff_R[i,j]*gammaetfx - etfx_sq/(2*H.mu12)
                     Hps = ps_ham(H,ddx_terms,ddy_terms,i)
 
@@ -671,18 +594,17 @@ if __name__ == '__main__':
                     verbose=args.verbosity,
                     max_space=args.subspace,
                     max_memory=get_davidson_mem(0.75),
-                    #tol=1e-12, #FIXME:DEBUG
                     tol=1e-12,
                 )
 
             print("Davidson:", e_ps_approx)
-            print(conv)#
-
+            print(conv)
+            # Building electronic observables for PS
             EPS[i, j] = e_ps_approx[0]
-            pe_r = xp.sum(evecs_save[0].conj()*apply_pr(H,evecs_save[0]))
+            pe_r = xp.sum(evecs_save[0].conj()*apply_pr(H,evecs_save[0])) # < 0 | p_e | 0 > for PS
             psi0 = evecs_save[0].reshape(H.boshape)
-            pe_x = xp.einsum('xy, xa, ay ->', psi0.conj(), (-1j)*H.ddx, psi0, optimize=True)
-            pe_y = xp.einsum('xy, yb, xb ->', psi0.conj(), (-1j)*H.ddy, psi0, optimize=True)
+            pe_x = xp.einsum('xy, xa, ay ->', psi0.conj(), (-1j)*H.ddx, psi0, optimize=True) # < 0 | p_x | 0 > for PS
+            pe_y = xp.einsum('xy, yb, xb ->', psi0.conj(), (-1j)*H.ddy, psi0, optimize=True) # < 0 | p_y | 0 > for PS
             pPS[:,i,j] = xp.asarray([pe_x,pe_y,pe_r])
 
             print("<pe> on gs:", pe_x.real, pe_y.real)
@@ -710,14 +632,15 @@ if __name__ == '__main__':
 
             print() # add a new line between each RP point
 
-
+    # Solving for BO energies and observables
     Hbo_new = -1/(2*H.mu12)*(H.ddR2 - xp.diag(H.J**2/H.R**2)) +xp.diag(Ad_n)
-    Ad_vn_new, Unv_bo = xp.linalg.eigh(Hbo_new)
+    Ad_vn_new, Unv_bo = xp.linalg.eigh((Hbo_new))
     e_bo_new = xp.sort(Ad_vn_new.flatten())
     bo_new = e_bo_new[1] - e_bo_new[0]
     print("e_bo_new",e_bo_new[0:10])
     print("BO new vib gap",bo_new,flush=True)
 
+    # Building BO observables
     R_bo = xp.sum(Unv_bo[:,0].conj()*H.R*Unv_bo[:,0]).real
     print("R00 BO: <chi_0| R| chi_0 >:", R_bo)
 
@@ -748,18 +671,18 @@ if __name__ == '__main__':
     print("p200 BO: <chi0|p^2|chi0>:", p2BO_chi00)
     print("p201 BO: <chi1|p^2|chi0>:", p2BO_chi01)
 
-    EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
-    Helmat = xp.repeat(ival,H.shape[0],axis=1)
-    EPS_bo += Helmat   
-    EPS_bo += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
-    HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P_R)
-    EPSv_bo = batch_eigvalsh(HPS_bo)
-    print("e_bo_new Weyl",EPSv_bo[0:10])
-    print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
+    #EPS_bo = xp.zeros((H.shape[0], H.shape[0]))
+    #Helmat = xp.repeat(ival,H.shape[0],axis=1)
+    #EPS_bo += Helmat   
+    #EPS_bo += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
+    #HPS_bo = inverse_weyl_transform(EPS_bo, H.shape[0], H.R, H.P_R)
+    #EPSv_bo = batch_eigvalsh(HPS_bo)
+    #print("e_bo_new Weyl",EPSv_bo[0:10])
+    #print("Weyl BO vib gap",EPSv_bo[1]-EPSv_bo[0],flush=True)
 
     # PS energies and observables
     EPS += 1/(2*H.mu12)*(Pval**2-(1/4/Rval**2)+H.J**2/Rval**2)
-    HPS = inverse_weyl_transform(EPS, H.shape[0], H.R, H.P_R)
+    HPS = inverse_weyl_transform((EPS), H.shape[0], H.R, H.P_R)
     EPSv = batch_eigvalsh(HPS)
     EPSv, UPSv = xp.linalg.eigh(HPS)
     print("PSWeyl",EPSv[0:10])
