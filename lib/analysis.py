@@ -56,6 +56,30 @@ def get_jls_expectations(evecs, H):
 
     return el2, ej2, elz, ejz, esz
 
+def get_spin_expectations(evecs, H):
+    '''Per-state electron-spin expectations <s_x>, <s_y>, <s_z> in the body frame
+    (x,y perpendicular to, z along, the internuclear axis), using the operators
+    H.s_x, H.s_y (Omega<->Omega+/-1) and H.s_z (diagonal in Omega).
+
+    Equations (l = j + sigma; spinor spherical harmonics
+    |j,sigma,Omega> = c_up|l,Omega-1/2>|up> + c_dn|l,Omega+1/2>|dn>):
+        <s_a> = sum_{n,n'} c_n* <n| s_a |n'> c_n',   n = (R,r,j,sigma,Omega)
+        s_z = (1/2)(s_+ s_- diag),  s_x = (s_+ + s_-)/2,  s_y = (s_+ - s_-)/(2i).
+    s_x,s_y flip the spin so they connect Omega' = Omega +/- 1.
+
+    N.B.  For the real eigenvectors of the real, time-reversal-symmetric H,
+    <s_y> = 0 identically and <s_x>,<s_z> are basis-dependent within a Kramers
+    doublet.  To resolve the spin texture, diagonalize {s_x,s_y,s_z} inside each
+    degenerate multiplet (pass the doublet as the columns of `evecs`). '''
+    ev = evecs.reshape((-1,) + H.shape)
+    vsx = H.apply_Sx(ev).reshape(ev.shape)
+    vsy = H.apply_Sy(ev).reshape(ev.shape)
+    vsz = H.apply_Sz(ev).reshape(ev.shape)
+    esx = xp.einsum('BRrjsO, BRrjsO -> B', xp.conj(ev), vsx, optimize=True)
+    esy = xp.einsum('BRrjsO, BRrjsO -> B', xp.conj(ev), vsy, optimize=True)
+    esz = xp.einsum('BRrjsO, BRrjsO -> B', xp.conj(ev), vsz, optimize=True)
+    return esx.real, esy.real, esz.real
+
 def get_p01_radial(evecs,H):
     dR = H.R_lab[1]-H.R_lab[0]
     dr = H.r_lab[1]-H.r_lab[0]
