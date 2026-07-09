@@ -89,7 +89,7 @@ def Efield_coulomb(r1e, Q1, rcut=0.5):
     E1  = -Q1 *erf(2*r1e/rcut) / r1e**3
     # near core-correction from erf function
     E1 += 4*Q1*xp.exp(-4*r1e**2/rcut**2)/rcut/xp.sqrt(xp.pi)/r1e**2
-    return E1
+    return -E1
 
 def soft_coulomb_barrier(R, r1e, r2e, charges, dv=0.5, G=1, p=2, A=1):
     Q1, Q2 = charges
